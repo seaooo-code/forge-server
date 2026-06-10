@@ -1,10 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -38,6 +41,10 @@ type RedisConfig struct {
 }
 
 func Load() (Config, error) {
+	if err := loadDotenv(); err != nil {
+		return Config{}, err
+	}
+
 	shutdownTimeout, err := durationEnv("APP_SHUTDOWN_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return Config{}, err
@@ -91,6 +98,27 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func loadDotenv() error {
+	envFile, explicit := os.LookupEnv("ENV_FILE")
+	if envFile == "" {
+		explicit = false
+		envFile = ".env"
+	}
+
+	if _, err := os.Stat(envFile); err != nil {
+		if errors.Is(err, os.ErrNotExist) && !explicit {
+			return nil
+		}
+		return fmt.Errorf("stat env file %s: %w", envFile, err)
+	}
+
+	if err := godotenv.Load(envFile); err != nil {
+		return fmt.Errorf("load env file %s: %w", envFile, err)
+	}
+
+	return nil
 }
 
 func stringEnv(key string, fallback string) string {

@@ -1,9 +1,11 @@
 package httpserver
 
 import (
+	"context"
 	"net/http"
 
 	"forge-server/internal/config"
+	"forge-server/internal/domain"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
@@ -12,8 +14,14 @@ import (
 )
 
 type Dependencies struct {
-	Postgres *pgxpool.Pool
-	Redis    *redis.Client
+	EnvironmentService EnvironmentService
+	Postgres           *pgxpool.Pool
+	Redis              *redis.Client
+}
+
+type EnvironmentService interface {
+	GetEnvironmentDetail(ctx context.Context, code string) (domain.EnvironmentDetail, error)
+	ListEnvironments(ctx context.Context) ([]domain.Environment, error)
 }
 
 func New(cfg config.Config, deps Dependencies) *echo.Echo {
@@ -36,6 +44,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 			"status": "ok",
 		})
 	})
+	registerEnvironmentRoutes(api, deps.EnvironmentService)
 
 	return e
 }

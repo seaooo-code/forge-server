@@ -11,6 +11,7 @@ import (
 	"forge-server/internal/infra/postgres"
 	redisinfra "forge-server/internal/infra/redis"
 	httpserver "forge-server/internal/server/http"
+	"forge-server/internal/service"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
@@ -37,9 +38,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 
+	environmentRepository := postgres.NewEnvironmentRepository(postgresPool)
+	environmentService := service.NewEnvironmentService(environmentRepository)
+
 	server := httpserver.New(cfg, httpserver.Dependencies{
-		Postgres: postgresPool,
-		Redis:    redisClient,
+		EnvironmentService: environmentService,
+		Postgres:           postgresPool,
+		Redis:              redisClient,
 	})
 
 	return &App{
