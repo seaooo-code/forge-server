@@ -32,6 +32,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, err
 	}
 
+	if err := postgres.RunMigrations(ctx, postgresPool, "migrations"); err != nil {
+		postgresPool.Close()
+		return nil, fmt.Errorf("run postgres migrations: %w", err)
+	}
+
 	redisClient, err := redisinfra.NewClient(ctx, cfg.Redis)
 	if err != nil {
 		postgresPool.Close()

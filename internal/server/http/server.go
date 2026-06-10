@@ -35,6 +35,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	e.Use(middleware.Logger())
 
 	registerHealthRoutes(e, deps)
+	registerOpenAPIRoutes(e)
 
 	api := e.Group("/api/v1")
 	api.GET("/ping", func(c echo.Context) error {
