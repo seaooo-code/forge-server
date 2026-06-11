@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	App      AppConfig
-	HTTP     HTTPConfig
-	Postgres PostgresConfig
-	Redis    RedisConfig
+	App       AppConfig
+	Feishu    FeishuConfig
+	HTTP      HTTPConfig
+	Postgres  PostgresConfig
+	Redis     RedisConfig
+	Telemetry TelemetryConfig
 }
 
 type AppConfig struct {
@@ -23,7 +26,34 @@ type AppConfig struct {
 }
 
 type HTTPConfig struct {
-	Addr string
+	Addr                 string
+	CORSAllowOrigins     []string
+	CORSAllowHeaders     []string
+	CORSAllowCredentials bool
+}
+
+type TelemetryConfig struct {
+	Enabled         bool
+	ServiceName     string
+	ServiceVersion  string
+	Environment     string
+	OTLPEndpoint    string
+	OTLPHeaders     map[string]string
+	OTLPLogEndpoint string
+	OTLPLogHeaders  map[string]string
+}
+
+type FeishuConfig struct {
+	AppID                  string
+	AppSecret              string
+	RedirectURI            string
+	Scope                  string
+	Prompt                 string
+	AuthURL                string
+	TokenURL               string
+	UserInfoURL            string
+	UserSearchURL          string
+	DebugLogSearchResponse bool
 }
 
 type PostgresConfig struct {
@@ -75,13 +105,63 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	otelHeaders, err := stringMapEnv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", nil)
+	if err != nil {
+		return Config{}, err
+	}
+	if len(otelHeaders) == 0 {
+		otelHeaders, err = stringMapEnv("OTEL_EXPORTER_OTLP_HEADERS", nil)
+	}
+	if err != nil {
+		return Config{}, err
+	}
+
+	otelLogHeaders, err := stringMapEnv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", nil)
+	if err != nil {
+		return Config{}, err
+	}
+	if len(otelLogHeaders) == 0 {
+		otelLogHeaders, err = stringMapEnv("OTEL_EXPORTER_OTLP_HEADERS", nil)
+	}
+	if err != nil {
+		return Config{}, err
+	}
+
+	appEnv := stringEnv("APP_ENV", "local")
 	cfg := Config{
 		App: AppConfig{
-			Env:             stringEnv("APP_ENV", "local"),
+			Env:             appEnv,
 			ShutdownTimeout: shutdownTimeout,
 		},
 		HTTP: HTTPConfig{
 			Addr: stringEnv("HTTP_ADDR", ":8080"),
+			CORSAllowOrigins: stringListEnv("HTTP_CORS_ALLOW_ORIGINS", []string{
+				"http://127.0.0.1:5173",
+				"http://localhost:5173",
+			}),
+			CORSAllowHeaders: stringListEnv("HTTP_CORS_ALLOW_HEADERS", []string{
+				"Origin",
+				"Content-Type",
+				"Accept",
+				"Authorization",
+				"Traceparent",
+				"Tracestate",
+				"Baggage",
+				"X-Request-Id",
+			}),
+			CORSAllowCredentials: boolEnv("HTTP_CORS_ALLOW_CREDENTIALS", true),
+		},
+		Feishu: FeishuConfig{
+			AppID:                  stringEnv("FEISHU_APP_ID", ""),
+			AppSecret:              stringEnv("FEISHU_APP_SECRET", ""),
+			RedirectURI:            stringEnv("FEISHU_REDIRECT_URI", ""),
+			Scope:                  stringEnv("FEISHU_OAUTH_SCOPE", ""),
+			Prompt:                 stringEnv("FEISHU_OAUTH_PROMPT", ""),
+			AuthURL:                stringEnv("FEISHU_AUTH_URL", "https://accounts.feishu.cn/open-apis/authen/v1/authorize"),
+			TokenURL:               stringEnv("FEISHU_TOKEN_URL", "https://open.feishu.cn/open-apis/authen/v2/oauth/token"),
+			UserInfoURL:            stringEnv("FEISHU_USER_INFO_URL", "https://open.feishu.cn/open-apis/authen/v1/user_info"),
+			UserSearchURL:          stringEnv("FEISHU_USER_SEARCH_URL", "https://open.feishu.cn/open-apis/search/v1/user"),
+			DebugLogSearchResponse: boolEnv("FEISHU_DEBUG_LOG_SEARCH_RESPONSE", false),
 		},
 		Postgres: PostgresConfig{
 			DSN:             stringEnv("POSTGRES_DSN", "postgres://postgres:postgres@127.0.0.1:5432/forge_server?sslmode=disable"),
@@ -94,6 +174,16 @@ func Load() (Config, error) {
 			Addr:     stringEnv("REDIS_ADDR", "127.0.0.1:6379"),
 			Password: stringEnv("REDIS_PASSWORD", ""),
 			DB:       redisDB,
+		},
+		Telemetry: TelemetryConfig{
+			Enabled:         boolEnv("OTEL_ENABLED", false),
+			ServiceName:     stringEnv("OTEL_SERVICE_NAME", "forge-server"),
+			ServiceVersion:  stringEnv("OTEL_SERVICE_VERSION", "0.1.0"),
+			Environment:     stringEnv("OTEL_DEPLOYMENT_ENVIRONMENT", appEnv),
+			OTLPEndpoint:    stringEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", stringEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")),
+			OTLPHeaders:     otelHeaders,
+			OTLPLogEndpoint: stringEnv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", stringEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")),
+			OTLPLogHeaders:  otelLogHeaders,
 		},
 	}
 
@@ -124,6 +214,58 @@ func loadDotenv() error {
 func stringEnv(key string, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func stringListEnv(key string, fallback []string) []string {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+
+	items := strings.Split(raw, ",")
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return fallback
+	}
+	return values
+}
+
+func stringMapEnv(key string, fallback map[string]string) (map[string]string, error) {
+	raw := os.Getenv(key)
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+
+	items := strings.Split(raw, ",")
+	values := make(map[string]string, len(items))
+	for _, item := range items {
+		pair := strings.SplitN(strings.TrimSpace(item), "=", 2)
+		if len(pair) != 2 || strings.TrimSpace(pair[0]) == "" {
+			return nil, fmt.Errorf("parse %s: expected comma-separated key=value pairs", key)
+		}
+		values[strings.TrimSpace(pair[0])] = strings.TrimSpace(pair[1])
+	}
+
+	return values, nil
+}
+
+func boolEnv(key string, fallback bool) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
 		return fallback
 	}
 	return value

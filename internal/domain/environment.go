@@ -34,14 +34,6 @@ type Environment struct {
 	UpdatedAt          time.Time
 }
 
-type EnvironmentMetric struct {
-	ID     string
-	Label  string
-	Value  string
-	Detail string
-	Tone   string
-}
-
 type EnvironmentGuardrail struct {
 	ID     string
 	Label  string
@@ -69,7 +61,6 @@ type EnvironmentDetail struct {
 	BundleCount    int
 	TotalSize      string
 	HealthScore    string
-	Metrics        []EnvironmentMetric
 	Guardrails     []EnvironmentGuardrail
 	Timeline       []EnvironmentTimelineEvent
 }

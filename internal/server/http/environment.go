@@ -45,17 +45,8 @@ type environmentDetailFields struct {
 	BundleCount    int                            `json:"bundleCount"`
 	TotalSize      string                         `json:"totalSize"`
 	HealthScore    string                         `json:"healthScore"`
-	Metrics        []environmentMetricResponse    `json:"metrics"`
 	Guardrails     []environmentGuardrailResponse `json:"guardrails"`
 	Timeline       []environmentTimelineResponse  `json:"timeline"`
-}
-
-type environmentMetricResponse struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Value  string `json:"value"`
-	Detail string `json:"detail"`
-	Tone   string `json:"tone"`
 }
 
 type environmentGuardrailResponse struct {
@@ -144,25 +135,10 @@ func newEnvironmentDetailResponse(detail domain.EnvironmentDetail) environmentDe
 			BundleCount:    detail.BundleCount,
 			TotalSize:      detail.TotalSize,
 			HealthScore:    detail.HealthScore,
-			Metrics:        newEnvironmentMetricResponses(detail.Metrics),
 			Guardrails:     newEnvironmentGuardrailResponses(detail.Guardrails),
 			Timeline:       newEnvironmentTimelineResponses(detail.Timeline),
 		},
 	}
-}
-
-func newEnvironmentMetricResponses(metrics []domain.EnvironmentMetric) []environmentMetricResponse {
-	response := make([]environmentMetricResponse, 0, len(metrics))
-	for _, metric := range metrics {
-		response = append(response, environmentMetricResponse{
-			ID:     metric.ID,
-			Label:  metric.Label,
-			Value:  metric.Value,
-			Detail: metric.Detail,
-			Tone:   metric.Tone,
-		})
-	}
-	return response
 }
 
 func newEnvironmentGuardrailResponses(guardrails []domain.EnvironmentGuardrail) []environmentGuardrailResponse {

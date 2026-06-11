@@ -53,6 +53,10 @@ func TestOpenAPIJSON(t *testing.T) {
 		"/api/v1/ping",
 		"/api/v1/environments",
 		"/api/v1/environments/{code}",
+		"/api/v1/applications",
+		"/api/v1/applications/options",
+		"/api/v1/applications/{slug}",
+		"/api/v1/feishu/users/search",
 	} {
 		if _, ok := paths[path]; !ok {
 			t.Fatalf("expected OpenAPI path %q", path)

@@ -20,20 +20,6 @@ create table if not exists environments (
     updated_at timestamptz not null default now()
 );
 
-create table if not exists environment_metrics (
-    id bigserial primary key,
-    environment_code text not null references environments(code) on delete cascade,
-    metric_key text not null,
-    label text not null,
-    value text not null,
-    detail text not null,
-    tone text not null check (tone in ('amber', 'blue', 'emerald', 'rose', 'slate')),
-    sort_order integer not null,
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now(),
-    unique (environment_code, metric_key)
-);
-
 create table if not exists environment_guardrails (
     id bigserial primary key,
     environment_code text not null references environments(code) on delete cascade,
@@ -201,54 +187,6 @@ on conflict (code) do update set
     sort_order = excluded.sort_order,
     updated_at = excluded.updated_at;
 
-insert into environment_metrics (
-    environment_code,
-    metric_key,
-    label,
-    value,
-    detail,
-    tone,
-    sort_order
-)
-select
-    environment_code,
-    metric_key,
-    label,
-    value,
-    detail,
-    tone,
-    sort_order
-from (
-    values
-        ('dev', 'traffic', '当前流量', '-', '按宿主应用在线会话估算', 'blue', 10),
-        ('dev', 'health', '健康度', '99.6%', '近 30 分钟错误率与白屏率', 'emerald', 20),
-        ('dev', 'latency', 'P99 加载', '436ms', 'Bundle 首屏加载耗时', 'slate', 30),
-        ('dev', 'errors', 'JS 错误率', '0.01%', 'Sentry 与端侧聚合', 'emerald', 40),
-        ('staging', 'traffic', '当前流量', '研发内网', '按宿主应用在线会话估算', 'blue', 10),
-        ('staging', 'health', '健康度', '99.7%', '近 30 分钟错误率与白屏率', 'emerald', 20),
-        ('staging', 'latency', 'P99 加载', '436ms', 'Bundle 首屏加载耗时', 'slate', 30),
-        ('staging', 'errors', 'JS 错误率', '0.01%', 'Sentry 与端侧聚合', 'emerald', 40),
-        ('preview', 'traffic', '当前流量', '体验账号', '按宿主应用在线会话估算', 'blue', 10),
-        ('preview', 'health', '健康度', '99.8%', '近 30 分钟错误率与白屏率', 'emerald', 20),
-        ('preview', 'latency', 'P99 加载', '436ms', 'Bundle 首屏加载耗时', 'slate', 30),
-        ('preview', 'errors', 'JS 错误率', '0.01%', 'Sentry 与端侧聚合', 'emerald', 40),
-        ('preProduct', 'traffic', '当前流量', '10K 内测', '按宿主应用在线会话估算', 'blue', 10),
-        ('preProduct', 'health', '健康度', '99.9%', '近 30 分钟错误率与白屏率', 'emerald', 20),
-        ('preProduct', 'latency', 'P99 加载', '436ms', 'Bundle 首屏加载耗时', 'slate', 30),
-        ('preProduct', 'errors', 'JS 错误率', '0.01%', 'Sentry 与端侧聚合', 'emerald', 40),
-        ('product', 'traffic', '当前流量', '2.4M 在线', '按宿主应用在线会话估算', 'blue', 10),
-        ('product', 'health', '健康度', '99.8%', '近 30 分钟错误率与白屏率', 'emerald', 20),
-        ('product', 'latency', 'P99 加载', '482ms', 'Bundle 首屏加载耗时', 'slate', 30),
-        ('product', 'errors', 'JS 错误率', '0.02%', 'Sentry 与端侧聚合', 'amber', 40)
-) as seed(environment_code, metric_key, label, value, detail, tone, sort_order)
-on conflict (environment_code, metric_key) do update set
-    label = excluded.label,
-    value = excluded.value,
-    detail = excluded.detail,
-    tone = excluded.tone,
-    sort_order = excluded.sort_order,
-    updated_at = now();
-
 insert into environment_guardrails (
     environment_code,
     guardrail_key,
@@ -344,9 +282,6 @@ on conflict (environment_code, event_key) do update set
     detail = excluded.detail,
     sort_order = excluded.sort_order,
     updated_at = now();
-
-create index if not exists idx_environment_metrics_environment_order
-    on environment_metrics(environment_code, sort_order);
 
 create index if not exists idx_environment_guardrails_environment_order
     on environment_guardrails(environment_code, sort_order);

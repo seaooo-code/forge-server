@@ -115,12 +115,6 @@ func (r *EnvironmentRepository) GetEnvironmentDetail(ctx context.Context, code s
 
 	detail.ID = detail.Environment.Code
 
-	metrics, err := r.listEnvironmentMetrics(ctx, code)
-	if err != nil {
-		return domain.EnvironmentDetail{}, err
-	}
-	detail.Metrics = metrics
-
 	guardrails, err := r.listEnvironmentGuardrails(ctx, code)
 	if err != nil {
 		return domain.EnvironmentDetail{}, err
@@ -134,34 +128,6 @@ func (r *EnvironmentRepository) GetEnvironmentDetail(ctx context.Context, code s
 	detail.Timeline = timeline
 
 	return detail, nil
-}
-
-func (r *EnvironmentRepository) listEnvironmentMetrics(ctx context.Context, code string) ([]domain.EnvironmentMetric, error) {
-	rows, err := r.pool.Query(ctx, `
-		select metric_key, label, value, detail, tone
-		from environment_metrics
-		where environment_code = $1
-		order by sort_order asc
-	`, code)
-	if err != nil {
-		return nil, fmt.Errorf("query environment metrics: %w", err)
-	}
-	defer rows.Close()
-
-	metrics := make([]domain.EnvironmentMetric, 0)
-	for rows.Next() {
-		var metric domain.EnvironmentMetric
-		if err := rows.Scan(&metric.ID, &metric.Label, &metric.Value, &metric.Detail, &metric.Tone); err != nil {
-			return nil, fmt.Errorf("scan environment metric: %w", err)
-		}
-		metrics = append(metrics, metric)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate environment metrics: %w", err)
-	}
-
-	return metrics, nil
 }
 
 func (r *EnvironmentRepository) listEnvironmentGuardrails(ctx context.Context, code string) ([]domain.EnvironmentGuardrail, error) {

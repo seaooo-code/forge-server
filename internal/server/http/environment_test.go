@@ -87,9 +87,6 @@ func TestGetEnvironmentDetail(t *testing.T) {
 	if response.Detail.Endpoint == "" || response.Detail.CDNDomain == "" {
 		t.Fatalf("expected runtime config fields, got endpoint=%q cdn=%q", response.Detail.Endpoint, response.Detail.CDNDomain)
 	}
-	if len(response.Detail.Metrics) != 1 {
-		t.Fatalf("expected metrics, got %d", len(response.Detail.Metrics))
-	}
 	if len(response.Detail.Guardrails) != 1 {
 		t.Fatalf("expected guardrails, got %d", len(response.Detail.Guardrails))
 	}
@@ -177,15 +174,6 @@ func testEnvironmentDetail(code string) domain.EnvironmentDetail {
 		BundleCount:    12,
 		TotalSize:      "3.9 MB",
 		HealthScore:    "99.8%",
-		Metrics: []domain.EnvironmentMetric{
-			{
-				ID:     "traffic",
-				Label:  "当前流量",
-				Value:  "2.4M 在线",
-				Detail: "按宿主应用在线会话估算",
-				Tone:   "blue",
-			},
-		},
 		Guardrails: []domain.EnvironmentGuardrail{
 			{
 				ID:     "dependency",

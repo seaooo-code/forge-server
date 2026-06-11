@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	"forge-server/internal/config"
+	feishuinfra "forge-server/internal/infra/feishu"
+	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
 	redisinfra "forge-server/internal/infra/redis"
 	httpserver "forge-server/internal/server/http"
@@ -24,32 +26,53 @@ type App struct {
 	server   *echo.Echo
 	postgres *pgxpool.Pool
 	redis    *redis.Client
+	otel     otelinfra.ShutdownFunc
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
+	otelShutdown, err := otelinfra.NewTracerProvider(ctx, cfg.Telemetry)
+	if err != nil {
+		return nil, err
+	}
+	cleanupOTel := func() {
+		_ = otelShutdown(context.Background())
+	}
+
 	postgresPool, err := postgres.NewPool(ctx, cfg.Postgres)
 	if err != nil {
+		cleanupOTel()
 		return nil, err
 	}
 
 	if err := postgres.RunMigrations(ctx, postgresPool, "migrations"); err != nil {
 		postgresPool.Close()
+		cleanupOTel()
 		return nil, fmt.Errorf("run postgres migrations: %w", err)
 	}
 
 	redisClient, err := redisinfra.NewClient(ctx, cfg.Redis)
 	if err != nil {
 		postgresPool.Close()
+		cleanupOTel()
 		return nil, err
 	}
 
 	environmentRepository := postgres.NewEnvironmentRepository(postgresPool)
 	environmentService := service.NewEnvironmentService(environmentRepository)
+	applicationRepository := postgres.NewApplicationRepository(postgresPool)
+	applicationService := service.NewApplicationService(applicationRepository)
+	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
+	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
+	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository)
+	feishuContactService := service.NewFeishuContactService(feishuClient)
 
 	server := httpserver.New(cfg, httpserver.Dependencies{
-		EnvironmentService: environmentService,
-		Postgres:           postgresPool,
-		Redis:              redisClient,
+		ApplicationService:   applicationService,
+		EnvironmentService:   environmentService,
+		FeishuAuthService:    feishuAuthService,
+		FeishuContactService: feishuContactService,
+		Postgres:             postgresPool,
+		Redis:                redisClient,
 	})
 
 	return &App{
@@ -58,6 +81,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		server:   server,
 		postgres: postgresPool,
 		redis:    redisClient,
+		otel:     otelShutdown,
 	}, nil
 }
 
@@ -100,6 +124,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 	if a.postgres != nil {
 		a.postgres.Close()
+	}
+
+	if a.otel != nil {
+		if err := a.otel(shutdownCtx); err != nil {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("shutdown opentelemetry: %w", err))
+		}
 	}
 
 	return shutdownErr

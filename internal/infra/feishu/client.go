@@ -1,0 +1,421 @@
+package feishu
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"forge-server/internal/config"
+	"forge-server/internal/domain"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+)
+
+type Client struct {
+	cfg        config.FeishuConfig
+	httpClient *http.Client
+}
+
+func NewClient(cfg config.FeishuConfig, telemetryEnabled bool) *Client {
+	var transport http.RoundTripper = http.DefaultTransport
+	if telemetryEnabled {
+		transport = otelhttp.NewTransport(transport)
+	}
+
+	return &Client{
+		cfg: cfg,
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+		},
+	}
+}
+
+func (c *Client) AuthorizationURL(state string) (string, error) {
+	if !c.configured() || c.cfg.RedirectURI == "" {
+		return "", domain.ErrFeishuAuthNotConfigured
+	}
+
+	authURL, err := url.Parse(c.cfg.AuthURL)
+	if err != nil {
+		return "", fmt.Errorf("%w: parse authorization url: %w", domain.ErrFeishuAuthorization, err)
+	}
+
+	values := authURL.Query()
+	values.Set("client_id", c.cfg.AppID)
+	values.Set("response_type", "code")
+	values.Set("redirect_uri", c.cfg.RedirectURI)
+	values.Set("state", state)
+	if c.cfg.Scope != "" {
+		values.Set("scope", c.cfg.Scope)
+	}
+	if c.cfg.Prompt != "" {
+		values.Set("prompt", c.cfg.Prompt)
+	}
+	authURL.RawQuery = values.Encode()
+
+	return authURL.String(), nil
+}
+
+func (c *Client) ExchangeCode(ctx context.Context, code string) (domain.FeishuToken, error) {
+	if !c.configured() {
+		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
+	}
+
+	body := tokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     c.cfg.AppID,
+		ClientSecret: c.cfg.AppSecret,
+		Code:         code,
+		RedirectURI:  c.cfg.RedirectURI,
+	}
+
+	return c.requestToken(ctx, body)
+}
+
+func (c *Client) RefreshAccessToken(ctx context.Context, refreshToken string) (domain.FeishuToken, error) {
+	if !c.configured() {
+		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
+	}
+
+	body := tokenRequest{
+		GrantType:    "refresh_token",
+		ClientID:     c.cfg.AppID,
+		ClientSecret: c.cfg.AppSecret,
+		RefreshToken: refreshToken,
+	}
+
+	return c.requestToken(ctx, body)
+}
+
+func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (domain.FeishuUser, error) {
+	if c.cfg.UserInfoURL == "" {
+		return domain.FeishuUser{}, domain.ErrFeishuAuthNotConfigured
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.UserInfoURL, nil)
+	if err != nil {
+		return domain.FeishuUser{}, fmt.Errorf("%w: build user info request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.FeishuUser{}, fmt.Errorf("%w: request user info: %w", domain.ErrFeishuAuthorization, err)
+	}
+	defer resp.Body.Close()
+
+	var response userInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return domain.FeishuUser{}, fmt.Errorf("%w: decode user info response: %w", domain.ErrFeishuAuthorization, err)
+	}
+
+	if response.Code != 0 || response.Data.UnionID == "" {
+		return domain.FeishuUser{}, fmt.Errorf("%w: user info error code=%d msg=%s", domain.ErrFeishuAuthorization, response.Code, response.Msg)
+	}
+
+	return domain.FeishuUser{
+		UnionID:         response.Data.UnionID,
+		OpenID:          response.Data.OpenID,
+		UserID:          response.Data.UserID,
+		Name:            response.Data.Name,
+		EnName:          response.Data.EnName,
+		AvatarURL:       response.Data.AvatarURL,
+		AvatarThumb:     response.Data.AvatarThumb,
+		AvatarMiddle:    response.Data.AvatarMiddle,
+		AvatarBig:       response.Data.AvatarBig,
+		Email:           response.Data.Email,
+		EnterpriseEmail: response.Data.EnterpriseEmail,
+		Mobile:          response.Data.Mobile,
+		TenantKey:       response.Data.TenantKey,
+		EmployeeNo:      response.Data.EmployeeNo,
+	}, nil
+}
+
+func (c *Client) SearchUsers(ctx context.Context, accessToken string, query string, pageSize int, pageToken string) (domain.FeishuUserSearchPage, error) {
+	if c.cfg.UserSearchURL == "" {
+		return domain.FeishuUserSearchPage{}, domain.ErrFeishuAuthNotConfigured
+	}
+	if accessToken == "" {
+		return domain.FeishuUserSearchPage{}, domain.ErrFeishuAuthorization
+	}
+
+	searchURL, err := url.Parse(c.cfg.UserSearchURL)
+	if err != nil {
+		return domain.FeishuUserSearchPage{}, fmt.Errorf("%w: parse user search url: %w", domain.ErrFeishuAuthorization, err)
+	}
+	values := searchURL.Query()
+	values.Set("query", query)
+	values.Set("page_size", strconv.Itoa(pageSize))
+	if pageToken = strings.TrimSpace(pageToken); pageToken != "" {
+		values.Set("page_token", pageToken)
+	}
+	searchURL.RawQuery = values.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL.String(), nil)
+	if err != nil {
+		return domain.FeishuUserSearchPage{}, fmt.Errorf("%w: build user search request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domain.FeishuUserSearchPage{}, fmt.Errorf("%w: send user search request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	defer resp.Body.Close()
+
+	var response userSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return domain.FeishuUserSearchPage{}, fmt.Errorf("%w: decode user search response: %w", domain.ErrFeishuAuthorization, err)
+	}
+	if c.cfg.DebugLogSearchResponse {
+		logUserSearchResponse(response)
+	}
+	if response.Code != 0 {
+		return domain.FeishuUserSearchPage{}, &domain.FeishuAPIError{
+			Code:     response.Code,
+			Endpoint: "search.v1.user",
+			Msg:      response.Msg,
+		}
+	}
+
+	users := make([]domain.FeishuUserSearchResult, 0, len(response.Data.Users))
+	for _, rawItem := range response.Data.Users {
+		var item userSearchItem
+		if err := json.Unmarshal(rawItem, &item); err != nil {
+			continue
+		}
+		users = append(users, domain.FeishuUserSearchResult{
+			OpenID:        item.OpenID,
+			UserID:        item.UserID,
+			Name:          item.Name,
+			AvatarURL:     item.avatarURL(),
+			DepartmentIDs: nonNilStrings(item.DepartmentIDs),
+		})
+	}
+
+	return domain.FeishuUserSearchPage{
+		Users:     users,
+		HasMore:   response.Data.HasMore,
+		PageToken: response.Data.PageToken,
+	}, nil
+}
+
+func (c *Client) configured() bool {
+	return c.cfg.AppID != "" && c.cfg.AppSecret != "" && c.cfg.TokenURL != "" && c.cfg.UserInfoURL != "" && c.cfg.AuthURL != ""
+}
+
+func (c *Client) postJSON(ctx context.Context, requestURL string, body any, out any) error {
+	return c.postJSONWithAuth(ctx, requestURL, body, "", out)
+}
+
+func (c *Client) postJSONWithAuth(ctx context.Context, requestURL string, body any, bearerToken string, out any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("%w: encode request: %w", domain.ErrFeishuAuthorization, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("%w: build request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: send request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("%w: decode response: %w", domain.ErrFeishuAuthorization, err)
+	}
+
+	return nil
+}
+
+func (c *Client) requestToken(ctx context.Context, body tokenRequest) (domain.FeishuToken, error) {
+	var response tokenResponse
+	if err := c.postJSON(ctx, c.cfg.TokenURL, body, &response); err != nil {
+		return domain.FeishuToken{}, err
+	}
+
+	if response.Code != 0 || response.AccessToken == "" {
+		return domain.FeishuToken{}, fmt.Errorf("%w: token error code=%d error=%s description=%s", domain.ErrFeishuAuthorization, response.Code, response.Error, response.ErrorDescription)
+	}
+
+	return domain.FeishuToken{
+		AccessToken:           response.AccessToken,
+		ExpiresIn:             response.ExpiresIn,
+		RefreshToken:          response.RefreshToken,
+		RefreshTokenExpiresIn: response.RefreshTokenExpiresIn,
+		TokenType:             response.TokenType,
+		Scope:                 response.Scope,
+	}, nil
+}
+
+type tokenRequest struct {
+	GrantType    string `json:"grant_type"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	Code         string `json:"code,omitempty"`
+	RedirectURI  string `json:"redirect_uri,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+}
+
+type tokenResponse struct {
+	Code                  int    `json:"code"`
+	AccessToken           string `json:"access_token"`
+	ExpiresIn             int    `json:"expires_in"`
+	RefreshToken          string `json:"refresh_token"`
+	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`
+	TokenType             string `json:"token_type"`
+	Scope                 string `json:"scope"`
+	Error                 string `json:"error"`
+	ErrorDescription      string `json:"error_description"`
+}
+
+type userInfoResponse struct {
+	Code int          `json:"code"`
+	Msg  string       `json:"msg"`
+	Data userInfoData `json:"data"`
+}
+
+type userInfoData struct {
+	Name            string `json:"name"`
+	EnName          string `json:"en_name"`
+	AvatarURL       string `json:"avatar_url"`
+	AvatarThumb     string `json:"avatar_thumb"`
+	AvatarMiddle    string `json:"avatar_middle"`
+	AvatarBig       string `json:"avatar_big"`
+	OpenID          string `json:"open_id"`
+	UnionID         string `json:"union_id"`
+	Email           string `json:"email"`
+	EnterpriseEmail string `json:"enterprise_email"`
+	UserID          string `json:"user_id"`
+	Mobile          string `json:"mobile"`
+	TenantKey       string `json:"tenant_key"`
+	EmployeeNo      string `json:"employee_no"`
+}
+
+type userSearchResponse struct {
+	Code int            `json:"code"`
+	Msg  string         `json:"msg"`
+	Data userSearchData `json:"data"`
+}
+
+type userSearchData struct {
+	HasMore   bool              `json:"has_more"`
+	PageToken string            `json:"page_token"`
+	Users     []json.RawMessage `json:"users"`
+}
+
+type userSearchItem struct {
+	Avatar        userSearchAvatar `json:"avatar"`
+	DepartmentIDs []string         `json:"department_ids"`
+	Name          string           `json:"name"`
+	OpenID        string           `json:"open_id"`
+	UserID        string           `json:"user_id"`
+}
+
+type userSearchAvatar struct {
+	Avatar72     string `json:"avatar_72"`
+	Avatar240    string `json:"avatar_240"`
+	Avatar640    string `json:"avatar_640"`
+	AvatarOrigin string `json:"avatar_origin"`
+}
+
+func (i userSearchItem) avatarURL() string {
+	return firstNonEmpty(i.Avatar.Avatar72, i.Avatar.Avatar240, i.Avatar.Avatar640, i.Avatar.AvatarOrigin)
+}
+
+func logUserSearchResponse(response userSearchResponse) {
+	users := make([]string, 0, len(response.Data.Users))
+	for _, raw := range response.Data.Users {
+		users = append(users, sanitizeRawJSONForLog(raw))
+	}
+
+	slog.Default().Debug(
+		"feishu user search response",
+		"code", response.Code,
+		"msg", response.Msg,
+		"has_more", response.Data.HasMore,
+		"page_token_present", response.Data.PageToken != "",
+		"user_count", len(response.Data.Users),
+		"users", users,
+	)
+}
+
+func sanitizeRawJSONForLog(raw json.RawMessage) string {
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return "<invalid-json>"
+	}
+
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(sanitizeJSONValueForLog(value)); err != nil {
+		return "<marshal-failed>"
+	}
+	return strings.TrimSpace(buffer.String())
+}
+
+func sanitizeJSONValueForLog(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			result[key] = sanitizeJSONValueForLog(item)
+		}
+		return result
+	case []any:
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, sanitizeJSONValueForLog(item))
+		}
+		return result
+	case string:
+		if typed == "" {
+			return ""
+		}
+		return "<string>"
+	case json.Number:
+		return "<number>"
+	case bool:
+		return typed
+	case nil:
+		return nil
+	default:
+		return "<value>"
+	}
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
