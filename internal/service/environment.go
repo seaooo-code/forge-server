@@ -7,7 +7,7 @@ import (
 )
 
 type EnvironmentRepository interface {
-	GetEnvironmentDetail(ctx context.Context, code string) (domain.EnvironmentDetail, error)
+	GetEnvironmentDetail(ctx context.Context, code string) (domain.Environment, error)
 	ListEnvironments(ctx context.Context) ([]domain.Environment, error)
 }
 
@@ -23,9 +23,9 @@ func (s *EnvironmentService) ListEnvironments(ctx context.Context) ([]domain.Env
 	return s.repository.ListEnvironments(ctx)
 }
 
-func (s *EnvironmentService) GetEnvironmentDetail(ctx context.Context, code string) (domain.EnvironmentDetail, error) {
+func (s *EnvironmentService) GetEnvironmentDetail(ctx context.Context, code string) (domain.Environment, error) {
 	if !domain.IsValidEnvironmentCode(code) {
-		return domain.EnvironmentDetail{}, domain.ErrEnvironmentNotFound
+		return domain.Environment{}, domain.ErrEnvironmentNotFound
 	}
 
 	return s.repository.GetEnvironmentDetail(ctx, code)

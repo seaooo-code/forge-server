@@ -23,46 +23,14 @@ var validEnvironmentCodes = map[string]struct{}{
 }
 
 type Environment struct {
-	Code               string
-	ShortCode          string
-	Name               string
-	Status             EnvironmentStatus
-	Tone               string
-	Description        string
-	CurrentCombination string
-	TrafficLabel       string
-	UpdatedAt          time.Time
-}
-
-type EnvironmentGuardrail struct {
-	ID     string
-	Label  string
-	Value  string
-	Status string
-}
-
-type EnvironmentTimelineEvent struct {
-	ID          string
-	DisplayTime string
-	Action      string
-	Operator    string
-	Status      string
-	Detail      string
-}
-
-type EnvironmentDetail struct {
-	Environment    Environment
-	ID             string
-	Endpoint       string
-	CDNDomain      string
-	BranchPolicy   string
-	ReleasePolicy  string
-	CurrentRelease string
-	BundleCount    int
-	TotalSize      string
-	HealthScore    string
-	Guardrails     []EnvironmentGuardrail
-	Timeline       []EnvironmentTimelineEvent
+	Code         string
+	ShortCode    string
+	Name         string
+	Status       EnvironmentStatus
+	Tone         string
+	Description  string
+	TrafficLabel string
+	UpdatedAt    time.Time
 }
 
 func IsValidEnvironmentCode(code string) bool {

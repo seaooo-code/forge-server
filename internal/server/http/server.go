@@ -27,6 +27,7 @@ type Dependencies struct {
 	EnvironmentService   EnvironmentService
 	FeishuAuthService    FeishuAuthService
 	FeishuContactService FeishuContactService
+	StorageService       StorageService
 	Postgres             *pgxpool.Pool
 	Redis                *redis.Client
 }
@@ -41,7 +42,7 @@ type ApplicationService interface {
 }
 
 type EnvironmentService interface {
-	GetEnvironmentDetail(ctx context.Context, code string) (domain.EnvironmentDetail, error)
+	GetEnvironmentDetail(ctx context.Context, code string) (domain.Environment, error)
 	ListEnvironments(ctx context.Context) ([]domain.Environment, error)
 }
 
@@ -54,6 +55,14 @@ type FeishuAuthService interface {
 
 type FeishuContactService interface {
 	SearchUsers(ctx context.Context, accessToken string, query string, pageSize int, pageToken string) (domain.FeishuUserSearchPage, error)
+}
+
+type StorageService interface {
+	CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
+	DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
+	GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
+	ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error)
+	UpdateStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 }
 
 func New(cfg config.Config, deps Dependencies) *echo.Echo {
@@ -89,6 +98,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerEnvironmentRoutes(api, deps.EnvironmentService)
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
 	registerFeishuContactRoutes(api, deps.FeishuContactService, deps.FeishuAuthService)
+	registerStorageRoutes(api, deps.StorageService)
 
 	return e
 }

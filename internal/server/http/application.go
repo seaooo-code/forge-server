@@ -74,8 +74,6 @@ type applicationMetricResponse struct {
 type applicationEnvironmentResponse struct {
 	ID          string `json:"id"`
 	Environment string `json:"environment"`
-	Combination string `json:"combination"`
-	BundleCount int    `json:"bundleCount"`
 	Traffic     string `json:"traffic"`
 	UpdatedAt   string `json:"updatedAt"`
 	Status      string `json:"status"`
@@ -403,8 +401,6 @@ func newApplicationEnvironmentResponses(environments []domain.ApplicationEnviron
 		response = append(response, applicationEnvironmentResponse{
 			ID:          environment.ID,
 			Environment: environment.Environment,
-			Combination: environment.Combination,
-			BundleCount: environment.BundleCount,
 			Traffic:     environment.Traffic,
 			UpdatedAt:   formatTime(environment.UpdatedAt),
 			Status:      environment.Status.Label(),

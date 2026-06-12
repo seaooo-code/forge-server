@@ -338,8 +338,6 @@ func (r *ApplicationRepository) listApplicationEnvironments(ctx context.Context,
 	rows, err := querier.Query(ctx, `
 		select
 			e.code,
-			e.current_combination,
-			e.bundle_count,
 			e.traffic_label,
 			e.updated_at,
 			e.status
@@ -358,8 +356,6 @@ func (r *ApplicationRepository) listApplicationEnvironments(ctx context.Context,
 		var environment domain.ApplicationEnvironmentBinding
 		if err := rows.Scan(
 			&environment.Environment,
-			&environment.Combination,
-			&environment.BundleCount,
 			&environment.Traffic,
 			&environment.UpdatedAt,
 			&environment.Status,

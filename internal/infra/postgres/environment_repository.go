@@ -28,7 +28,6 @@ func (r *EnvironmentRepository) ListEnvironments(ctx context.Context) ([]domain.
 			status,
 			tone,
 			description,
-			current_combination,
 			traffic_label,
 			updated_at
 		from environments
@@ -49,7 +48,6 @@ func (r *EnvironmentRepository) ListEnvironments(ctx context.Context) ([]domain.
 			&environment.Status,
 			&environment.Tone,
 			&environment.Description,
-			&environment.CurrentCombination,
 			&environment.TrafficLabel,
 			&environment.UpdatedAt,
 		); err != nil {
@@ -65,8 +63,8 @@ func (r *EnvironmentRepository) ListEnvironments(ctx context.Context) ([]domain.
 	return environments, nil
 }
 
-func (r *EnvironmentRepository) GetEnvironmentDetail(ctx context.Context, code string) (domain.EnvironmentDetail, error) {
-	var detail domain.EnvironmentDetail
+func (r *EnvironmentRepository) GetEnvironmentDetail(ctx context.Context, code string) (domain.Environment, error) {
+	var environment domain.Environment
 	if err := r.pool.QueryRow(ctx, `
 		select
 			code,
@@ -75,120 +73,25 @@ func (r *EnvironmentRepository) GetEnvironmentDetail(ctx context.Context, code s
 			status,
 			tone,
 			description,
-			current_combination,
 			traffic_label,
-			updated_at,
-			endpoint,
-			cdn_domain,
-			branch_policy,
-			release_policy,
-			current_release,
-			bundle_count,
-			total_size,
-			health_score
+			updated_at
 		from environments
 		where code = $1
 	`, code).Scan(
-		&detail.Environment.Code,
-		&detail.Environment.ShortCode,
-		&detail.Environment.Name,
-		&detail.Environment.Status,
-		&detail.Environment.Tone,
-		&detail.Environment.Description,
-		&detail.Environment.CurrentCombination,
-		&detail.Environment.TrafficLabel,
-		&detail.Environment.UpdatedAt,
-		&detail.Endpoint,
-		&detail.CDNDomain,
-		&detail.BranchPolicy,
-		&detail.ReleasePolicy,
-		&detail.CurrentRelease,
-		&detail.BundleCount,
-		&detail.TotalSize,
-		&detail.HealthScore,
+		&environment.Code,
+		&environment.ShortCode,
+		&environment.Name,
+		&environment.Status,
+		&environment.Tone,
+		&environment.Description,
+		&environment.TrafficLabel,
+		&environment.UpdatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.EnvironmentDetail{}, domain.ErrEnvironmentNotFound
+			return domain.Environment{}, domain.ErrEnvironmentNotFound
 		}
-		return domain.EnvironmentDetail{}, fmt.Errorf("query environment detail: %w", err)
+		return domain.Environment{}, fmt.Errorf("query environment detail: %w", err)
 	}
 
-	detail.ID = detail.Environment.Code
-
-	guardrails, err := r.listEnvironmentGuardrails(ctx, code)
-	if err != nil {
-		return domain.EnvironmentDetail{}, err
-	}
-	detail.Guardrails = guardrails
-
-	timeline, err := r.listEnvironmentTimeline(ctx, code)
-	if err != nil {
-		return domain.EnvironmentDetail{}, err
-	}
-	detail.Timeline = timeline
-
-	return detail, nil
-}
-
-func (r *EnvironmentRepository) listEnvironmentGuardrails(ctx context.Context, code string) ([]domain.EnvironmentGuardrail, error) {
-	rows, err := r.pool.Query(ctx, `
-		select guardrail_key, label, value, status
-		from environment_guardrails
-		where environment_code = $1
-		order by sort_order asc
-	`, code)
-	if err != nil {
-		return nil, fmt.Errorf("query environment guardrails: %w", err)
-	}
-	defer rows.Close()
-
-	guardrails := make([]domain.EnvironmentGuardrail, 0)
-	for rows.Next() {
-		var guardrail domain.EnvironmentGuardrail
-		if err := rows.Scan(&guardrail.ID, &guardrail.Label, &guardrail.Value, &guardrail.Status); err != nil {
-			return nil, fmt.Errorf("scan environment guardrail: %w", err)
-		}
-		guardrails = append(guardrails, guardrail)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate environment guardrails: %w", err)
-	}
-
-	return guardrails, nil
-}
-
-func (r *EnvironmentRepository) listEnvironmentTimeline(ctx context.Context, code string) ([]domain.EnvironmentTimelineEvent, error) {
-	rows, err := r.pool.Query(ctx, `
-		select event_key, display_time, action, operator, status, detail
-		from environment_timeline_events
-		where environment_code = $1
-		order by sort_order asc
-	`, code)
-	if err != nil {
-		return nil, fmt.Errorf("query environment timeline: %w", err)
-	}
-	defer rows.Close()
-
-	events := make([]domain.EnvironmentTimelineEvent, 0)
-	for rows.Next() {
-		var event domain.EnvironmentTimelineEvent
-		if err := rows.Scan(
-			&event.ID,
-			&event.DisplayTime,
-			&event.Action,
-			&event.Operator,
-			&event.Status,
-			&event.Detail,
-		); err != nil {
-			return nil, fmt.Errorf("scan environment timeline: %w", err)
-		}
-		events = append(events, event)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate environment timeline: %w", err)
-	}
-
-	return events, nil
+	return environment, nil
 }

@@ -77,8 +77,6 @@ type ApplicationDetailMetric struct {
 type ApplicationEnvironmentBinding struct {
 	ID          string
 	Environment string
-	Combination string
-	BundleCount int
 	Traffic     string
 	UpdatedAt   time.Time
 	Status      ApplicationEnvironmentStatus

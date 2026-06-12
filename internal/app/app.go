@@ -61,6 +61,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	environmentService := service.NewEnvironmentService(environmentRepository)
 	applicationRepository := postgres.NewApplicationRepository(postgresPool)
 	applicationService := service.NewApplicationService(applicationRepository)
+	storageRepository := postgres.NewStorageRepository(postgresPool)
+	storageService := service.NewStorageService(storageRepository)
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
 	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
 	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository)
@@ -71,6 +73,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		EnvironmentService:   environmentService,
 		FeishuAuthService:    feishuAuthService,
 		FeishuContactService: feishuContactService,
+		StorageService:       storageService,
 		Postgres:             postgresPool,
 		Redis:                redisClient,
 	})

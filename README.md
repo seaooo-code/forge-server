@@ -27,6 +27,11 @@ http://localhost:8080/openapi.json
 - `POST /api/v1/applications`：创建应用。
 - `PATCH /api/v1/applications/:slug`：更新应用。
 - `DELETE /api/v1/applications/:slug`：删除应用。
+- `GET /api/v1/storage/configurations`：存储配置列表。
+- `GET /api/v1/storage/configurations/:id`：存储配置详情。
+- `POST /api/v1/storage/configurations`：创建存储配置。
+- `PATCH /api/v1/storage/configurations/:id`：更新存储配置。
+- `DELETE /api/v1/storage/configurations/:id`：删除存储配置。
 - `GET /api/v1/feishu/users/search`：搜索飞书用户，用于负责人选择。
 - `GET /api/v1/auth/feishu/authorize`：跳转飞书 OAuth 授权页。
 - `GET /api/v1/auth/feishu/callback`：交换飞书 OAuth code，获取用户信息并写入 `feishu_users`。

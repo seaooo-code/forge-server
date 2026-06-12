@@ -55,8 +55,8 @@ func TestListEnvironments(t *testing.T) {
 func TestGetEnvironmentDetail(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		EnvironmentService: fakeEnvironmentService{
-			details: map[string]domain.EnvironmentDetail{
-				"product": testEnvironmentDetail("product"),
+			details: map[string]domain.Environment{
+				"product": testEnvironment("product", "PRODUCT", domain.EnvironmentStatusGray),
 			},
 		},
 	})
@@ -81,24 +81,15 @@ func TestGetEnvironmentDetail(t *testing.T) {
 	if response.Environment.Status != "灰度中" {
 		t.Fatalf("expected gray status label, got %q", response.Environment.Status)
 	}
-	if response.Detail.ID != "product" {
-		t.Fatalf("expected product detail id, got %q", response.Detail.ID)
-	}
-	if response.Detail.Endpoint == "" || response.Detail.CDNDomain == "" {
-		t.Fatalf("expected runtime config fields, got endpoint=%q cdn=%q", response.Detail.Endpoint, response.Detail.CDNDomain)
-	}
-	if len(response.Detail.Guardrails) != 1 {
-		t.Fatalf("expected guardrails, got %d", len(response.Detail.Guardrails))
-	}
-	if len(response.Detail.Timeline) != 1 {
-		t.Fatalf("expected timeline events, got %d", len(response.Detail.Timeline))
+	if response.Environment.Traffic == "" {
+		t.Fatalf("expected environment entity fields, got traffic=%q", response.Environment.Traffic)
 	}
 }
 
 func TestGetEnvironmentDetailNotFound(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		EnvironmentService: fakeEnvironmentService{
-			details: map[string]domain.EnvironmentDetail{},
+			details: map[string]domain.Environment{},
 		},
 	})
 
@@ -123,17 +114,17 @@ func TestGetEnvironmentDetailNotFound(t *testing.T) {
 
 type fakeEnvironmentService struct {
 	environments []domain.Environment
-	details      map[string]domain.EnvironmentDetail
+	details      map[string]domain.Environment
 }
 
 func (s fakeEnvironmentService) ListEnvironments(context.Context) ([]domain.Environment, error) {
 	return s.environments, nil
 }
 
-func (s fakeEnvironmentService) GetEnvironmentDetail(_ context.Context, code string) (domain.EnvironmentDetail, error) {
+func (s fakeEnvironmentService) GetEnvironmentDetail(_ context.Context, code string) (domain.Environment, error) {
 	detail, ok := s.details[code]
 	if !ok {
-		return domain.EnvironmentDetail{}, domain.ErrEnvironmentNotFound
+		return domain.Environment{}, domain.ErrEnvironmentNotFound
 	}
 	return detail, nil
 }
@@ -150,47 +141,13 @@ func testEnvironments() []domain.Environment {
 
 func testEnvironment(code string, shortCode string, status domain.EnvironmentStatus) domain.Environment {
 	return domain.Environment{
-		Code:               code,
-		ShortCode:          shortCode,
-		Name:               shortCode + " 环境",
-		Status:             status,
-		Tone:               "blue",
-		Description:        "环境说明",
-		CurrentCombination: code + "-combo",
-		TrafficLabel:       "研发内网",
-		UpdatedAt:          time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
-	}
-}
-
-func testEnvironmentDetail(code string) domain.EnvironmentDetail {
-	return domain.EnvironmentDetail{
-		Environment:    testEnvironment(code, "PRODUCT", domain.EnvironmentStatusGray),
-		ID:             code,
-		Endpoint:       "https://rn.xiaomi.com",
-		CDNDomain:      "rn-cdn.xiaomi.com",
-		BranchPolicy:   "prod tag 锁定，不允许直接写入",
-		ReleasePolicy:  "发布单审批 + 灰度推进",
-		CurrentRelease: "RT-20260611",
-		BundleCount:    12,
-		TotalSize:      "3.9 MB",
-		HealthScore:    "99.8%",
-		Guardrails: []domain.EnvironmentGuardrail{
-			{
-				ID:     "dependency",
-				Label:  "依赖检查",
-				Value:  "Common Bundle 与 Feature Bundle 版本兼容",
-				Status: "通过",
-			},
-		},
-		Timeline: []domain.EnvironmentTimelineEvent{
-			{
-				ID:          "sync",
-				DisplayTime: "14:32:18",
-				Action:      "同步 Combination",
-				Operator:    "release.bot",
-				Status:      "进行中",
-				Detail:      "product-combo-20260609.0 已写入环境配置",
-			},
-		},
+		Code:         code,
+		ShortCode:    shortCode,
+		Name:         shortCode + " 环境",
+		Status:       status,
+		Tone:         "blue",
+		Description:  "环境说明",
+		TrafficLabel: "研发内网",
+		UpdatedAt:    time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
 	}
 }

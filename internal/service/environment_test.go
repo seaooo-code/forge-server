@@ -24,11 +24,8 @@ func TestEnvironmentServiceRejectsUnknownEnvironmentCode(t *testing.T) {
 
 func TestEnvironmentServiceReturnsEnvironmentDetail(t *testing.T) {
 	repository := fakeEnvironmentRepository{
-		detail: domain.EnvironmentDetail{
-			ID: "dev",
-			Environment: domain.Environment{
-				Code: "dev",
-			},
+		detail: domain.Environment{
+			Code: "dev",
 		},
 	}
 	service := NewEnvironmentService(&repository)
@@ -38,8 +35,8 @@ func TestEnvironmentServiceReturnsEnvironmentDetail(t *testing.T) {
 		t.Fatalf("get environment detail: %v", err)
 	}
 
-	if detail.ID != "dev" {
-		t.Fatalf("expected dev detail, got %q", detail.ID)
+	if detail.Code != "dev" {
+		t.Fatalf("expected dev environment, got %q", detail.Code)
 	}
 	if repository.detailCalls != 1 {
 		t.Fatalf("expected repository to be called once, got %d", repository.detailCalls)
@@ -47,7 +44,7 @@ func TestEnvironmentServiceReturnsEnvironmentDetail(t *testing.T) {
 }
 
 type fakeEnvironmentRepository struct {
-	detail      domain.EnvironmentDetail
+	detail      domain.Environment
 	detailCalls int
 }
 
@@ -55,7 +52,7 @@ func (r *fakeEnvironmentRepository) ListEnvironments(context.Context) ([]domain.
 	return nil, nil
 }
 
-func (r *fakeEnvironmentRepository) GetEnvironmentDetail(context.Context, string) (domain.EnvironmentDetail, error) {
+func (r *fakeEnvironmentRepository) GetEnvironmentDetail(context.Context, string) (domain.Environment, error) {
 	r.detailCalls++
 	return r.detail, nil
 }

@@ -41,6 +41,10 @@ func openAPIDocument() *openapi3.T {
 				Description: "Host application management.",
 			},
 			{
+				Name:        "Storage",
+				Description: "S3-compatible storage configuration management.",
+			},
+			{
 				Name:        "Auth",
 				Description: "Authentication integrations.",
 			},
@@ -147,6 +151,52 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/storage/configurations", &openapi3.PathItem{
+				Get: operation("listStorageConfigurations", "List storage configurations", []string{"Storage"}, responses(
+					response(http.StatusOK, "Storage configuration list.", schemaRef("StorageConfigurationsResponse")),
+					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+				)),
+				Post: func() *openapi3.Operation {
+					op := operation("createStorageConfiguration", "Create storage configuration", []string{"Storage"}, responses(
+						response(http.StatusCreated, "Storage configuration created.", schemaRef("StorageConfigurationDetailResponse")),
+						response(http.StatusBadRequest, "Invalid storage configuration request.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Storage configuration create payload.", schemaRef("StorageConfigurationCreateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/storage/configurations/{id}", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("getStorageConfiguration", "Get storage configuration", []string{"Storage"}, responses(
+						response(http.StatusOK, "Storage configuration detail.", schemaRef("StorageConfigurationDetailResponse")),
+						response(http.StatusNotFound, "Storage configuration not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = storageConfigurationIDParameters()
+					return op
+				}(),
+				Patch: func() *openapi3.Operation {
+					op := operation("updateStorageConfiguration", "Update storage configuration", []string{"Storage"}, responses(
+						response(http.StatusOK, "Storage configuration updated.", schemaRef("StorageConfigurationDetailResponse")),
+						response(http.StatusBadRequest, "Invalid storage configuration request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Storage configuration not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = storageConfigurationIDParameters()
+					op.RequestBody = requestBody("Storage configuration update payload. Empty secret fields keep current credentials.", schemaRef("StorageConfigurationUpdateRequest"))
+					return op
+				}(),
+				Delete: func() *openapi3.Operation {
+					op := operation("deleteStorageConfiguration", "Delete storage configuration", []string{"Storage"}, responses(
+						response(http.StatusOK, "Storage configuration deleted.", schemaRef("StorageConfigurationDetailResponse")),
+						response(http.StatusNotFound, "Storage configuration not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = storageConfigurationIDParameters()
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/auth/feishu/authorize", &openapi3.PathItem{
 				Get: operation("authorizeFeishu", "Redirect to Feishu OAuth authorization page", []string{"Auth"}, responses(
 					responseNoBody(http.StatusFound, "Redirect to Feishu authorization page."),
@@ -232,37 +282,39 @@ func openAPIDocument() *openapi3.T {
 		),
 		Components: &openapi3.Components{
 			Schemas: openapi3.Schemas{
-				"ErrorResponse":                 schemaValue(errorResponseSchema()),
-				"HealthResponse":                schemaValue(healthResponseSchema()),
-				"ReadinessResponse":             schemaValue(readinessResponseSchema()),
-				"PingResponse":                  schemaValue(pingResponseSchema()),
-				"Environment":                   schemaValue(environmentSchema()),
-				"EnvironmentGuardrail":          schemaValue(environmentGuardrailSchema()),
-				"EnvironmentTimelineEvent":      schemaValue(environmentTimelineEventSchema()),
-				"EnvironmentDetail":             schemaValue(environmentDetailSchema()),
-				"EnvironmentsResponse":          schemaValue(environmentsResponseSchema()),
-				"EnvironmentDetailResponse":     schemaValue(environmentDetailResponseSchema()),
-				"Application":                   schemaValue(applicationSchema()),
-				"ApplicationOption":             schemaValue(applicationOptionSchema()),
-				"ApplicationOptions":            schemaValue(applicationOptionsSchema()),
-				"ApplicationSummary":            schemaValue(applicationSummarySchema()),
-				"ApplicationMetric":             schemaValue(applicationMetricSchema()),
-				"ApplicationEnvironment":        schemaValue(applicationEnvironmentSchema()),
-				"ApplicationModule":             schemaValue(applicationModuleSchema()),
-				"ApplicationMember":             schemaValue(applicationMemberSchema()),
-				"ApplicationPipeline":           schemaValue(applicationPipelineSchema()),
-				"ApplicationDetail":             schemaValue(applicationDetailSchema()),
-				"ApplicationsResponse":          schemaValue(applicationsResponseSchema()),
-				"ApplicationDetailResponse":     schemaValue(applicationDetailResponseSchema()),
-				"ApplicationCreateRequest":      schemaValue(applicationRequestSchema(true)),
-				"ApplicationUpdateRequest":      schemaValue(applicationRequestSchema(false)),
-				"ApplicationEnvironmentRequest": schemaValue(applicationEnvironmentRequestSchema()),
-				"ApplicationMemberRequest":      schemaValue(applicationMemberRequestSchema()),
-				"FeishuAuthResponse":            schemaValue(feishuAuthResponseSchema()),
-				"FeishuToken":                   schemaValue(feishuTokenSchema()),
-				"FeishuUser":                    schemaValue(feishuUserSchema()),
-				"FeishuUserSearchItem":          schemaValue(feishuUserSearchItemSchema()),
-				"FeishuUserSearchResponse":      schemaValue(feishuUserSearchResponseSchema()),
+				"ErrorResponse":                      schemaValue(errorResponseSchema()),
+				"HealthResponse":                     schemaValue(healthResponseSchema()),
+				"ReadinessResponse":                  schemaValue(readinessResponseSchema()),
+				"PingResponse":                       schemaValue(pingResponseSchema()),
+				"Environment":                        schemaValue(environmentSchema()),
+				"EnvironmentsResponse":               schemaValue(environmentsResponseSchema()),
+				"EnvironmentDetailResponse":          schemaValue(environmentDetailResponseSchema()),
+				"Application":                        schemaValue(applicationSchema()),
+				"ApplicationOption":                  schemaValue(applicationOptionSchema()),
+				"ApplicationOptions":                 schemaValue(applicationOptionsSchema()),
+				"ApplicationSummary":                 schemaValue(applicationSummarySchema()),
+				"ApplicationMetric":                  schemaValue(applicationMetricSchema()),
+				"ApplicationEnvironment":             schemaValue(applicationEnvironmentSchema()),
+				"ApplicationModule":                  schemaValue(applicationModuleSchema()),
+				"ApplicationMember":                  schemaValue(applicationMemberSchema()),
+				"ApplicationPipeline":                schemaValue(applicationPipelineSchema()),
+				"ApplicationDetail":                  schemaValue(applicationDetailSchema()),
+				"ApplicationsResponse":               schemaValue(applicationsResponseSchema()),
+				"ApplicationDetailResponse":          schemaValue(applicationDetailResponseSchema()),
+				"ApplicationCreateRequest":           schemaValue(applicationRequestSchema(true)),
+				"ApplicationUpdateRequest":           schemaValue(applicationRequestSchema(false)),
+				"ApplicationEnvironmentRequest":      schemaValue(applicationEnvironmentRequestSchema()),
+				"ApplicationMemberRequest":           schemaValue(applicationMemberRequestSchema()),
+				"StorageConfiguration":               schemaValue(storageConfigurationSchema()),
+				"StorageConfigurationsResponse":      schemaValue(storageConfigurationsResponseSchema()),
+				"StorageConfigurationDetailResponse": schemaValue(storageConfigurationDetailResponseSchema()),
+				"StorageConfigurationCreateRequest":  schemaValue(storageConfigurationRequestSchema(true)),
+				"StorageConfigurationUpdateRequest":  schemaValue(storageConfigurationRequestSchema(false)),
+				"FeishuAuthResponse":                 schemaValue(feishuAuthResponseSchema()),
+				"FeishuToken":                        schemaValue(feishuTokenSchema()),
+				"FeishuUser":                         schemaValue(feishuUserSchema()),
+				"FeishuUserSearchItem":               schemaValue(feishuUserSearchItemSchema()),
+				"FeishuUserSearchResponse":           schemaValue(feishuUserSearchResponseSchema()),
 			},
 		},
 	}
@@ -347,7 +399,6 @@ func environmentSchema() *openapi3.Schema {
 		"status",
 		"tone",
 		"description",
-		"currentCombination",
 		"traffic",
 		"updatedAt",
 	).
@@ -357,54 +408,12 @@ func environmentSchema() *openapi3.Schema {
 		WithProperty("status", enumStringSchema("Environment status.", "健康", "灰度中")).
 		WithProperty("tone", enumStringSchema("UI tone.", "amber", "blue", "emerald", "rose", "sky")).
 		WithProperty("description", stringSchema("Environment description.")).
-		WithProperty("currentCombination", stringSchema("Current bundle combination name.")).
 		WithProperty("traffic", stringSchema("Traffic label.")).
 		WithProperty("updatedAt", dateTimeSchema("Last update time."))
 }
 
-func environmentGuardrailSchema() *openapi3.Schema {
-	return objectSchema("id", "label", "value", "status").
-		WithProperty("id", stringSchema("Guardrail id.")).
-		WithProperty("label", stringSchema("Guardrail label.")).
-		WithProperty("value", stringSchema("Guardrail result detail.")).
-		WithProperty("status", enumStringSchema("Guardrail status.", "通过", "关注"))
-}
-
-func environmentTimelineEventSchema() *openapi3.Schema {
-	return objectSchema("id", "time", "action", "operator", "status", "detail").
-		WithProperty("id", stringSchema("Timeline event id.")).
-		WithProperty("time", stringSchema("Display time.")).
-		WithProperty("action", stringSchema("Action label.")).
-		WithProperty("operator", stringSchema("Operator name.")).
-		WithProperty("status", enumStringSchema("Timeline status.", "成功", "进行中", "等待")).
-		WithProperty("detail", stringSchema("Timeline event detail."))
-}
-
 func environmentDetailSchema() *openapi3.Schema {
-	return objectSchema(
-		"id",
-		"endpoint",
-		"cdnDomain",
-		"branchPolicy",
-		"releasePolicy",
-		"currentRelease",
-		"bundleCount",
-		"totalSize",
-		"healthScore",
-		"guardrails",
-		"timeline",
-	).
-		WithProperty("id", enumStringSchema("Environment id.", "dev", "staging", "preview", "preProduct", "product")).
-		WithProperty("endpoint", stringSchema("Runtime endpoint.")).
-		WithProperty("cdnDomain", stringSchema("CDN domain.")).
-		WithProperty("branchPolicy", stringSchema("Branch policy.")).
-		WithProperty("releasePolicy", stringSchema("Release policy.")).
-		WithProperty("currentRelease", stringSchema("Current release id or label.")).
-		WithProperty("bundleCount", int32Schema("Bundle count.")).
-		WithProperty("totalSize", stringSchema("Total bundle size label.")).
-		WithProperty("healthScore", stringSchema("Health score label.")).
-		WithPropertyRef("guardrails", arraySchemaRef("EnvironmentGuardrail")).
-		WithPropertyRef("timeline", arraySchemaRef("EnvironmentTimelineEvent"))
+	return environmentSchema()
 }
 
 func environmentsResponseSchema() *openapi3.Schema {
@@ -413,9 +422,8 @@ func environmentsResponseSchema() *openapi3.Schema {
 }
 
 func environmentDetailResponseSchema() *openapi3.Schema {
-	return objectSchema("environment", "detail").
-		WithPropertyRef("environment", schemaRef("Environment")).
-		WithPropertyRef("detail", schemaRef("EnvironmentDetail"))
+	return objectSchema("environment").
+		WithPropertyRef("environment", schemaRef("Environment"))
 }
 
 func applicationSlugParameters() openapi3.Parameters {
@@ -424,6 +432,16 @@ func applicationSlugParameters() openapi3.Parameters {
 			Value: openapi3.NewPathParameter("slug").
 				WithDescription("Immutable application slug.").
 				WithSchema(stringSchema("Application slug.")),
+		},
+	}
+}
+
+func storageConfigurationIDParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewPathParameter("id").
+				WithDescription("Storage configuration id.").
+				WithSchema(stringSchema("Storage configuration id.")),
 		},
 	}
 }
@@ -514,11 +532,9 @@ func applicationMetricSchema() *openapi3.Schema {
 }
 
 func applicationEnvironmentSchema() *openapi3.Schema {
-	return objectSchema("id", "environment", "combination", "bundleCount", "traffic", "updatedAt", "status").
+	return objectSchema("id", "environment", "traffic", "updatedAt", "status").
 		WithProperty("id", stringSchema("Environment binding id.")).
 		WithProperty("environment", enumStringSchema("Environment code.", "dev", "staging", "preview", "preProduct", "product")).
-		WithProperty("combination", stringSchema("Current bundle combination.")).
-		WithProperty("bundleCount", int32Schema("Bundle count.")).
 		WithProperty("traffic", stringSchema("Traffic label.")).
 		WithProperty("updatedAt", dateTimeSchema("Last update time.")).
 		WithProperty("status", enumStringSchema("Environment binding status.", "健康", "灰度中", "维护中"))
@@ -640,6 +656,60 @@ func applicationMemberRequestSchema() *openapi3.Schema {
 		WithProperty("name", stringSchema("Member account or name.")).
 		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release")).
 		WithProperty("team", stringSchema("Member team."))
+}
+
+func storageConfigurationSchema() *openapi3.Schema {
+	return objectSchema(
+		"id",
+		"name",
+		"adapter",
+		"bucket",
+		"endpoint",
+		"lastVerifiedAt",
+		"owner",
+		"publicBaseUrl",
+		"region",
+		"status",
+	).
+		WithProperty("id", stringSchema("Storage configuration id.")).
+		WithProperty("name", stringSchema("Storage configuration display name.")).
+		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
+		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
+		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
+		WithProperty("lastVerifiedAt", stringSchema("Last verification display time.")).
+		WithProperty("owner", stringSchema("Configuration owner.")).
+		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
+		WithProperty("region", stringSchema("Provider region.")).
+		WithProperty("status", enumStringSchema("Storage status label.", "正常", "异常", "已停用"))
+}
+
+func storageConfigurationsResponseSchema() *openapi3.Schema {
+	return objectSchema("configurations").
+		WithPropertyRef("configurations", arraySchemaRef("StorageConfiguration"))
+}
+
+func storageConfigurationDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("configuration").
+		WithPropertyRef("configuration", schemaRef("StorageConfiguration"))
+}
+
+func storageConfigurationRequestSchema(includeSecret bool) *openapi3.Schema {
+	required := []string{"name", "adapter", "bucket", "endpoint"}
+	if includeSecret {
+		required = append(required, "accessKeyId", "secretAccessKey")
+	}
+
+	return objectSchema(required...).
+		WithProperty("name", stringSchema("Storage configuration display name.")).
+		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
+		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
+		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
+		WithProperty("owner", stringSchema("Configuration owner.")).
+		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
+		WithProperty("region", stringSchema("Provider region.")).
+		WithProperty("status", enumStringSchema("Storage status label.", "正常", "异常", "已停用")).
+		WithProperty("accessKeyId", stringSchema("Access key id. Not returned by read APIs.")).
+		WithProperty("secretAccessKey", stringSchema("Secret access key. Not returned by read APIs. Empty on update keeps current value."))
 }
 
 func feishuAuthResponseSchema() *openapi3.Schema {

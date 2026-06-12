@@ -439,8 +439,6 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 			{
 				ID:          "dev",
 				Environment: "dev",
-				Combination: slug + "-dev-combo",
-				BundleCount: 12,
 				Traffic:     "-",
 				UpdatedAt:   time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
 				Status:      domain.ApplicationEnvironmentStatusHealthy,
@@ -448,8 +446,6 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 			{
 				ID:          "product",
 				Environment: "product",
-				Combination: slug + "-product-combo",
-				BundleCount: 12,
 				Traffic:     "2.4M 在线",
 				UpdatedAt:   time.Date(2026, 6, 9, 14, 20, 18, 0, time.UTC),
 				Status:      domain.ApplicationEnvironmentStatusGray,
