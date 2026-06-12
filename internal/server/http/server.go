@@ -36,7 +36,7 @@ type ApplicationService interface {
 	DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	GetApplicationOptions(ctx context.Context) (domain.ApplicationOptions, error)
-	ListApplications(ctx context.Context) ([]domain.Application, domain.ApplicationSummary, error)
+	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 }
 

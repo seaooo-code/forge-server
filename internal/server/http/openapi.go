@@ -90,10 +90,15 @@ func openAPIDocument() *openapi3.T {
 				}(),
 			}),
 			openapi3.WithPath("/api/v1/applications", &openapi3.PathItem{
-				Get: operation("listApplications", "List applications", []string{"Applications"}, responses(
-					response(http.StatusOK, "Application list.", schemaRef("ApplicationsResponse")),
-					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
-				)),
+				Get: func() *openapi3.Operation {
+					op := operation("listApplications", "List applications", []string{"Applications"}, responses(
+						response(http.StatusOK, "Application list.", schemaRef("ApplicationsResponse")),
+						response(http.StatusBadRequest, "Invalid application list filter.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = applicationListParameters()
+					return op
+				}(),
 				Post: func() *openapi3.Operation {
 					op := operation("createApplication", "Create application", []string{"Applications"}, responses(
 						response(http.StatusCreated, "Application created.", schemaRef("ApplicationDetailResponse")),
@@ -249,8 +254,8 @@ func openAPIDocument() *openapi3.T {
 				"ApplicationDetail":             schemaValue(applicationDetailSchema()),
 				"ApplicationsResponse":          schemaValue(applicationsResponseSchema()),
 				"ApplicationDetailResponse":     schemaValue(applicationDetailResponseSchema()),
-				"ApplicationCreateRequest":      schemaValue(applicationCreateRequestSchema()),
-				"ApplicationUpdateRequest":      schemaValue(applicationUpdateRequestSchema()),
+				"ApplicationCreateRequest":      schemaValue(applicationRequestSchema(true)),
+				"ApplicationUpdateRequest":      schemaValue(applicationRequestSchema(false)),
 				"ApplicationEnvironmentRequest": schemaValue(applicationEnvironmentRequestSchema()),
 				"ApplicationMemberRequest":      schemaValue(applicationMemberRequestSchema()),
 				"FeishuAuthResponse":            schemaValue(feishuAuthResponseSchema()),
@@ -423,6 +428,31 @@ func applicationSlugParameters() openapi3.Parameters {
 	}
 }
 
+func applicationListParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("platform").
+				WithDescription("Platform filter. Matches a supported platform token, such as iOS or Android.").
+				WithSchema(stringSchema("Platform filter.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("status").
+				WithDescription("Application status filter.").
+				WithSchema(enumStringSchema("Application status code.", "running", "maintenance", "offline")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("owner").
+				WithDescription("Owner name filter.").
+				WithSchema(stringSchema("Owner name filter.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("keyword").
+				WithDescription("Fuzzy application name keyword.").
+				WithSchema(stringSchema("Application name keyword.")),
+		},
+	}
+}
+
 func applicationSchema() *openapi3.Schema {
 	return objectSchema(
 		"id",
@@ -569,14 +599,6 @@ func applicationDetailResponseSchema() *openapi3.Schema {
 	return objectSchema("application", "detail").
 		WithPropertyRef("application", schemaRef("Application")).
 		WithPropertyRef("detail", schemaRef("ApplicationDetail"))
-}
-
-func applicationCreateRequestSchema() *openapi3.Schema {
-	return applicationRequestSchema(true)
-}
-
-func applicationUpdateRequestSchema() *openapi3.Schema {
-	return applicationRequestSchema(false)
 }
 
 func applicationRequestSchema(includeSlug bool) *openapi3.Schema {

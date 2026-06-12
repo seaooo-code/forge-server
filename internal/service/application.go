@@ -13,7 +13,7 @@ type ApplicationRepository interface {
 	DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error)
-	ListApplications(ctx context.Context) ([]domain.Application, error)
+	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 }
 
@@ -25,8 +25,13 @@ func NewApplicationService(repository ApplicationRepository) *ApplicationService
 	return &ApplicationService{repository: repository}
 }
 
-func (s *ApplicationService) ListApplications(ctx context.Context) ([]domain.Application, domain.ApplicationSummary, error) {
-	applications, err := s.repository.ListApplications(ctx)
+func (s *ApplicationService) ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error) {
+	normalizedFilters, err := normalizeApplicationListFilters(filters)
+	if err != nil {
+		return nil, domain.ApplicationSummary{}, err
+	}
+
+	applications, err := s.repository.ListApplications(ctx, normalizedFilters)
 	if err != nil {
 		return nil, domain.ApplicationSummary{}, err
 	}
@@ -232,6 +237,19 @@ func trimStringSlice(values []string) []string {
 		result = append(result, trimmed)
 	}
 	return result
+}
+
+func normalizeApplicationListFilters(filters domain.ApplicationListFilters) (domain.ApplicationListFilters, error) {
+	normalized := domain.ApplicationListFilters{
+		Platform: strings.TrimSpace(filters.Platform),
+		Status:   filters.Status,
+		Owner:    strings.TrimSpace(filters.Owner),
+		Keyword:  strings.TrimSpace(filters.Keyword),
+	}
+	if normalized.Status != "" && !domain.IsValidApplicationStatus(normalized.Status) {
+		return domain.ApplicationListFilters{}, domain.ErrInvalidApplicationInput
+	}
+	return normalized, nil
 }
 
 func summarizeApplications(applications []domain.Application) domain.ApplicationSummary {

@@ -3,6 +3,7 @@ package httpserver
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"forge-server/internal/domain"
 
@@ -161,9 +162,16 @@ func (h applicationHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
 	}
 
-	applications, summary, err := h.service.ListApplications(c.Request().Context())
+	filters := domain.ApplicationListFilters{
+		Platform: strings.TrimSpace(c.QueryParam("platform")),
+		Status:   domain.ApplicationStatus(strings.TrimSpace(c.QueryParam("status"))),
+		Owner:    strings.TrimSpace(c.QueryParam("owner")),
+		Keyword:  strings.TrimSpace(c.QueryParam("keyword")),
+	}
+
+	applications, summary, err := h.service.ListApplications(c.Request().Context(), filters)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return applicationErrorResponse(c, err)
 	}
 
 	response := applicationsResponse{

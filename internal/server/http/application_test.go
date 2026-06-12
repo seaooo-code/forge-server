@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,57 @@ func TestListApplications(t *testing.T) {
 	}
 	if response.Summary.Total != 3 || response.Summary.Running != 1 || response.Summary.Maintenance != 1 || response.Summary.Offline != 1 {
 		t.Fatalf("unexpected summary: %+v", response.Summary)
+	}
+}
+
+func TestListApplicationsWithFilters(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ApplicationService: fakeApplicationService{
+			applications: []domain.Application{
+				testHTTPApplication("mi-car", domain.ApplicationStatusRunning),
+				testHTTPApplication("mi-pay", domain.ApplicationStatusMaintenance),
+				testHTTPApplication("mi-tv", domain.ApplicationStatusOffline),
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications?platform=iOS&status=running&owner=li.ming&keyword=汽车", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response applicationsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(response.Applications) != 1 {
+		t.Fatalf("expected 1 application, got %d", len(response.Applications))
+	}
+	if response.Applications[0].Slug != "mi-car" {
+		t.Fatalf("expected mi-car application, got %q", response.Applications[0].Slug)
+	}
+	if response.Summary.Total != 1 || response.Summary.Running != 1 {
+		t.Fatalf("unexpected summary: %+v", response.Summary)
+	}
+}
+
+func TestListApplicationsRejectsInvalidStatusFilter(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ApplicationService: fakeApplicationService{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications?status=unknown", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
 }
 
@@ -259,9 +311,30 @@ type fakeApplicationService struct {
 	deleteErr    error
 }
 
-func (s fakeApplicationService) ListApplications(context.Context) ([]domain.Application, domain.ApplicationSummary, error) {
-	summary := domain.ApplicationSummary{Total: len(s.applications)}
+func (s fakeApplicationService) ListApplications(_ context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error) {
+	if filters.Status != "" && !domain.IsValidApplicationStatus(filters.Status) {
+		return nil, domain.ApplicationSummary{}, domain.ErrInvalidApplicationInput
+	}
+
+	applications := make([]domain.Application, 0, len(s.applications))
 	for _, application := range s.applications {
+		if filters.Platform != "" && !applicationSupportsPlatform(application.Platform, filters.Platform) {
+			continue
+		}
+		if filters.Status != "" && application.Status != filters.Status {
+			continue
+		}
+		if filters.Owner != "" && application.Owner != filters.Owner {
+			continue
+		}
+		if filters.Keyword != "" && !strings.Contains(application.Name, filters.Keyword) {
+			continue
+		}
+		applications = append(applications, application)
+	}
+
+	summary := domain.ApplicationSummary{Total: len(applications)}
+	for _, application := range applications {
 		switch application.Status {
 		case domain.ApplicationStatusRunning:
 			summary.Running++
@@ -271,7 +344,7 @@ func (s fakeApplicationService) ListApplications(context.Context) ([]domain.Appl
 			summary.Offline++
 		}
 	}
-	return s.applications, summary, nil
+	return applications, summary, nil
 }
 
 func (s fakeApplicationService) GetApplicationDetail(context.Context, string) (domain.ApplicationDetail, error) {
@@ -316,9 +389,14 @@ func (s fakeApplicationService) DeleteApplication(context.Context, string) (doma
 }
 
 func testHTTPApplication(slug string, status domain.ApplicationStatus) domain.Application {
+	name := "小米汽车"
+	if slug != "mi-car" {
+		name = slug
+	}
+
 	return domain.Application{
 		ID:                 "app-" + slug,
-		Name:               "小米汽车",
+		Name:               name,
 		Slug:               slug,
 		Platform:           "iOS / Android",
 		Owner:              "li.ming",
@@ -330,6 +408,15 @@ func testHTTPApplication(slug string, status domain.ApplicationStatus) domain.Ap
 		CreatedAt:          time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
 		Status:             status,
 	}
+}
+
+func applicationSupportsPlatform(platforms string, filter string) bool {
+	for _, platform := range strings.Split(platforms, "/") {
+		if strings.TrimSpace(platform) == filter {
+			return true
+		}
+	}
+	return false
 }
 
 func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) domain.ApplicationDetail {

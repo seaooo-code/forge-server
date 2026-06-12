@@ -85,13 +85,57 @@ func TestApplicationServiceReturnsSummary(t *testing.T) {
 	}
 	service := NewApplicationService(&repository)
 
-	_, summary, err := service.ListApplications(context.Background())
+	_, summary, err := service.ListApplications(context.Background(), domain.ApplicationListFilters{})
 	if err != nil {
 		t.Fatalf("list applications: %v", err)
 	}
 
 	if summary.Total != 3 || summary.Running != 1 || summary.Maintenance != 1 || summary.Offline != 1 {
 		t.Fatalf("unexpected summary: %+v", summary)
+	}
+}
+
+func TestApplicationServiceForwardsNormalizedListFilters(t *testing.T) {
+	repository := fakeApplicationRepository{
+		applications: []domain.Application{
+			testApplication("mi-car", domain.ApplicationStatusRunning),
+		},
+	}
+	service := NewApplicationService(&repository)
+
+	_, _, err := service.ListApplications(context.Background(), domain.ApplicationListFilters{
+		Platform: " iOS ",
+		Status:   domain.ApplicationStatusRunning,
+		Owner:    " li.ming ",
+		Keyword:  " 小米 ",
+	})
+	if err != nil {
+		t.Fatalf("list applications: %v", err)
+	}
+
+	expected := domain.ApplicationListFilters{
+		Platform: "iOS",
+		Status:   domain.ApplicationStatusRunning,
+		Owner:    "li.ming",
+		Keyword:  "小米",
+	}
+	if repository.lastListFilters != expected {
+		t.Fatalf("unexpected filters: %#v", repository.lastListFilters)
+	}
+}
+
+func TestApplicationServiceRejectsInvalidListStatus(t *testing.T) {
+	repository := fakeApplicationRepository{}
+	service := NewApplicationService(&repository)
+
+	_, _, err := service.ListApplications(context.Background(), domain.ApplicationListFilters{
+		Status: domain.ApplicationStatus("unknown"),
+	})
+	if !errors.Is(err, domain.ErrInvalidApplicationInput) {
+		t.Fatalf("expected invalid application input, got %v", err)
+	}
+	if repository.listCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d calls", repository.listCalls)
 	}
 }
 
@@ -140,12 +184,16 @@ type fakeApplicationRepository struct {
 	applications    []domain.Application
 	detail          domain.ApplicationDetail
 	lastCreateInput domain.ApplicationInput
+	lastListFilters domain.ApplicationListFilters
+	listCalls       int
 	createCalls     int
 	updateCalls     int
 	deleteCalls     int
 }
 
-func (r *fakeApplicationRepository) ListApplications(context.Context) ([]domain.Application, error) {
+func (r *fakeApplicationRepository) ListApplications(_ context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error) {
+	r.listCalls++
+	r.lastListFilters = filters
 	return r.applications, nil
 }
 

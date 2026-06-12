@@ -71,10 +71,11 @@ func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code stri
 		return domain.FeishuAuthResult{}, err
 	}
 
+	token.ExpiresIn = secondsUntil(session.AccessTokenExpiresAt, now)
 	return domain.FeishuAuthResult{
 		SessionExpiresAt: sessionExpiresAt(session),
 		SessionToken:     sessionToken,
-		Token:            tokenWithRemainingTTL(token, session.AccessTokenExpiresAt, now),
+		Token:            token,
 		User:             savedUser,
 	}, nil
 }
@@ -86,12 +87,16 @@ func (s *FeishuAuthService) GetSession(ctx context.Context, sessionToken string)
 	}
 
 	now := time.Now()
-	if authSessionExpired(session, now) {
+	sessionExpired := !now.Before(session.AccessTokenExpiresAt)
+	if session.RefreshToken != "" {
+		sessionExpired = refreshTokenExpired(session, now)
+	}
+	if sessionExpired {
 		_ = s.repository.DeleteFeishuAuthSession(ctx, session.SessionTokenHash)
 		return domain.FeishuAuthResult{}, domain.ErrFeishuSessionExpired
 	}
 
-	if shouldRefreshAuthSession(session, now) {
+	if !session.AccessTokenExpiresAt.After(now.Add(feishuSessionRefreshWindow)) {
 		refreshedSession, err := s.refreshSession(ctx, session, now)
 		if err != nil {
 			if now.Before(session.AccessTokenExpiresAt) {
@@ -173,24 +178,8 @@ func authResultFromSession(session domain.FeishuAuthSession, sessionToken string
 	}
 }
 
-func tokenWithRemainingTTL(token domain.FeishuToken, accessTokenExpiresAt time.Time, now time.Time) domain.FeishuToken {
-	token.ExpiresIn = secondsUntil(accessTokenExpiresAt, now)
-	return token
-}
-
-func authSessionExpired(session domain.FeishuAuthSession, now time.Time) bool {
-	if session.RefreshToken == "" {
-		return !now.Before(session.AccessTokenExpiresAt)
-	}
-	return refreshTokenExpired(session, now)
-}
-
 func refreshTokenExpired(session domain.FeishuAuthSession, now time.Time) bool {
 	return session.RefreshTokenExpiresAt.IsZero() || !now.Before(session.RefreshTokenExpiresAt)
-}
-
-func shouldRefreshAuthSession(session domain.FeishuAuthSession, now time.Time) bool {
-	return !session.AccessTokenExpiresAt.After(now.Add(feishuSessionRefreshWindow))
 }
 
 func sessionExpiresAt(session domain.FeishuAuthSession) time.Time {

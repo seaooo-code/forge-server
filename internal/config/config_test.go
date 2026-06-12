@@ -97,6 +97,37 @@ func TestLoadReadsFeishuSearchDebugFlag(t *testing.T) {
 	}
 }
 
+func TestLoadUsesFixedFeishuEndpointURLs(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	t.Setenv("ENV_FILE", envPath)
+	t.Setenv("FEISHU_AUTH_URL", "https://example.com/auth")
+	t.Setenv("FEISHU_TOKEN_URL", "https://example.com/token")
+	t.Setenv("FEISHU_USER_INFO_URL", "https://example.com/user_info")
+	t.Setenv("FEISHU_USER_SEARCH_URL", "https://example.com/user_search")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Feishu.AuthURL != defaultFeishuAuthURL {
+		t.Fatalf("expected fixed feishu auth url, got %q", cfg.Feishu.AuthURL)
+	}
+	if cfg.Feishu.TokenURL != defaultFeishuTokenURL {
+		t.Fatalf("expected fixed feishu token url, got %q", cfg.Feishu.TokenURL)
+	}
+	if cfg.Feishu.UserInfoURL != defaultFeishuUserInfoURL {
+		t.Fatalf("expected fixed feishu user info url, got %q", cfg.Feishu.UserInfoURL)
+	}
+	if cfg.Feishu.UserSearchURL != defaultFeishuUserSearchURL {
+		t.Fatalf("expected fixed feishu user search url, got %q", cfg.Feishu.UserSearchURL)
+	}
+}
+
 func TestLoadPrefersTraceOTLPHeaders(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {

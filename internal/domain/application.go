@@ -59,6 +59,13 @@ type ApplicationSummary struct {
 	Offline     int
 }
 
+type ApplicationListFilters struct {
+	Platform string
+	Status   ApplicationStatus
+	Owner    string
+	Keyword  string
+}
+
 type ApplicationDetailMetric struct {
 	ID     string
 	Label  string

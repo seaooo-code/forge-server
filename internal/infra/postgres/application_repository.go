@@ -22,7 +22,7 @@ func NewApplicationRepository(pool *pgxpool.Pool) *ApplicationRepository {
 	return &ApplicationRepository{pool: pool}
 }
 
-func (r *ApplicationRepository) ListApplications(ctx context.Context) ([]domain.Application, error) {
+func (r *ApplicationRepository) ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error) {
 	rows, err := r.pool.Query(ctx, `
 		select
 			a.id,
@@ -39,6 +39,15 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context) ([]domain.
 			a.status
 		from applications a
 		left join application_environment_bindings b on b.application_id = a.id
+		where
+			($1 = '' or exists (
+				select 1
+				from unnest(string_to_array(a.platform, '/')) as platform_part(value)
+				where btrim(platform_part.value) = $1
+			))
+			and ($2 = '' or a.status = $2)
+			and ($3 = '' or a.owner = $3)
+			and ($4 = '' or a.name ilike '%' || $4 || '%')
 		group by
 			a.id,
 			a.name,
@@ -53,7 +62,7 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context) ([]domain.
 			a.status,
 			a.sort_order
 		order by a.sort_order asc, a.created_at asc
-	`)
+	`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword)
 	if err != nil {
 		return nil, fmt.Errorf("query applications: %w", err)
 	}

@@ -193,12 +193,16 @@ func (c *Client) SearchUsers(ctx context.Context, accessToken string, query stri
 		if err := json.Unmarshal(rawItem, &item); err != nil {
 			continue
 		}
+		departmentIDs := item.DepartmentIDs
+		if departmentIDs == nil {
+			departmentIDs = []string{}
+		}
 		users = append(users, domain.FeishuUserSearchResult{
 			OpenID:        item.OpenID,
 			UserID:        item.UserID,
 			Name:          item.Name,
 			AvatarURL:     item.avatarURL(),
-			DepartmentIDs: nonNilStrings(item.DepartmentIDs),
+			DepartmentIDs: departmentIDs,
 		})
 	}
 
@@ -337,7 +341,16 @@ type userSearchAvatar struct {
 }
 
 func (i userSearchItem) avatarURL() string {
-	return firstNonEmpty(i.Avatar.Avatar72, i.Avatar.Avatar240, i.Avatar.Avatar640, i.Avatar.AvatarOrigin)
+	switch {
+	case i.Avatar.Avatar72 != "":
+		return i.Avatar.Avatar72
+	case i.Avatar.Avatar240 != "":
+		return i.Avatar.Avatar240
+	case i.Avatar.Avatar640 != "":
+		return i.Avatar.Avatar640
+	default:
+		return i.Avatar.AvatarOrigin
+	}
 }
 
 func logUserSearchResponse(response userSearchResponse) {
@@ -402,20 +415,4 @@ func sanitizeJSONValueForLog(value any) any {
 	default:
 		return "<value>"
 	}
-}
-
-func nonNilStrings(values []string) []string {
-	if values == nil {
-		return []string{}
-	}
-	return values
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
