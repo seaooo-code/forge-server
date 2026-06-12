@@ -18,6 +18,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
+const feishuUserBatchLimit = 50
+
 type Client struct {
 	cfg        config.FeishuConfig
 	httpClient *http.Client
@@ -205,6 +207,9 @@ func (c *Client) SearchUsers(ctx context.Context, accessToken string, query stri
 			DepartmentIDs: departmentIDs,
 		})
 	}
+	if err := c.appendUserEmails(ctx, accessToken, users); err != nil {
+		return domain.FeishuUserSearchPage{}, err
+	}
 
 	return domain.FeishuUserSearchPage{
 		Users:     users,
@@ -213,8 +218,95 @@ func (c *Client) SearchUsers(ctx context.Context, accessToken string, query stri
 	}, nil
 }
 
+func (c *Client) appendUserEmails(ctx context.Context, accessToken string, users []domain.FeishuUserSearchResult) error {
+	if len(users) == 0 {
+		return nil
+	}
+	if c.cfg.UserBatchURL == "" {
+		return domain.ErrFeishuAuthNotConfigured
+	}
+
+	openIDs := make([]string, 0, len(users))
+	for _, user := range users {
+		if user.OpenID != "" {
+			openIDs = append(openIDs, user.OpenID)
+		}
+	}
+	if len(openIDs) == 0 {
+		return nil
+	}
+
+	emails := make(map[string]string, len(openIDs))
+	for start := 0; start < len(openIDs); start += feishuUserBatchLimit {
+		end := start + feishuUserBatchLimit
+		if end > len(openIDs) {
+			end = len(openIDs)
+		}
+		batchEmails, err := c.fetchUserEmails(ctx, accessToken, openIDs[start:end])
+		if err != nil {
+			return err
+		}
+		for openID, email := range batchEmails {
+			emails[openID] = email
+		}
+	}
+
+	for index := range users {
+		if email := emails[users[index].OpenID]; email != "" {
+			users[index].Email = email
+		}
+	}
+	return nil
+}
+
+func (c *Client) fetchUserEmails(ctx context.Context, accessToken string, openIDs []string) (map[string]string, error) {
+	batchURL, err := url.Parse(c.cfg.UserBatchURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: parse user batch url: %w", domain.ErrFeishuAuthorization, err)
+	}
+	values := batchURL.Query()
+	values.Set("user_id_type", "open_id")
+	values.Set("department_id_type", "open_department_id")
+	for _, openID := range openIDs {
+		values.Add("user_ids", openID)
+	}
+	batchURL.RawQuery = values.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, batchURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build user batch request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: send user batch request: %w", domain.ErrFeishuAuthorization, err)
+	}
+	defer resp.Body.Close()
+
+	var response userBatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("%w: decode user batch response: %w", domain.ErrFeishuAuthorization, err)
+	}
+	if response.Code != 0 {
+		return nil, &domain.FeishuAPIError{
+			Code:     response.Code,
+			Endpoint: "contact.v3.user.batch",
+			Msg:      response.Msg,
+		}
+	}
+
+	emails := make(map[string]string, len(response.Data.Items))
+	for _, item := range response.Data.Items {
+		if item.OpenID != "" {
+			emails[item.OpenID] = item.Email
+		}
+	}
+	return emails, nil
+}
+
 func (c *Client) configured() bool {
-	return c.cfg.AppID != "" && c.cfg.AppSecret != "" && c.cfg.TokenURL != "" && c.cfg.UserInfoURL != "" && c.cfg.AuthURL != ""
+	return c.cfg.AppID != "" && c.cfg.AppSecret != "" && c.cfg.TokenURL != "" && c.cfg.UserInfoURL != "" && c.cfg.UserBatchURL != "" && c.cfg.AuthURL != ""
 }
 
 func (c *Client) postJSON(ctx context.Context, requestURL string, body any, out any) error {
@@ -338,6 +430,21 @@ type userSearchAvatar struct {
 	Avatar240    string `json:"avatar_240"`
 	Avatar640    string `json:"avatar_640"`
 	AvatarOrigin string `json:"avatar_origin"`
+}
+
+type userBatchResponse struct {
+	Code int           `json:"code"`
+	Msg  string        `json:"msg"`
+	Data userBatchData `json:"data"`
+}
+
+type userBatchData struct {
+	Items []userBatchItem `json:"items"`
+}
+
+type userBatchItem struct {
+	OpenID string `json:"open_id"`
+	Email  string `json:"email"`
 }
 
 func (i userSearchItem) avatarURL() string {

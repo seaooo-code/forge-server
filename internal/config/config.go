@@ -53,6 +53,7 @@ type FeishuConfig struct {
 	TokenURL               string
 	UserInfoURL            string
 	UserSearchURL          string
+	UserBatchURL           string
 	DebugLogSearchResponse bool
 }
 
@@ -161,6 +162,7 @@ func Load() (Config, error) {
 			TokenURL:               defaultFeishuTokenURL,
 			UserInfoURL:            defaultFeishuUserInfoURL,
 			UserSearchURL:          defaultFeishuUserSearchURL,
+			UserBatchURL:           defaultFeishuUserBatchURL,
 			DebugLogSearchResponse: boolEnv("FEISHU_DEBUG_LOG_SEARCH_RESPONSE", false),
 		},
 		Postgres: PostgresConfig{

@@ -73,7 +73,7 @@ http://127.0.0.1:5173/login/feishu/callback
 HTTP_CORS_ALLOW_CREDENTIALS=true
 ```
 
-`FEISHU_OAUTH_SCOPE` 默认保持为空，使用飞书应用已配置的权限；只有需要显式收窄授权范围时再设置。飞书用户搜索使用当前登录用户的 `user_access_token`，需要在飞书开放平台为应用开启对应通讯录权限。
+`FEISHU_OAUTH_SCOPE` 默认保持为空，使用飞书应用已配置的权限；只有需要显式收窄授权范围时再设置。飞书用户搜索使用当前登录用户的 `user_access_token`，需要在飞书开放平台为应用开启对应通讯录权限。搜索结果中的邮箱来自飞书批量获取用户信息接口，应用需要具备 `contact:user.email:readonly` 字段权限才会返回该字段。
 
 飞书开放平台的固定接口地址不通过环境变量暴露，由 `internal/config/feishu.go` 统一管理。
 
@@ -115,7 +115,8 @@ OTEL_EXPORTER_OTLP_HEADERS=authorization=<your-clickstack-ingestion-key>
 │   │   ├── feishu/      # 飞书 HTTP 客户端
 │   │   ├── otel/        # OpenTelemetry 初始化
 │   │   ├── postgres/    # PostgreSQL 连接、迁移和仓储实现
-│   │   └── redis/       # Redis 客户端初始化
+│   │   ├── redis/       # Redis 客户端初始化
+│   │   └── s3/          # S3 兼容对象存储客户端
 │   ├── server/
 │   │   └── http/        # Echo 路由、中间件、处理器和 OpenAPI 文档
 │   └── service/         # 业务用例和仓储接口

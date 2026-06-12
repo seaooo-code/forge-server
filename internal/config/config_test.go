@@ -108,6 +108,7 @@ func TestLoadUsesFixedFeishuEndpointURLs(t *testing.T) {
 	t.Setenv("FEISHU_TOKEN_URL", "https://example.com/token")
 	t.Setenv("FEISHU_USER_INFO_URL", "https://example.com/user_info")
 	t.Setenv("FEISHU_USER_SEARCH_URL", "https://example.com/user_search")
+	t.Setenv("FEISHU_USER_BATCH_URL", "https://example.com/user_batch")
 
 	cfg, err := Load()
 	if err != nil {
@@ -125,6 +126,9 @@ func TestLoadUsesFixedFeishuEndpointURLs(t *testing.T) {
 	}
 	if cfg.Feishu.UserSearchURL != defaultFeishuUserSearchURL {
 		t.Fatalf("expected fixed feishu user search url, got %q", cfg.Feishu.UserSearchURL)
+	}
+	if cfg.Feishu.UserBatchURL != defaultFeishuUserBatchURL {
+		t.Fatalf("expected fixed feishu user batch url, got %q", cfg.Feishu.UserBatchURL)
 	}
 }
 
