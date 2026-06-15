@@ -42,14 +42,14 @@ func TestListApplications(t *testing.T) {
 	if len(response.Applications) != 3 {
 		t.Fatalf("expected 3 applications, got %d", len(response.Applications))
 	}
-	if response.Applications[0].Status != "运行中" {
-		t.Fatalf("expected running status label, got %q", response.Applications[0].Status)
+	if response.Applications[0].Status != "running" {
+		t.Fatalf("expected running status, got %q", response.Applications[0].Status)
 	}
 	if response.Applications[0].OwnerUserID != "ou-li-ming" || response.Applications[0].OwnerEmail == "" || response.Applications[0].OwnerAvatarURL == "" {
 		t.Fatalf("expected owner profile fields, got %#v", response.Applications[0])
 	}
-	if response.Applications[2].Status != "已下线" {
-		t.Fatalf("expected offline status label, got %q", response.Applications[2].Status)
+	if response.Applications[2].Status != "offline" {
+		t.Fatalf("expected offline status, got %q", response.Applications[2].Status)
 	}
 	if response.Summary.Total != 3 || response.Summary.Running != 1 || response.Summary.Maintenance != 1 || response.Summary.Offline != 1 {
 		t.Fatalf("unexpected summary: %+v", response.Summary)
@@ -67,7 +67,7 @@ func TestListApplicationsWithFilters(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications?platform=iOS&status=running&owner=li.ming&keyword=汽车", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications?platform=iOS&status=running&owner=ou-li-ming&keyword=汽车", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -143,8 +143,8 @@ func TestGetApplicationDetail(t *testing.T) {
 	if len(response.Detail.Environments) != 2 {
 		t.Fatalf("expected environments, got %d", len(response.Detail.Environments))
 	}
-	if response.Detail.Environments[1].Status != "灰度中" {
-		t.Fatalf("expected gray environment label, got %q", response.Detail.Environments[1].Status)
+	if response.Detail.Environments[1].Status != "gray" {
+		t.Fatalf("expected gray environment status, got %q", response.Detail.Environments[1].Status)
 	}
 	if len(response.Detail.Members) != 1 {
 		t.Fatalf("expected members, got %d", len(response.Detail.Members))
@@ -175,7 +175,7 @@ func TestGetApplicationOptions(t *testing.T) {
 	if len(response.Platforms) != 3 {
 		t.Fatalf("expected 3 platform options, got %d", len(response.Platforms))
 	}
-	if len(response.Owners) != 1 || response.Owners[0].Value != "li.ming" {
+	if len(response.Owners) != 1 || response.Owners[0].Value != "ou-li-ming" {
 		t.Fatalf("expected owner options, got %#v", response.Owners)
 	}
 	removedPlatform := "Android" + " TV"
@@ -281,8 +281,8 @@ func TestUpdateApplication(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Application.Status != "维护中" {
-		t.Fatalf("expected maintenance status label, got %q", response.Application.Status)
+	if response.Application.Status != "maintenance" {
+		t.Fatalf("expected maintenance status, got %q", response.Application.Status)
 	}
 }
 
@@ -306,8 +306,8 @@ func TestDeleteApplicationSoftDeletes(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Application.Status != "已下线" {
-		t.Fatalf("expected offline status label, got %q", response.Application.Status)
+	if response.Application.Status != "offline" {
+		t.Fatalf("expected offline status, got %q", response.Application.Status)
 	}
 }
 
@@ -333,7 +333,7 @@ func (s fakeApplicationService) ListApplications(_ context.Context, filters doma
 		if filters.Status != "" && application.Status != filters.Status {
 			continue
 		}
-		if filters.Owner != "" && application.Owner != filters.Owner {
+		if filters.Owner != "" && application.OwnerUserID != filters.Owner {
 			continue
 		}
 		if filters.Keyword != "" && !strings.Contains(application.Name, filters.Keyword) {
@@ -366,7 +366,7 @@ func (s fakeApplicationService) GetApplicationDetail(context.Context, string) (d
 func (s fakeApplicationService) GetApplicationOptions(context.Context) (domain.ApplicationOptions, error) {
 	return domain.ApplicationOptions{
 		Owners: []domain.ApplicationOptionItem{
-			{Label: "li.ming", Value: "li.ming"},
+			{Label: "li.ming", Value: "ou-li-ming"},
 		},
 		Platforms: []domain.ApplicationOptionItem{
 			{Label: "iOS", Value: "iOS"},

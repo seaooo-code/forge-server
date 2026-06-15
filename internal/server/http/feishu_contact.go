@@ -29,7 +29,6 @@ type feishuErrorResponse struct {
 }
 
 type feishuUserSearchItemResponse struct {
-	ID            string   `json:"id"`
 	UnionID       string   `json:"unionId"`
 	OpenID        string   `json:"openId"`
 	UserID        string   `json:"userId"`
@@ -79,7 +78,7 @@ func (h feishuContactHandler) searchUsers(c echo.Context) error {
 	setFeishuSessionCookie(c, session)
 
 	pageSize := 20
-	if rawPageSize := firstQueryParam(c, "page_size", "pageSize"); rawPageSize != "" {
+	if rawPageSize := c.QueryParam("page_size"); rawPageSize != "" {
 		parsed, err := strconv.Atoi(rawPageSize)
 		if err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid feishu search request"})
@@ -89,7 +88,7 @@ func (h feishuContactHandler) searchUsers(c echo.Context) error {
 		}
 		pageSize = parsed
 	}
-	pageToken := firstQueryParam(c, "page_token", "pageToken")
+	pageToken := c.QueryParam("page_token")
 
 	page, err := h.service.SearchUsers(c.Request().Context(), session.Token.AccessToken, c.QueryParam("query"), pageSize, pageToken)
 	if err != nil {
@@ -116,15 +115,6 @@ func (h feishuContactHandler) searchUsers(c echo.Context) error {
 	})
 }
 
-func firstQueryParam(c echo.Context, names ...string) string {
-	for _, name := range names {
-		if value := c.QueryParam(name); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func newFeishuErrorResponse(err error) feishuErrorResponse {
 	response := feishuErrorResponse{
 		Error: domain.ErrFeishuAuthorization.Error(),
@@ -144,7 +134,6 @@ func newFeishuUserSearchItemResponses(users []domain.FeishuUserSearchResult) []f
 	response := make([]feishuUserSearchItemResponse, 0, len(users))
 	for _, user := range users {
 		response = append(response, feishuUserSearchItemResponse{
-			ID:            firstAvailableUserID(user),
 			UnionID:       user.UnionID,
 			OpenID:        user.OpenID,
 			UserID:        user.UserID,
@@ -157,14 +146,4 @@ func newFeishuUserSearchItemResponses(users []domain.FeishuUserSearchResult) []f
 		})
 	}
 	return response
-}
-
-func firstAvailableUserID(user domain.FeishuUserSearchResult) string {
-	if user.UserID != "" {
-		return user.UserID
-	}
-	if user.UnionID != "" {
-		return user.UnionID
-	}
-	return user.OpenID
 }

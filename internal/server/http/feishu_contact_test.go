@@ -54,8 +54,8 @@ func TestSearchFeishuUsers(t *testing.T) {
 	if len(response.Users) != 1 {
 		t.Fatalf("expected 1 user, got %d", len(response.Users))
 	}
-	if response.Users[0].ID != "user-test" {
-		t.Fatalf("expected user id, got %q", response.Users[0].ID)
+	if response.Users[0].UserID != "user-test" {
+		t.Fatalf("expected user id, got %q", response.Users[0].UserID)
 	}
 	if response.Users[0].DepartmentIDs[0] != "od-rn-platform" {
 		t.Fatalf("expected department id, got %#v", response.Users[0].DepartmentIDs)

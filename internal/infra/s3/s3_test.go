@@ -174,19 +174,20 @@ func TestObjectMethodsRejectBlankKey(t *testing.T) {
 	}
 }
 
-func TestOptionsFromStorageConfigurationInputNormalizesEndpointAndRegion(t *testing.T) {
+func TestOptionsFromStorageConfigurationInputUsesProvidedEndpointAndRegion(t *testing.T) {
 	options := optionsFromStorageConfigurationInput(domain.StorageConfigurationInput{
 		Bucket:          "forge-assets",
-		Endpoint:        "s3.example.com",
+		Endpoint:        "https://s3.example.com",
+		Region:          "cn-beijing",
 		AccessKeyID:     "access-key",
 		SecretAccessKey: "secret-key",
 	})
 
 	if options.Endpoint != "https://s3.example.com" {
-		t.Fatalf("expected https endpoint, got %q", options.Endpoint)
+		t.Fatalf("expected provided endpoint, got %q", options.Endpoint)
 	}
-	if options.Region != defaultStorageTestRegion {
-		t.Fatalf("expected default region, got %q", options.Region)
+	if options.Region != "cn-beijing" {
+		t.Fatalf("expected provided region, got %q", options.Region)
 	}
 }
 

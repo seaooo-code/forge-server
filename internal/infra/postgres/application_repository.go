@@ -48,7 +48,7 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 				where btrim(platform_part.value) = $1
 			))
 			and ($2 = '' or a.status = $2)
-			and ($3 = '' or a.owner_user_id = $3 or u.name = $3)
+				and ($3 = '' or a.owner_user_id = $3)
 			and ($4 = '' or a.name ilike '%' || $4 || '%')
 		group by
 			a.id,

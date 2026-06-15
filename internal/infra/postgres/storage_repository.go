@@ -97,21 +97,6 @@ func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id stri
 	return configuration, nil
 }
 
-func (r *StorageRepository) GetStorageConfigurationCredentials(ctx context.Context, id string) (domain.StorageConfigurationCredentials, error) {
-	var credentials domain.StorageConfigurationCredentials
-	if err := r.pool.QueryRow(ctx, `
-		select access_key_id, secret_access_key
-		from storage_configurations
-		where id = $1
-	`, id).Scan(&credentials.AccessKeyID, &credentials.SecretAccessKey); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.StorageConfigurationCredentials{}, domain.ErrStorageConfigurationNotFound
-		}
-		return domain.StorageConfigurationCredentials{}, fmt.Errorf("query storage configuration credentials: %w", err)
-	}
-	return credentials, nil
-}
-
 func (r *StorageRepository) CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		configuration, err := r.createStorageConfiguration(ctx, newStorageConfigurationID(), input)
@@ -213,8 +198,8 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 			region = $6,
 			owner_user_id = $7,
 			public_base_url = $8,
-			access_key_id = case when $9 <> '' then $9 else access_key_id end,
-			secret_access_key = case when $10 <> '' then $10 else secret_access_key end,
+			access_key_id = $9,
+			secret_access_key = $10,
 			status = $11,
 			updated_at = now()
 		where id = $1
@@ -244,6 +229,20 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 }
 
 func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error) {
+	var hasEnvironmentDependencies bool
+	if err := r.pool.QueryRow(ctx, `
+		select exists (
+			select 1
+			from environments
+			where storage_configuration_id = $1
+		)
+	`, id).Scan(&hasEnvironmentDependencies); err != nil {
+		return domain.StorageConfiguration{}, fmt.Errorf("query storage configuration dependencies: %w", err)
+	}
+	if hasEnvironmentDependencies {
+		return domain.StorageConfiguration{}, domain.ErrStorageConfigurationInUse
+	}
+
 	configuration, err := scanStorageConfiguration(r.pool.QueryRow(ctx, `
 		with deleted as (
 			delete from storage_configurations
@@ -284,6 +283,9 @@ func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id s
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
+		}
+		if isForeignKeyViolation(err) {
+			return domain.StorageConfiguration{}, domain.ErrStorageConfigurationInUse
 		}
 		return domain.StorageConfiguration{}, fmt.Errorf("delete storage configuration: %w", err)
 	}

@@ -153,7 +153,7 @@ func newEnvironmentResponse(environment domain.Environment) environmentResponse 
 	return environmentResponse{
 		ID:                       environment.Code,
 		Name:                     environment.Name,
-		Status:                   environment.Status.Label(),
+		Status:                   string(environment.Status),
 		Tone:                     environment.Tone,
 		Description:              environment.Description,
 		StorageConfigurationID:   environment.StorageConfigurationID,

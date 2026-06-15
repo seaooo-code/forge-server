@@ -47,7 +47,6 @@ type storageConfigurationRequest struct {
 	Adapter            string `json:"adapter"`
 	Bucket             string `json:"bucket"`
 	Endpoint           string `json:"endpoint"`
-	ID                 string `json:"id"`
 	Name               string `json:"name"`
 	OwnerUserID        string `json:"ownerUserId"`
 	Owner              string `json:"owner"`
@@ -163,12 +162,12 @@ func (h storageHandler) test(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "storage service unavailable"})
 	}
 
-	id, input, ok := bindStorageConfigurationTestRequest(c)
+	input, ok := bindStorageConfigurationTestRequest(c)
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid storage configuration request"})
 	}
 
-	result, err := h.service.TestStorageConfiguration(c.Request().Context(), id, input)
+	result, err := h.service.TestStorageConfiguration(c.Request().Context(), input)
 	if err != nil {
 		return storageErrorResponse(c, err)
 	}
@@ -189,19 +188,19 @@ func bindStorageConfigurationRequest(c echo.Context) (domain.StorageConfiguratio
 	return input, ok
 }
 
-func bindStorageConfigurationTestRequest(c echo.Context) (string, domain.StorageConfigurationInput, bool) {
+func bindStorageConfigurationTestRequest(c echo.Context) (domain.StorageConfigurationInput, bool) {
 	var request storageConfigurationRequest
 	if err := c.Bind(&request); err != nil {
-		return "", domain.StorageConfigurationInput{}, false
+		return domain.StorageConfigurationInput{}, false
 	}
 
 	input, ok := newStorageConfigurationInput(request)
-	return request.ID, input, ok
+	return input, ok
 }
 
 func newStorageConfigurationInput(request storageConfigurationRequest) (domain.StorageConfigurationInput, bool) {
-	status, ok := domain.ParseStorageStatus(request.Status)
-	if !ok {
+	status := domain.StorageStatus(request.Status)
+	if status != "" && !domain.IsValidStorageStatus(status) {
 		return domain.StorageConfigurationInput{}, false
 	}
 
@@ -231,6 +230,8 @@ func storageErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "storage configuration not found"})
 	case errors.Is(err, domain.ErrInvalidStorageConfigurationInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid storage configuration request"})
+	case errors.Is(err, domain.ErrStorageConfigurationInUse):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "storage configuration is referenced by environments"})
 	case errors.Is(err, domain.ErrStorageConfigurationTestFailed):
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "storage configuration test failed"})
 	default:
@@ -265,6 +266,6 @@ func newStorageConfigurationResponse(configuration domain.StorageConfiguration) 
 		OwnerAvatarURL: configuration.OwnerAvatarURL,
 		PublicBaseURL:  configuration.PublicBaseURL,
 		Region:         configuration.Region,
-		Status:         configuration.Status.Label(),
+		Status:         string(configuration.Status),
 	}
 }

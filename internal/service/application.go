@@ -134,7 +134,7 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 		Environments: make([]domain.ApplicationEnvironmentInput, 0, len(input.Environments)),
 		Members:      make([]domain.ApplicationMemberInput, 0, len(input.Members)),
 	}
-	owner := normalizeOwnerUser(domain.UserInput{
+	owner := normalizeUserInput(domain.UserInput{
 		ID:            input.OwnerUserID,
 		Name:          input.Owner,
 		Email:         input.OwnerEmail,
@@ -143,7 +143,7 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 		FeishuUnionID: input.OwnerFeishuUnionID,
 		FeishuOpenID:  input.OwnerFeishuOpenID,
 		FeishuUserID:  input.OwnerFeishuUserID,
-	}, "")
+	})
 	normalized.OwnerUserID = owner.ID
 	normalized.Owner = owner.Name
 	normalized.OwnerEmail = owner.Email
@@ -202,34 +202,8 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 		}
 		normalized.Members = append(normalized.Members, normalizedMember)
 	}
-	normalized.Members = ensureOwnerMember(normalized.Members, normalized.Owner)
 
 	return normalized, nil
-}
-
-func ensureOwnerMember(
-	members []domain.ApplicationMemberInput,
-	owner string,
-) []domain.ApplicationMemberInput {
-	normalizedOwner := strings.TrimSpace(owner)
-	if normalizedOwner == "" {
-		return members
-	}
-
-	for _, member := range members {
-		if member.Role == domain.ApplicationMemberRoleOwner &&
-			strings.EqualFold(strings.TrimSpace(member.Name), normalizedOwner) {
-			return members
-		}
-	}
-
-	return append([]domain.ApplicationMemberInput{
-		{
-			Name: normalizedOwner,
-			Role: domain.ApplicationMemberRoleOwner,
-			Team: "应用负责人",
-		},
-	}, members...)
 }
 
 func trimStringSlice(values []string) []string {

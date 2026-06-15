@@ -60,20 +60,21 @@ func TestLoadReadsOTLPHeaders(t *testing.T) {
 	}
 
 	t.Setenv("ENV_FILE", envPath)
-	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=clickstack-key,other=value")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "authorization=trace-key,other=value")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "authorization=log-key")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.Telemetry.OTLPHeaders["authorization"] != "clickstack-key" {
+	if cfg.Telemetry.OTLPHeaders["authorization"] != "trace-key" {
 		t.Fatalf("expected clickstack authorization header, got %#v", cfg.Telemetry.OTLPHeaders)
 	}
 	if cfg.Telemetry.OTLPHeaders["other"] != "value" {
 		t.Fatalf("expected secondary header, got %#v", cfg.Telemetry.OTLPHeaders)
 	}
-	if cfg.Telemetry.OTLPLogHeaders["authorization"] != "clickstack-key" {
+	if cfg.Telemetry.OTLPLogHeaders["authorization"] != "log-key" {
 		t.Fatalf("expected clickstack log authorization header, got %#v", cfg.Telemetry.OTLPLogHeaders)
 	}
 }
@@ -132,7 +133,7 @@ func TestLoadUsesFixedFeishuEndpointURLs(t *testing.T) {
 	}
 }
 
-func TestLoadPrefersTraceOTLPHeaders(t *testing.T) {
+func TestLoadUsesGlobalOTLPHeaders(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
@@ -140,35 +141,41 @@ func TestLoadPrefersTraceOTLPHeaders(t *testing.T) {
 
 	t.Setenv("ENV_FILE", envPath)
 	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=global-key")
-	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "authorization=trace-key")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.Telemetry.OTLPHeaders["authorization"] != "trace-key" {
-		t.Fatalf("expected trace header to win, got %#v", cfg.Telemetry.OTLPHeaders)
+	if cfg.Telemetry.OTLPHeaders["authorization"] != "global-key" {
+		t.Fatalf("expected global trace header, got %#v", cfg.Telemetry.OTLPHeaders)
+	}
+	if cfg.Telemetry.OTLPLogHeaders["authorization"] != "global-key" {
+		t.Fatalf("expected global log header, got %#v", cfg.Telemetry.OTLPLogHeaders)
 	}
 }
 
-func TestLoadPrefersLogOTLPHeaders(t *testing.T) {
+func TestLoadReadsSeparateOTLPEndpoints(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
 	}
 
 	t.Setenv("ENV_FILE", envPath)
-	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=global-key")
-	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "authorization=log-key")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://global.example:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces.example:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://logs.example:4318")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.Telemetry.OTLPLogHeaders["authorization"] != "log-key" {
-		t.Fatalf("expected log header to win, got %#v", cfg.Telemetry.OTLPLogHeaders)
+	if cfg.Telemetry.OTLPEndpoint != "http://traces.example:4318" {
+		t.Fatalf("expected trace endpoint, got %q", cfg.Telemetry.OTLPEndpoint)
+	}
+	if cfg.Telemetry.OTLPLogEndpoint != "http://logs.example:4318" {
+		t.Fatalf("expected log endpoint, got %q", cfg.Telemetry.OTLPLogEndpoint)
 	}
 }
 

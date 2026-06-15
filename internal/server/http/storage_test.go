@@ -38,11 +38,11 @@ func TestListStorageConfigurations(t *testing.T) {
 	if len(response.Configurations) != 2 {
 		t.Fatalf("expected 2 storage configurations, got %d", len(response.Configurations))
 	}
-	if response.Configurations[0].Status != "正常" {
-		t.Fatalf("expected healthy status label, got %q", response.Configurations[0].Status)
+	if response.Configurations[0].Status != "healthy" {
+		t.Fatalf("expected healthy status, got %q", response.Configurations[0].Status)
 	}
-	if response.Configurations[1].Status != "异常" {
-		t.Fatalf("expected error status label, got %q", response.Configurations[1].Status)
+	if response.Configurations[1].Status != "error" {
+		t.Fatalf("expected error status, got %q", response.Configurations[1].Status)
 	}
 	if response.Configurations[0].LastVerifiedAt == "" {
 		t.Fatal("expected last verified time")
@@ -103,16 +103,14 @@ func TestCreateStorageConfiguration(t *testing.T) {
 	}
 }
 
-func TestUpdateStorageConfigurationAllowsEmptySecrets(t *testing.T) {
+func TestUpdateStorageConfigurationRequiresCompletePayload(t *testing.T) {
 	service := &fakeStorageService{
 		configuration: testHTTPStorageConfiguration("storage-prod", domain.StorageStatusDisabled),
 	}
 	e := New(config.Config{}, Dependencies{StorageService: service})
 
 	request := storageRequest()
-	request["accessKeyId"] = ""
-	request["secretAccessKey"] = ""
-	request["status"] = "已停用"
+	request["status"] = "disabled"
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/storage/configurations/storage-prod", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -125,8 +123,8 @@ func TestUpdateStorageConfigurationAllowsEmptySecrets(t *testing.T) {
 	if service.lastUpdateID != "storage-prod" {
 		t.Fatalf("expected storage id, got %q", service.lastUpdateID)
 	}
-	if service.lastUpdateInput.AccessKeyID != "" || service.lastUpdateInput.SecretAccessKey != "" {
-		t.Fatalf("expected empty secrets, got %#v", service.lastUpdateInput)
+	if service.lastUpdateInput.AccessKeyID != "access-key" || service.lastUpdateInput.SecretAccessKey != "secret-key" {
+		t.Fatalf("expected complete secrets, got %#v", service.lastUpdateInput)
 	}
 	if service.lastUpdateInput.Status != domain.StorageStatusDisabled {
 		t.Fatalf("expected disabled status, got %q", service.lastUpdateInput.Status)
@@ -152,6 +150,31 @@ func TestDeleteStorageConfiguration(t *testing.T) {
 	}
 }
 
+func TestDeleteStorageConfigurationInUse(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		StorageService: &fakeStorageService{
+			err: domain.ErrStorageConfigurationInUse,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/storage/configurations/storage-prod", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+
+	var response map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["error"] != "storage configuration is referenced by environments" {
+		t.Fatalf("expected dependency error, got %#v", response)
+	}
+}
+
 func TestTestStorageConfiguration(t *testing.T) {
 	service := &fakeStorageService{
 		testResult: domain.StorageConfigurationTestResult{
@@ -162,7 +185,6 @@ func TestTestStorageConfiguration(t *testing.T) {
 	e := New(config.Config{}, Dependencies{StorageService: service})
 
 	request := storageRequest()
-	request["id"] = "storage-prod"
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations/test", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -171,9 +193,6 @@ func TestTestStorageConfiguration(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
-	}
-	if service.lastTestID != "storage-prod" {
-		t.Fatalf("expected storage id, got %q", service.lastTestID)
 	}
 	if service.lastTestInput.SecretAccessKey != "secret-key" {
 		t.Fatalf("expected secret to be bound")
@@ -248,7 +267,6 @@ type fakeStorageService struct {
 	lastUpdateID    string
 	lastUpdateInput domain.StorageConfigurationInput
 	lastDeleteID    string
-	lastTestID      string
 	lastTestInput   domain.StorageConfigurationInput
 }
 
@@ -291,8 +309,7 @@ func (s *fakeStorageService) DeleteStorageConfiguration(_ context.Context, id st
 	return s.configuration, nil
 }
 
-func (s *fakeStorageService) TestStorageConfiguration(_ context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
-	s.lastTestID = id
+func (s *fakeStorageService) TestStorageConfiguration(_ context.Context, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
 	s.lastTestInput = input
 	if s.err != nil {
 		return domain.StorageConfigurationTestResult{}, s.err
@@ -307,7 +324,7 @@ func testHTTPStorageConfiguration(id string, status domain.StorageStatus) domain
 		Name:           "生产 OSS",
 		Adapter:        domain.StorageAdapterS3,
 		Bucket:         "xiaomi-auto-rn-prod",
-		Endpoint:       "oss-cn-beijing.aliyuncs.com",
+		Endpoint:       "https://oss-cn-beijing.aliyuncs.com",
 		Region:         "cn-beijing",
 		OwnerUserID:    "ou-rn-platform",
 		Owner:          "rn-platform",
@@ -324,8 +341,7 @@ func storageRequest() map[string]string {
 		"accessKeyId":     "access-key",
 		"adapter":         "S3",
 		"bucket":          "xiaomi-auto-rn-prod",
-		"endpoint":        "oss-cn-beijing.aliyuncs.com",
-		"id":              "",
+		"endpoint":        "https://oss-cn-beijing.aliyuncs.com",
 		"name":            "生产 OSS",
 		"ownerUserId":     "ou-rn-platform",
 		"owner":           "rn-platform",
@@ -334,7 +350,7 @@ func storageRequest() map[string]string {
 		"publicBaseUrl":   "https://cdn.example.com/rn/prod",
 		"region":          "cn-beijing",
 		"secretAccessKey": "secret-key",
-		"status":          "正常",
+		"status":          "healthy",
 	}
 }
 

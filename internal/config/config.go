@@ -112,9 +112,9 @@ func Load() (Config, error) {
 	}
 	if len(otelHeaders) == 0 {
 		otelHeaders, err = stringMapEnv("OTEL_EXPORTER_OTLP_HEADERS", nil)
-	}
-	if err != nil {
-		return Config{}, err
+		if err != nil {
+			return Config{}, err
+		}
 	}
 
 	otelLogHeaders, err := stringMapEnv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", nil)
@@ -123,9 +123,9 @@ func Load() (Config, error) {
 	}
 	if len(otelLogHeaders) == 0 {
 		otelLogHeaders, err = stringMapEnv("OTEL_EXPORTER_OTLP_HEADERS", nil)
-	}
-	if err != nil {
-		return Config{}, err
+		if err != nil {
+			return Config{}, err
+		}
 	}
 
 	appEnv := stringEnv("APP_ENV", "local")

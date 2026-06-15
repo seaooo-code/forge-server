@@ -337,7 +337,7 @@ func newApplicationResponse(application domain.Application) applicationResponse 
 		ModuleCount:        application.ModuleCount,
 		EnvironmentCount:   application.EnvironmentCount,
 		CreatedAt:          application.CreatedAt.Format("2006-01-02"),
-		Status:             application.Status.Label(),
+		Status:             string(application.Status),
 	}
 }
 
@@ -415,7 +415,7 @@ func newApplicationEnvironmentResponses(environments []domain.ApplicationEnviron
 			Environment: environment.Environment,
 			Traffic:     environment.Traffic,
 			UpdatedAt:   formatTime(environment.UpdatedAt),
-			Status:      environment.Status.Label(),
+			Status:      string(environment.Status),
 		})
 	}
 	return response

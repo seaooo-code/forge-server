@@ -2,7 +2,6 @@ package domain
 
 import (
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -49,13 +48,11 @@ func (s EnvironmentStatus) Label() string {
 	}
 }
 
-func ParseEnvironmentStatus(value string) (EnvironmentStatus, bool) {
-	switch strings.TrimSpace(value) {
-	case "", string(EnvironmentStatusHealthy), "健康":
-		return EnvironmentStatusHealthy, true
-	case string(EnvironmentStatusGray), "灰度中":
-		return EnvironmentStatusGray, true
+func IsValidEnvironmentStatus(status EnvironmentStatus) bool {
+	switch status {
+	case EnvironmentStatusHealthy, EnvironmentStatusGray:
+		return true
 	default:
-		return "", false
+		return false
 	}
 }

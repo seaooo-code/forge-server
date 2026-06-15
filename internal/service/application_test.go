@@ -54,7 +54,7 @@ func TestApplicationServiceRejectsSlugChangeOnUpdate(t *testing.T) {
 	}
 }
 
-func TestApplicationServiceAddsOwnerToMembers(t *testing.T) {
+func TestApplicationServiceDoesNotCreateImplicitOwnerMember(t *testing.T) {
 	repository := fakeApplicationRepository{}
 	service := NewApplicationService(&repository)
 
@@ -66,15 +66,11 @@ func TestApplicationServiceAddsOwnerToMembers(t *testing.T) {
 		t.Fatalf("create application: %v", err)
 	}
 
-	if len(repository.lastCreateInput.Members) != 1 {
-		t.Fatalf("expected owner member, got %#v", repository.lastCreateInput.Members)
+	if len(repository.lastCreateInput.Members) != 0 {
+		t.Fatalf("expected no implicit members, got %#v", repository.lastCreateInput.Members)
 	}
 	if repository.lastCreateInput.OwnerUserID != "ou-li-ming" || repository.lastCreateInput.OwnerEmail == "" || repository.lastCreateInput.OwnerAvatarURL == "" {
 		t.Fatalf("expected owner profile, got %#v", repository.lastCreateInput)
-	}
-	member := repository.lastCreateInput.Members[0]
-	if member.Name != "li.ming" || member.Role != domain.ApplicationMemberRoleOwner {
-		t.Fatalf("unexpected owner member: %#v", member)
 	}
 }
 
@@ -109,7 +105,7 @@ func TestApplicationServiceForwardsNormalizedListFilters(t *testing.T) {
 	_, _, err := service.ListApplications(context.Background(), domain.ApplicationListFilters{
 		Platform: " iOS ",
 		Status:   domain.ApplicationStatusRunning,
-		Owner:    " li.ming ",
+		Owner:    " ou-li-ming ",
 		Keyword:  " 小米 ",
 	})
 	if err != nil {
@@ -119,7 +115,7 @@ func TestApplicationServiceForwardsNormalizedListFilters(t *testing.T) {
 	expected := domain.ApplicationListFilters{
 		Platform: "iOS",
 		Status:   domain.ApplicationStatusRunning,
-		Owner:    "li.ming",
+		Owner:    "ou-li-ming",
 		Keyword:  "小米",
 	}
 	if repository.lastListFilters != expected {
@@ -153,7 +149,7 @@ func TestApplicationServiceReturnsApplicationOptions(t *testing.T) {
 	if len(options.Platforms) != 3 {
 		t.Fatalf("expected 3 platforms, got %d", len(options.Platforms))
 	}
-	if len(options.Owners) != 1 || options.Owners[0].Value != "li.ming" {
+	if len(options.Owners) != 1 || options.Owners[0].Value != "ou-li-ming" {
 		t.Fatalf("expected owner options, got %#v", options.Owners)
 	}
 	if len(options.Environments) != 1 || options.Environments[0].Value != "qa" {
@@ -208,7 +204,7 @@ func (r *fakeApplicationRepository) GetApplicationDetail(context.Context, string
 }
 
 func (r *fakeApplicationRepository) ListApplicationOwners(context.Context) ([]domain.ApplicationOptionItem, error) {
-	return []domain.ApplicationOptionItem{{Label: "li.ming", Value: "li.ming"}}, nil
+	return []domain.ApplicationOptionItem{{Label: "li.ming", Value: "ou-li-ming"}}, nil
 }
 
 func (r *fakeApplicationRepository) ListApplicationEnvironments(context.Context) ([]domain.ApplicationOptionItem, error) {

@@ -49,8 +49,7 @@ func TestStorageServiceNormalizesCreateInput(t *testing.T) {
 	input := validStorageInput()
 	input.AccessKeyID = " access-key "
 	input.SecretAccessKey = " secret-key "
-	input.Status = domain.StorageStatus("正常")
-	input.Owner = ""
+	input.Status = domain.StorageStatusHealthy
 
 	_, err := service.CreateStorageConfiguration(context.Background(), input)
 	if err != nil {
@@ -61,10 +60,10 @@ func TestStorageServiceNormalizesCreateInput(t *testing.T) {
 		t.Fatalf("expected trimmed name, got %q", repository.lastCreateInput.Name)
 	}
 	if repository.lastCreateInput.Owner != "rn-platform" {
-		t.Fatalf("expected default owner, got %q", repository.lastCreateInput.Owner)
+		t.Fatalf("expected trimmed owner, got %q", repository.lastCreateInput.Owner)
 	}
-	if repository.lastCreateInput.OwnerUserID == "" {
-		t.Fatal("expected derived owner user id")
+	if repository.lastCreateInput.OwnerUserID != "ou-rn-platform" {
+		t.Fatalf("expected trimmed owner user id, got %q", repository.lastCreateInput.OwnerUserID)
 	}
 	if repository.lastCreateInput.Status != domain.StorageStatusHealthy {
 		t.Fatalf("expected healthy status, got %q", repository.lastCreateInput.Status)
@@ -74,14 +73,16 @@ func TestStorageServiceNormalizesCreateInput(t *testing.T) {
 	}
 }
 
-func TestStorageServiceAllowsEmptySecretsOnUpdate(t *testing.T) {
+func TestStorageServiceUpdatesWithCompleteSecrets(t *testing.T) {
 	repository := fakeStorageRepository{
 		configuration: testStorageConfiguration("storage-prod"),
 	}
 	service := NewStorageService(&repository, nil)
 
 	input := validStorageInput()
-	input.Status = domain.StorageStatus("已停用")
+	input.AccessKeyID = "access-key"
+	input.SecretAccessKey = "secret-key"
+	input.Status = domain.StorageStatusDisabled
 
 	_, err := service.UpdateStorageConfiguration(context.Background(), " storage-prod ", input)
 	if err != nil {
@@ -91,8 +92,8 @@ func TestStorageServiceAllowsEmptySecretsOnUpdate(t *testing.T) {
 	if repository.lastUpdateID != "storage-prod" {
 		t.Fatalf("expected trimmed id, got %q", repository.lastUpdateID)
 	}
-	if repository.lastUpdateInput.AccessKeyID != "" || repository.lastUpdateInput.SecretAccessKey != "" {
-		t.Fatalf("expected empty secrets to be forwarded for preserve semantics, got %#v", repository.lastUpdateInput)
+	if repository.lastUpdateInput.AccessKeyID != "access-key" || repository.lastUpdateInput.SecretAccessKey != "secret-key" {
+		t.Fatalf("expected complete secrets, got %#v", repository.lastUpdateInput)
 	}
 	if repository.lastUpdateInput.Status != domain.StorageStatusDisabled {
 		t.Fatalf("expected disabled status, got %q", repository.lastUpdateInput.Status)
@@ -124,7 +125,7 @@ func TestStorageServiceTestsProvidedConfiguration(t *testing.T) {
 	input.AccessKeyID = " access-key "
 	input.SecretAccessKey = " secret-key "
 
-	result, err := service.TestStorageConfiguration(context.Background(), "", input)
+	result, err := service.TestStorageConfiguration(context.Background(), input)
 	if err != nil {
 		t.Fatalf("test storage configuration: %v", err)
 	}
@@ -140,31 +141,6 @@ func TestStorageServiceTestsProvidedConfiguration(t *testing.T) {
 	}
 }
 
-func TestStorageServiceTestsExistingConfigurationWithSavedCredentials(t *testing.T) {
-	repository := fakeStorageRepository{
-		credentials: domain.StorageConfigurationCredentials{
-			AccessKeyID:     "saved-access-key",
-			SecretAccessKey: "saved-secret-key",
-		},
-	}
-	tester := fakeStorageConnectivityTester{}
-	service := NewStorageService(&repository, &tester)
-
-	input := validStorageInput()
-
-	_, err := service.TestStorageConfiguration(context.Background(), " storage-prod ", input)
-	if err != nil {
-		t.Fatalf("test storage configuration: %v", err)
-	}
-
-	if repository.lastCredentialID != "storage-prod" {
-		t.Fatalf("expected credential lookup id, got %q", repository.lastCredentialID)
-	}
-	if tester.lastInput.AccessKeyID != "saved-access-key" || tester.lastInput.SecretAccessKey != "saved-secret-key" {
-		t.Fatalf("expected saved credentials, got %#v", tester.lastInput)
-	}
-}
-
 func TestStorageServiceReturnsTestFailure(t *testing.T) {
 	repository := fakeStorageRepository{}
 	tester := fakeStorageConnectivityTester{err: domain.ErrStorageConfigurationTestFailed}
@@ -174,22 +150,37 @@ func TestStorageServiceReturnsTestFailure(t *testing.T) {
 	input.AccessKeyID = "access-key"
 	input.SecretAccessKey = "secret-key"
 
-	_, err := service.TestStorageConfiguration(context.Background(), "", input)
+	_, err := service.TestStorageConfiguration(context.Background(), input)
 	if !errors.Is(err, domain.ErrStorageConfigurationTestFailed) {
 		t.Fatalf("expected storage configuration test failure, got %v", err)
 	}
 }
 
+func TestStorageServiceReturnsDeleteDependencyError(t *testing.T) {
+	repository := fakeStorageRepository{
+		deleteErr: domain.ErrStorageConfigurationInUse,
+	}
+	service := NewStorageService(&repository, nil)
+
+	_, err := service.DeleteStorageConfiguration(context.Background(), " storage-prod ")
+	if !errors.Is(err, domain.ErrStorageConfigurationInUse) {
+		t.Fatalf("expected storage configuration dependency error, got %v", err)
+	}
+	if repository.lastDeleteID != "storage-prod" {
+		t.Fatalf("expected trimmed id, got %q", repository.lastDeleteID)
+	}
+}
+
 type fakeStorageRepository struct {
-	configuration    domain.StorageConfiguration
-	configurations   []domain.StorageConfiguration
-	credentials      domain.StorageConfigurationCredentials
-	lastCreateInput  domain.StorageConfigurationInput
-	lastUpdateID     string
-	lastUpdateInput  domain.StorageConfigurationInput
-	lastCredentialID string
-	createCalls      int
-	updateCalls      int
+	configuration   domain.StorageConfiguration
+	configurations  []domain.StorageConfiguration
+	lastCreateInput domain.StorageConfigurationInput
+	lastUpdateID    string
+	lastUpdateInput domain.StorageConfigurationInput
+	lastDeleteID    string
+	deleteErr       error
+	createCalls     int
+	updateCalls     int
 }
 
 func (r *fakeStorageRepository) ListStorageConfigurations(context.Context) ([]domain.StorageConfiguration, error) {
@@ -198,11 +189,6 @@ func (r *fakeStorageRepository) ListStorageConfigurations(context.Context) ([]do
 
 func (r *fakeStorageRepository) GetStorageConfiguration(context.Context, string) (domain.StorageConfiguration, error) {
 	return r.configuration, nil
-}
-
-func (r *fakeStorageRepository) GetStorageConfigurationCredentials(_ context.Context, id string) (domain.StorageConfigurationCredentials, error) {
-	r.lastCredentialID = id
-	return r.credentials, nil
 }
 
 func (r *fakeStorageRepository) CreateStorageConfiguration(_ context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error) {
@@ -218,7 +204,11 @@ func (r *fakeStorageRepository) UpdateStorageConfiguration(_ context.Context, id
 	return r.configuration, nil
 }
 
-func (r *fakeStorageRepository) DeleteStorageConfiguration(context.Context, string) (domain.StorageConfiguration, error) {
+func (r *fakeStorageRepository) DeleteStorageConfiguration(_ context.Context, id string) (domain.StorageConfiguration, error) {
+	r.lastDeleteID = id
+	if r.deleteErr != nil {
+		return domain.StorageConfiguration{}, r.deleteErr
+	}
 	return r.configuration, nil
 }
 
@@ -239,7 +229,7 @@ func validStorageInput() domain.StorageConfigurationInput {
 		Name:           " 生产 OSS ",
 		Adapter:        domain.StorageAdapterS3,
 		Bucket:         " xiaomi-auto-rn-prod ",
-		Endpoint:       " oss-cn-beijing.aliyuncs.com ",
+		Endpoint:       " https://oss-cn-beijing.aliyuncs.com ",
 		Region:         " cn-beijing ",
 		OwnerUserID:    " ou-rn-platform ",
 		Owner:          " rn-platform ",
@@ -257,7 +247,7 @@ func testStorageConfiguration(id string) domain.StorageConfiguration {
 		Name:           "生产 OSS",
 		Adapter:        domain.StorageAdapterS3,
 		Bucket:         "xiaomi-auto-rn-prod",
-		Endpoint:       "oss-cn-beijing.aliyuncs.com",
+		Endpoint:       "https://oss-cn-beijing.aliyuncs.com",
 		Region:         "cn-beijing",
 		OwnerUserID:    "ou-rn-platform",
 		Owner:          "rn-platform",

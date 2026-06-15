@@ -44,11 +44,11 @@ func TestListEnvironments(t *testing.T) {
 		}
 	}
 
-	if response.Environments[0].Status != "健康" {
-		t.Fatalf("expected healthy status label, got %q", response.Environments[0].Status)
+	if response.Environments[0].Status != "healthy" {
+		t.Fatalf("expected healthy status, got %q", response.Environments[0].Status)
 	}
-	if response.Environments[1].Status != "灰度中" {
-		t.Fatalf("expected gray status label, got %q", response.Environments[1].Status)
+	if response.Environments[1].Status != "gray" {
+		t.Fatalf("expected gray status, got %q", response.Environments[1].Status)
 	}
 }
 
@@ -150,8 +150,8 @@ func TestGetEnvironmentDetail(t *testing.T) {
 	if response.Environment.ID != "product" {
 		t.Fatalf("expected product environment, got %q", response.Environment.ID)
 	}
-	if response.Environment.Status != "灰度中" {
-		t.Fatalf("expected gray status label, got %q", response.Environment.Status)
+	if response.Environment.Status != "gray" {
+		t.Fatalf("expected gray status, got %q", response.Environment.Status)
 	}
 }
 

@@ -85,7 +85,7 @@ func runMigration(ctx context.Context, pool *pgxpool.Pool, migrationsFS fs.FS, f
 	if err := tx.QueryRow(ctx, `select exists(select 1 from schema_migrations where version = $1)`, file).Scan(&exists); err != nil {
 		return fmt.Errorf("check migration %s: %w", file, err)
 	}
-	if exists && !isRepeatableMigration(file) {
+	if exists {
 		return nil
 	}
 
@@ -109,8 +109,4 @@ func runMigration(ctx context.Context, pool *pgxpool.Pool, migrationsFS fs.FS, f
 
 func rollbackMigration(ctx context.Context, tx pgx.Tx) {
 	_ = tx.Rollback(ctx)
-}
-
-func isRepeatableMigration(file string) bool {
-	return file == "000001_init_schema.sql"
 }

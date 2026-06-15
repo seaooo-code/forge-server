@@ -13,7 +13,6 @@ type StorageRepository interface {
 	CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 	DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
-	GetStorageConfigurationCredentials(ctx context.Context, id string) (domain.StorageConfigurationCredentials, error)
 	ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error)
 	UpdateStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 }
@@ -44,7 +43,7 @@ func (s *StorageService) GetStorageConfiguration(ctx context.Context, id string)
 }
 
 func (s *StorageService) CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error) {
-	normalized, err := validateStorageConfigurationInput(input, true)
+	normalized, err := validateStorageConfigurationInput(input)
 	if err != nil {
 		return domain.StorageConfiguration{}, err
 	}
@@ -57,7 +56,7 @@ func (s *StorageService) UpdateStorageConfiguration(ctx context.Context, id stri
 		return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
 	}
 
-	normalized, err := validateStorageConfigurationInput(input, false)
+	normalized, err := validateStorageConfigurationInput(input)
 	if err != nil {
 		return domain.StorageConfiguration{}, err
 	}
@@ -72,23 +71,10 @@ func (s *StorageService) DeleteStorageConfiguration(ctx context.Context, id stri
 	return s.repository.DeleteStorageConfiguration(ctx, normalizedID)
 }
 
-func (s *StorageService) TestStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
-	normalizedID := strings.TrimSpace(id)
-	normalized, err := validateStorageConfigurationInput(input, normalizedID == "")
+func (s *StorageService) TestStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
+	normalized, err := validateStorageConfigurationInput(input)
 	if err != nil {
 		return domain.StorageConfigurationTestResult{}, err
-	}
-
-	if normalized.AccessKeyID == "" && normalized.SecretAccessKey == "" {
-		credentials, err := s.repository.GetStorageConfigurationCredentials(ctx, normalizedID)
-		if err != nil {
-			return domain.StorageConfigurationTestResult{}, err
-		}
-		normalized.AccessKeyID = credentials.AccessKeyID
-		normalized.SecretAccessKey = credentials.SecretAccessKey
-		if normalized.AccessKeyID == "" || normalized.SecretAccessKey == "" {
-			return domain.StorageConfigurationTestResult{}, domain.ErrInvalidStorageConfigurationInput
-		}
 	}
 
 	if s.tester == nil {
@@ -104,7 +90,7 @@ func (s *StorageService) TestStorageConfiguration(ctx context.Context, id string
 	}, nil
 }
 
-func validateStorageConfigurationInput(input domain.StorageConfigurationInput, requireSecret bool) (domain.StorageConfigurationInput, error) {
+func validateStorageConfigurationInput(input domain.StorageConfigurationInput) (domain.StorageConfigurationInput, error) {
 	normalized := domain.StorageConfigurationInput{
 		Name:               strings.TrimSpace(input.Name),
 		Adapter:            input.Adapter,
@@ -119,7 +105,7 @@ func validateStorageConfigurationInput(input domain.StorageConfigurationInput, r
 		OwnerFeishuOpenID:  strings.TrimSpace(input.OwnerFeishuOpenID),
 		OwnerFeishuUserID:  strings.TrimSpace(input.OwnerFeishuUserID),
 	}
-	owner := normalizeOwnerUser(domain.UserInput{
+	owner := normalizeUserInput(domain.UserInput{
 		ID:            input.OwnerUserID,
 		Name:          input.Owner,
 		Email:         input.OwnerEmail,
@@ -127,7 +113,7 @@ func validateStorageConfigurationInput(input domain.StorageConfigurationInput, r
 		FeishuUnionID: input.OwnerFeishuUnionID,
 		FeishuOpenID:  input.OwnerFeishuOpenID,
 		FeishuUserID:  input.OwnerFeishuUserID,
-	}, "rn-platform")
+	})
 	normalized.OwnerUserID = owner.ID
 	normalized.Owner = owner.Name
 	normalized.OwnerEmail = owner.Email
@@ -142,21 +128,21 @@ func validateStorageConfigurationInput(input domain.StorageConfigurationInput, r
 	if normalized.Status == "" {
 		normalized.Status = domain.StorageStatusHealthy
 	}
-	if normalized.Name == "" || normalized.Bucket == "" || normalized.Endpoint == "" || normalized.OwnerUserID == "" || normalized.Owner == "" {
+	if normalized.Name == "" ||
+		normalized.Bucket == "" ||
+		normalized.Endpoint == "" ||
+		normalized.Region == "" ||
+		normalized.OwnerUserID == "" ||
+		normalized.Owner == "" {
 		return domain.StorageConfigurationInput{}, domain.ErrInvalidStorageConfigurationInput
 	}
 	if !domain.IsValidStorageAdapter(normalized.Adapter) {
 		return domain.StorageConfigurationInput{}, domain.ErrInvalidStorageConfigurationInput
 	}
-	status, ok := domain.ParseStorageStatus(string(normalized.Status))
-	if !ok {
+	if !domain.IsValidStorageStatus(normalized.Status) {
 		return domain.StorageConfigurationInput{}, domain.ErrInvalidStorageConfigurationInput
 	}
-	normalized.Status = status
-	if requireSecret && (normalized.AccessKeyID == "" || normalized.SecretAccessKey == "") {
-		return domain.StorageConfigurationInput{}, domain.ErrInvalidStorageConfigurationInput
-	}
-	if !requireSecret && ((normalized.AccessKeyID == "") != (normalized.SecretAccessKey == "")) {
+	if normalized.AccessKeyID == "" || normalized.SecretAccessKey == "" {
 		return domain.StorageConfigurationInput{}, domain.ErrInvalidStorageConfigurationInput
 	}
 

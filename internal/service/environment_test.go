@@ -31,7 +31,7 @@ func TestEnvironmentServiceCreatesEnvironment(t *testing.T) {
 	_, err := service.CreateEnvironment(context.Background(), domain.EnvironmentInput{
 		Code:                   " qa ",
 		Name:                   " QA 环境 ",
-		Status:                 domain.EnvironmentStatus("健康"),
+		Status:                 domain.EnvironmentStatusHealthy,
 		Tone:                   "blue",
 		StorageConfigurationID: " storage-qa ",
 	})
@@ -77,7 +77,7 @@ func TestEnvironmentServiceUpdatesEnvironment(t *testing.T) {
 	_, err := service.UpdateEnvironment(context.Background(), " qa ", domain.EnvironmentInput{
 		Code:                   "qa",
 		Name:                   " QA 环境 ",
-		Status:                 domain.EnvironmentStatus("健康"),
+		Status:                 domain.EnvironmentStatusHealthy,
 		Tone:                   "sky",
 		StorageConfigurationID: " storage-qa ",
 	})

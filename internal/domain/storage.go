@@ -2,7 +2,6 @@ package domain
 
 import (
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -10,6 +9,7 @@ var (
 	ErrStorageConfigurationNotFound     = errors.New("storage configuration not found")
 	ErrInvalidStorageConfigurationInput = errors.New("invalid storage configuration request")
 	ErrStorageConfigurationTestFailed   = errors.New("storage configuration test failed")
+	ErrStorageConfigurationInUse        = errors.New("storage configuration is referenced by environments")
 )
 
 type StorageAdapter string
@@ -63,11 +63,6 @@ type StorageConfigurationInput struct {
 	Status             StorageStatus
 }
 
-type StorageConfigurationCredentials struct {
-	AccessKeyID     string
-	SecretAccessKey string
-}
-
 type StorageConfigurationTestResult struct {
 	OK       bool
 	TestedAt time.Time
@@ -86,16 +81,12 @@ func (s StorageStatus) Label() string {
 	}
 }
 
-func ParseStorageStatus(value string) (StorageStatus, bool) {
-	switch strings.TrimSpace(value) {
-	case "", string(StorageStatusHealthy), "正常":
-		return StorageStatusHealthy, true
-	case string(StorageStatusError), "异常":
-		return StorageStatusError, true
-	case string(StorageStatusDisabled), "已停用":
-		return StorageStatusDisabled, true
+func IsValidStorageStatus(status StorageStatus) bool {
+	switch status {
+	case StorageStatusHealthy, StorageStatusError, StorageStatusDisabled:
+		return true
 	default:
-		return "", false
+		return false
 	}
 }
 

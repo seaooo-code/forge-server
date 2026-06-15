@@ -185,11 +185,10 @@ func openAPIDocument() *openapi3.T {
 					op := operation("testStorageConfiguration", "Test storage configuration connectivity", []string{"Storage"}, responses(
 						response(http.StatusOK, "Storage configuration test passed.", schemaRef("StorageConfigurationTestResponse")),
 						response(http.StatusBadRequest, "Invalid storage configuration request.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Stored storage configuration not found.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Storage backend could not be reached.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
-					op.RequestBody = requestBody("Storage configuration test payload. Provide id to reuse stored credentials when secret fields are empty.", schemaRef("StorageConfigurationTestRequest"))
+					op.RequestBody = requestBody("Storage configuration test payload.", schemaRef("StorageConfigurationTestRequest"))
 					return op
 				}(),
 			}),
@@ -217,6 +216,7 @@ func openAPIDocument() *openapi3.T {
 				Delete: func() *openapi3.Operation {
 					op := operation("deleteStorageConfiguration", "Delete storage configuration", []string{"Storage"}, responses(
 						response(http.StatusOK, "Storage configuration deleted.", schemaRef("StorageConfigurationDetailResponse")),
+						response(http.StatusConflict, "Storage configuration is referenced by environments.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Storage configuration not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -337,8 +337,8 @@ func openAPIDocument() *openapi3.T {
 				"StorageConfiguration":               schemaValue(storageConfigurationSchema()),
 				"StorageConfigurationsResponse":      schemaValue(storageConfigurationsResponseSchema()),
 				"StorageConfigurationDetailResponse": schemaValue(storageConfigurationDetailResponseSchema()),
-				"StorageConfigurationCreateRequest":  schemaValue(storageConfigurationRequestSchema(true)),
-				"StorageConfigurationUpdateRequest":  schemaValue(storageConfigurationRequestSchema(false)),
+				"StorageConfigurationCreateRequest":  schemaValue(storageConfigurationRequestSchema()),
+				"StorageConfigurationUpdateRequest":  schemaValue(storageConfigurationRequestSchema()),
 				"StorageConfigurationTestRequest":    schemaValue(storageConfigurationTestRequestSchema()),
 				"StorageConfigurationTestResponse":   schemaValue(storageConfigurationTestResponseSchema()),
 				"FeishuAuthResponse":                 schemaValue(feishuAuthResponseSchema()),
@@ -435,7 +435,7 @@ func environmentSchema() *openapi3.Schema {
 	).
 		WithProperty("id", stringSchema("Environment id.")).
 		WithProperty("name", stringSchema("Environment display name.")).
-		WithProperty("status", enumStringSchema("Environment status.", "健康", "灰度中")).
+		WithProperty("status", enumStringSchema("Environment status.", "healthy", "gray")).
 		WithProperty("tone", enumStringSchema("UI tone.", "amber", "blue", "emerald", "rose", "sky")).
 		WithProperty("description", stringSchema("Environment description.")).
 		WithProperty("storageConfigurationId", stringSchema("Linked storage configuration id.")).
@@ -511,8 +511,8 @@ func applicationListParameters() openapi3.Parameters {
 		},
 		{
 			Value: openapi3.NewQueryParameter("owner").
-				WithDescription("Owner name filter.").
-				WithSchema(stringSchema("Owner name filter.")),
+				WithDescription("Owner user id filter.").
+				WithSchema(stringSchema("Owner user id filter.")),
 		},
 		{
 			Value: openapi3.NewQueryParameter("keyword").
@@ -550,7 +550,7 @@ func applicationSchema() *openapi3.Schema {
 		WithProperty("moduleCount", int32Schema("Module count.")).
 		WithProperty("environmentCount", int32Schema("Enabled environment count.")).
 		WithProperty("createdAt", stringSchema("Application creation date.")).
-		WithProperty("status", enumStringSchema("Application status.", "运行中", "维护中", "已下线"))
+		WithProperty("status", enumStringSchema("Application status.", "running", "maintenance", "offline"))
 }
 
 func applicationOptionSchema() *openapi3.Schema {
@@ -590,7 +590,7 @@ func applicationEnvironmentSchema() *openapi3.Schema {
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("traffic", stringSchema("Traffic label.")).
 		WithProperty("updatedAt", dateTimeSchema("Last update time.")).
-		WithProperty("status", enumStringSchema("Environment binding status.", "健康", "灰度中", "维护中"))
+		WithProperty("status", enumStringSchema("Environment binding status.", "healthy", "gray", "maintenance"))
 }
 
 func applicationModuleSchema() *openapi3.Schema {
@@ -676,6 +676,7 @@ func applicationRequestSchema(includeSlug bool) *openapi3.Schema {
 	required := []string{
 		"name",
 		"platform",
+		"ownerUserId",
 		"owner",
 		"description",
 		"environments",
@@ -745,7 +746,7 @@ func storageConfigurationSchema() *openapi3.Schema {
 		WithProperty("ownerAvatarUrl", stringSchema("Configuration owner avatar url.")).
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
-		WithProperty("status", enumStringSchema("Storage status label.", "正常", "异常", "已停用"))
+		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled"))
 }
 
 func storageConfigurationsResponseSchema() *openapi3.Schema {
@@ -758,11 +759,8 @@ func storageConfigurationDetailResponseSchema() *openapi3.Schema {
 		WithPropertyRef("configuration", schemaRef("StorageConfiguration"))
 }
 
-func storageConfigurationRequestSchema(includeSecret bool) *openapi3.Schema {
-	required := []string{"name", "adapter", "bucket", "endpoint"}
-	if includeSecret {
-		required = append(required, "accessKeyId", "secretAccessKey")
-	}
+func storageConfigurationRequestSchema() *openapi3.Schema {
+	required := []string{"name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner", "accessKeyId", "secretAccessKey"}
 
 	return objectSchema(required...).
 		WithProperty("name", stringSchema("Storage configuration display name.")).
@@ -778,14 +776,13 @@ func storageConfigurationRequestSchema(includeSecret bool) *openapi3.Schema {
 		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
-		WithProperty("status", enumStringSchema("Storage status label.", "正常", "异常", "已停用")).
+		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled")).
 		WithProperty("accessKeyId", stringSchema("Access key id. Not returned by read APIs.")).
-		WithProperty("secretAccessKey", stringSchema("Secret access key. Not returned by read APIs. Empty on update keeps current value."))
+		WithProperty("secretAccessKey", stringSchema("Secret access key. Not returned by read APIs."))
 }
 
 func storageConfigurationTestRequestSchema() *openapi3.Schema {
-	return objectSchema("name", "adapter", "bucket", "endpoint").
-		WithProperty("id", stringSchema("Existing storage configuration id. When provided, empty secret fields reuse stored credentials.")).
+	return objectSchema("name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner", "accessKeyId", "secretAccessKey").
 		WithProperty("name", stringSchema("Storage configuration display name.")).
 		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
@@ -799,9 +796,9 @@ func storageConfigurationTestRequestSchema() *openapi3.Schema {
 		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
-		WithProperty("status", enumStringSchema("Storage status label.", "正常", "异常", "已停用")).
-		WithProperty("accessKeyId", stringSchema("Access key id. Required when id is empty.")).
-		WithProperty("secretAccessKey", stringSchema("Secret access key. Required when id is empty."))
+		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled")).
+		WithProperty("accessKeyId", stringSchema("Access key id.")).
+		WithProperty("secretAccessKey", stringSchema("Secret access key."))
 }
 
 func storageConfigurationTestResponseSchema() *openapi3.Schema {
@@ -844,8 +841,7 @@ func feishuTokenSchema() *openapi3.Schema {
 }
 
 func feishuUserSearchItemSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "departmentIds").
-		WithProperty("id", stringSchema("Best available Feishu user id.")).
+	return objectSchema("name", "departmentIds").
 		WithProperty("unionId", stringSchema("Feishu union_id.")).
 		WithProperty("openId", stringSchema("Feishu open_id.")).
 		WithProperty("userId", stringSchema("Feishu user_id.")).

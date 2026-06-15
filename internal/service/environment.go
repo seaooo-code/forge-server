@@ -62,24 +62,23 @@ func (s *EnvironmentService) UpdateEnvironment(ctx context.Context, code string,
 }
 
 func validateEnvironmentInput(input domain.EnvironmentInput) (domain.EnvironmentInput, error) {
-	status, ok := domain.ParseEnvironmentStatus(string(input.Status))
-	if !ok {
-		return domain.EnvironmentInput{}, domain.ErrInvalidEnvironmentInput
-	}
-
 	normalized := domain.EnvironmentInput{
 		Code:                   strings.TrimSpace(input.Code),
 		Name:                   strings.TrimSpace(input.Name),
-		Status:                 status,
+		Status:                 input.Status,
 		Tone:                   strings.TrimSpace(input.Tone),
 		Description:            strings.TrimSpace(input.Description),
 		StorageConfigurationID: strings.TrimSpace(input.StorageConfigurationID),
+	}
+	if normalized.Status == "" {
+		normalized.Status = domain.EnvironmentStatusHealthy
 	}
 
 	if normalized.Code == "" ||
 		normalized.Name == "" ||
 		normalized.StorageConfigurationID == "" ||
 		!isValidEnvironmentCode(normalized.Code) ||
+		!domain.IsValidEnvironmentStatus(normalized.Status) ||
 		!isValidEnvironmentTone(normalized.Tone) {
 		return domain.EnvironmentInput{}, domain.ErrInvalidEnvironmentInput
 	}
