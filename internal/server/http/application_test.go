@@ -45,6 +45,9 @@ func TestListApplications(t *testing.T) {
 	if response.Applications[0].Status != "运行中" {
 		t.Fatalf("expected running status label, got %q", response.Applications[0].Status)
 	}
+	if response.Applications[0].OwnerUserID != "ou-li-ming" || response.Applications[0].OwnerEmail == "" || response.Applications[0].OwnerAvatarURL == "" {
+		t.Fatalf("expected owner profile fields, got %#v", response.Applications[0])
+	}
 	if response.Applications[2].Status != "已下线" {
 		t.Fatalf("expected offline status label, got %q", response.Applications[2].Status)
 	}
@@ -130,6 +133,9 @@ func TestGetApplicationDetail(t *testing.T) {
 	}
 	if response.Detail.AppKey != "rn.mi-car" {
 		t.Fatalf("expected app key, got %q", response.Detail.AppKey)
+	}
+	if response.Detail.OwnerUserID != "ou-li-ming" || response.Detail.OwnerEmail == "" || response.Detail.OwnerAvatarURL == "" {
+		t.Fatalf("expected owner profile fields, got %#v", response.Detail)
 	}
 	if len(response.Detail.OwnerDepartmentIDs) != 1 || response.Detail.OwnerDepartmentIDs[0] != "od-rn-platform" {
 		t.Fatalf("expected owner department ids, got %#v", response.Detail.OwnerDepartmentIDs)
@@ -228,6 +234,9 @@ func TestCreateApplication(t *testing.T) {
 	}
 	if response.Application.Slug != "mi-car-global" {
 		t.Fatalf("expected created slug, got %q", response.Application.Slug)
+	}
+	if response.Application.OwnerUserID != "ou-li-ming" {
+		t.Fatalf("expected owner user id, got %q", response.Application.OwnerUserID)
 	}
 }
 
@@ -399,6 +408,7 @@ func testHTTPApplication(slug string, status domain.ApplicationStatus) domain.Ap
 		Name:               name,
 		Slug:               slug,
 		Platform:           "iOS / Android",
+		OwnerUserID:        "ou-li-ming",
 		Owner:              "li.ming",
 		OwnerEmail:         "li.ming@xiaomi.com",
 		OwnerAvatarURL:     "https://example.com/li.ming.png",
@@ -428,6 +438,7 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 		Slug:               slug,
 		Name:               application.Name,
 		Description:        "应用详情",
+		OwnerUserID:        application.OwnerUserID,
 		Owner:              application.Owner,
 		OwnerEmail:         application.OwnerEmail,
 		OwnerAvatarURL:     application.OwnerAvatarURL,
@@ -469,6 +480,7 @@ func testApplicationRequest(slug string) applicationRequest {
 		Slug:               slug,
 		Name:               "小米汽车海外版",
 		Platform:           "iOS / Android",
+		OwnerUserID:        "ou-li-ming",
 		Owner:              "li.ming",
 		OwnerEmail:         "li.ming@xiaomi.com",
 		OwnerAvatarURL:     "https://example.com/li.ming.png",

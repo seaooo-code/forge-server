@@ -22,3 +22,12 @@ func TestMigrationFiles(t *testing.T) {
 		t.Fatalf("expected %v, got %v", expected, files)
 	}
 }
+
+func TestInitSchemaMigrationIsRepeatable(t *testing.T) {
+	if !isRepeatableMigration("000001_init_schema.sql") {
+		t.Fatal("expected init schema migration to be repeatable")
+	}
+	if isRepeatableMigration("000002_other.sql") {
+		t.Fatal("expected regular migration not to be repeatable")
+	}
+}

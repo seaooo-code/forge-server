@@ -42,8 +42,10 @@ type ApplicationService interface {
 }
 
 type EnvironmentService interface {
+	CreateEnvironment(ctx context.Context, input domain.EnvironmentInput) (domain.Environment, error)
 	GetEnvironmentDetail(ctx context.Context, code string) (domain.Environment, error)
 	ListEnvironments(ctx context.Context) ([]domain.Environment, error)
+	UpdateEnvironment(ctx context.Context, code string, input domain.EnvironmentInput) (domain.Environment, error)
 }
 
 type FeishuAuthService interface {
@@ -62,6 +64,7 @@ type StorageService interface {
 	DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error)
+	TestStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error)
 	UpdateStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 }
 

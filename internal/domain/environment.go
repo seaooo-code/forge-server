@@ -2,10 +2,14 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
-var ErrEnvironmentNotFound = errors.New("environment not found")
+var (
+	ErrEnvironmentNotFound     = errors.New("environment not found")
+	ErrInvalidEnvironmentInput = errors.New("invalid environment request")
+)
 
 type EnvironmentStatus string
 
@@ -14,28 +18,24 @@ const (
 	EnvironmentStatusGray    EnvironmentStatus = "gray"
 )
 
-var validEnvironmentCodes = map[string]struct{}{
-	"dev":        {},
-	"preProduct": {},
-	"preview":    {},
-	"product":    {},
-	"staging":    {},
-}
-
 type Environment struct {
-	Code         string
-	ShortCode    string
-	Name         string
-	Status       EnvironmentStatus
-	Tone         string
-	Description  string
-	TrafficLabel string
-	UpdatedAt    time.Time
+	Code                     string
+	Name                     string
+	Status                   EnvironmentStatus
+	Tone                     string
+	Description              string
+	StorageConfigurationID   string
+	StorageConfigurationName string
+	UpdatedAt                time.Time
 }
 
-func IsValidEnvironmentCode(code string) bool {
-	_, ok := validEnvironmentCodes[code]
-	return ok
+type EnvironmentInput struct {
+	Code                   string
+	Name                   string
+	Status                 EnvironmentStatus
+	Tone                   string
+	Description            string
+	StorageConfigurationID string
 }
 
 func (s EnvironmentStatus) Label() string {
@@ -46,5 +46,16 @@ func (s EnvironmentStatus) Label() string {
 		return "灰度中"
 	default:
 		return string(s)
+	}
+}
+
+func ParseEnvironmentStatus(value string) (EnvironmentStatus, bool) {
+	switch strings.TrimSpace(value) {
+	case "", string(EnvironmentStatusHealthy), "健康":
+		return EnvironmentStatusHealthy, true
+	case string(EnvironmentStatusGray), "灰度中":
+		return EnvironmentStatusGray, true
+	default:
+		return "", false
 	}
 }

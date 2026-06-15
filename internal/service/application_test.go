@@ -22,12 +22,12 @@ func TestApplicationServiceRejectsInvalidSlugOnCreate(t *testing.T) {
 	}
 }
 
-func TestApplicationServiceRejectsUnknownEnvironment(t *testing.T) {
+func TestApplicationServiceRejectsBlankEnvironment(t *testing.T) {
 	repository := fakeApplicationRepository{}
 	service := NewApplicationService(&repository)
 
 	input := validApplicationInput("mi-car-global")
-	input.Environments[0].Environment = "unknown"
+	input.Environments[0].Environment = " "
 
 	_, err := service.CreateApplication(context.Background(), input)
 	if !errors.Is(err, domain.ErrInvalidApplicationInput) {
@@ -68,6 +68,9 @@ func TestApplicationServiceAddsOwnerToMembers(t *testing.T) {
 
 	if len(repository.lastCreateInput.Members) != 1 {
 		t.Fatalf("expected owner member, got %#v", repository.lastCreateInput.Members)
+	}
+	if repository.lastCreateInput.OwnerUserID != "ou-li-ming" || repository.lastCreateInput.OwnerEmail == "" || repository.lastCreateInput.OwnerAvatarURL == "" {
+		t.Fatalf("expected owner profile, got %#v", repository.lastCreateInput)
 	}
 	member := repository.lastCreateInput.Members[0]
 	if member.Name != "li.ming" || member.Role != domain.ApplicationMemberRoleOwner {
@@ -153,6 +156,9 @@ func TestApplicationServiceReturnsApplicationOptions(t *testing.T) {
 	if len(options.Owners) != 1 || options.Owners[0].Value != "li.ming" {
 		t.Fatalf("expected owner options, got %#v", options.Owners)
 	}
+	if len(options.Environments) != 1 || options.Environments[0].Value != "qa" {
+		t.Fatalf("expected dynamic environment options, got %#v", options.Environments)
+	}
 	removedPlatform := "Android" + " TV"
 	for _, platform := range options.Platforms {
 		if platform.Value == removedPlatform {
@@ -205,6 +211,10 @@ func (r *fakeApplicationRepository) ListApplicationOwners(context.Context) ([]do
 	return []domain.ApplicationOptionItem{{Label: "li.ming", Value: "li.ming"}}, nil
 }
 
+func (r *fakeApplicationRepository) ListApplicationEnvironments(context.Context) ([]domain.ApplicationOptionItem, error) {
+	return []domain.ApplicationOptionItem{{Label: "QA 环境", Value: "qa"}}, nil
+}
+
 func (r *fakeApplicationRepository) CreateApplication(_ context.Context, input domain.ApplicationInput) (domain.ApplicationDetail, error) {
 	r.createCalls++
 	r.lastCreateInput = input
@@ -226,6 +236,7 @@ func validApplicationInput(slug string) domain.ApplicationInput {
 		Slug:               slug,
 		Name:               "小米汽车海外版",
 		Platform:           "iOS / Android",
+		OwnerUserID:        "ou-li-ming",
 		Owner:              "li.ming",
 		OwnerEmail:         "li.ming@xiaomi.com",
 		OwnerAvatarURL:     "https://example.com/li.ming.png",
@@ -256,6 +267,7 @@ func testApplication(slug string, status domain.ApplicationStatus) domain.Applic
 		Name:               slug,
 		Slug:               slug,
 		Platform:           "iOS / Android",
+		OwnerUserID:        "ou-li-ming",
 		Owner:              "li.ming",
 		OwnerEmail:         "li.ming@xiaomi.com",
 		OwnerAvatarURL:     "https://example.com/li.ming.png",

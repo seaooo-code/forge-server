@@ -12,6 +12,7 @@ import (
 	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
 	redisinfra "forge-server/internal/infra/redis"
+	s3infra "forge-server/internal/infra/s3"
 	httpserver "forge-server/internal/server/http"
 	"forge-server/internal/service"
 
@@ -62,7 +63,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	applicationRepository := postgres.NewApplicationRepository(postgresPool)
 	applicationService := service.NewApplicationService(applicationRepository)
 	storageRepository := postgres.NewStorageRepository(postgresPool)
-	storageService := service.NewStorageService(storageRepository)
+	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
 	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
 	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository)

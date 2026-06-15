@@ -29,15 +29,17 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			a.name,
 			a.slug,
 			a.platform,
-			a.owner,
-			a.owner_email,
-			a.owner_avatar_url,
-			a.owner_department_ids,
+			a.owner_user_id,
+			u.name as owner,
+			u.email as owner_email,
+			u.avatar_url as owner_avatar_url,
+			u.department_ids as owner_department_ids,
 			a.module_count,
 			count(b.environment_code)::integer as environment_count,
 			a.created_at,
 			a.status
 		from applications a
+		join users u on u.id = a.owner_user_id
 		left join application_environment_bindings b on b.application_id = a.id
 		where
 			($1 = '' or exists (
@@ -46,17 +48,18 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 				where btrim(platform_part.value) = $1
 			))
 			and ($2 = '' or a.status = $2)
-			and ($3 = '' or a.owner = $3)
+			and ($3 = '' or a.owner_user_id = $3 or u.name = $3)
 			and ($4 = '' or a.name ilike '%' || $4 || '%')
 		group by
 			a.id,
 			a.name,
 			a.slug,
 			a.platform,
-			a.owner,
-			a.owner_email,
-			a.owner_avatar_url,
-			a.owner_department_ids,
+			a.owner_user_id,
+			u.name,
+			u.email,
+			u.avatar_url,
+			u.department_ids,
 			a.module_count,
 			a.created_at,
 			a.status,
@@ -76,6 +79,7 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			&application.Name,
 			&application.Slug,
 			&application.Platform,
+			&application.OwnerUserID,
 			&application.Owner,
 			&application.OwnerEmail,
 			&application.OwnerAvatarURL,
@@ -108,6 +112,10 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 	}
 	defer rollbackMigration(ctx, tx)
 
+	if err := upsertUser(ctx, tx, applicationOwnerUser(input)); err != nil {
+		return domain.ApplicationDetail{}, err
+	}
+
 	applicationID := "app-" + input.Slug
 	if _, err := tx.Exec(ctx, `
 		insert into applications (
@@ -116,10 +124,7 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 			name,
 			status,
 			platform,
-			owner,
-			owner_email,
-			owner_avatar_url,
-			owner_department_ids,
+			owner_user_id,
 			description,
 			module_count,
 			sort_order
@@ -131,9 +136,6 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 			$5,
 			$6,
 			$7,
-			$8,
-			$9,
-			$10,
 			0,
 			coalesce((select max(sort_order) + 10 from applications), 10)
 		)
@@ -142,10 +144,7 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 		input.Name,
 		input.Status,
 		input.Platform,
-		input.Owner,
-		input.OwnerEmail,
-		input.OwnerAvatarURL,
-		input.OwnerDepartmentIDs,
+		input.OwnerUserID,
 		input.Description,
 	); err != nil {
 		if isUniqueViolation(err) {
@@ -172,17 +171,18 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 	}
 	defer rollbackMigration(ctx, tx)
 
+	if err := upsertUser(ctx, tx, applicationOwnerUser(input)); err != nil {
+		return domain.ApplicationDetail{}, err
+	}
+
 	var applicationID string
 	if err := tx.QueryRow(ctx, `
 		update applications set
 			name = $2,
 			status = $3,
 			platform = $4,
-			owner = $5,
-			owner_email = $6,
-			owner_avatar_url = $7,
-			owner_department_ids = $8,
-			description = $9,
+			owner_user_id = $5,
+			description = $6,
 			updated_at = now()
 		where slug = $1
 		returning id
@@ -191,10 +191,7 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 		input.Name,
 		input.Status,
 		input.Platform,
-		input.Owner,
-		input.OwnerEmail,
-		input.OwnerAvatarURL,
-		input.OwnerDepartmentIDs,
+		input.OwnerUserID,
 		input.Description,
 	).Scan(&applicationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -243,10 +240,11 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 			a.name,
 			a.slug,
 			a.platform,
-			a.owner,
-			a.owner_email,
-			a.owner_avatar_url,
-			a.owner_department_ids,
+			a.owner_user_id,
+			u.name as owner,
+			u.email as owner_email,
+			u.avatar_url as owner_avatar_url,
+			u.department_ids as owner_department_ids,
 			a.module_count,
 			(
 				select count(*)::integer
@@ -257,12 +255,14 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 			a.status,
 			a.description
 		from applications a
+		join users u on u.id = a.owner_user_id
 		where a.slug = $1
 	`, slug).Scan(
 		&detail.Application.ID,
 		&detail.Application.Name,
 		&detail.Application.Slug,
 		&detail.Application.Platform,
+		&detail.Application.OwnerUserID,
 		&detail.Application.Owner,
 		&detail.Application.OwnerEmail,
 		&detail.Application.OwnerAvatarURL,
@@ -304,11 +304,12 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 
 func (r *ApplicationRepository) ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error) {
 	rows, err := r.pool.Query(ctx, `
-		select owner
-		from applications
-		where owner <> ''
-		group by owner
-		order by min(sort_order) asc, owner asc
+		select u.id, u.name
+		from applications a
+		join users u on u.id = a.owner_user_id
+		where u.name <> ''
+		group by u.id, u.name
+		order by min(a.sort_order) asc, u.name asc
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("query application owners: %w", err)
@@ -317,13 +318,14 @@ func (r *ApplicationRepository) ListApplicationOwners(ctx context.Context) ([]do
 
 	owners := make([]domain.ApplicationOptionItem, 0)
 	for rows.Next() {
-		var owner string
-		if err := rows.Scan(&owner); err != nil {
+		var ownerID string
+		var ownerName string
+		if err := rows.Scan(&ownerID, &ownerName); err != nil {
 			return nil, fmt.Errorf("scan application owner: %w", err)
 		}
 		owners = append(owners, domain.ApplicationOptionItem{
-			Label: owner,
-			Value: owner,
+			Label: ownerName,
+			Value: ownerID,
 		})
 	}
 
@@ -334,11 +336,45 @@ func (r *ApplicationRepository) ListApplicationOwners(ctx context.Context) ([]do
 	return owners, nil
 }
 
+func (r *ApplicationRepository) ListApplicationEnvironments(ctx context.Context) ([]domain.ApplicationOptionItem, error) {
+	rows, err := r.pool.Query(ctx, `
+		select code, name
+		from environments
+		order by sort_order asc, code asc
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query application environments: %w", err)
+	}
+	defer rows.Close()
+
+	environments := make([]domain.ApplicationOptionItem, 0)
+	for rows.Next() {
+		var code string
+		var name string
+		if err := rows.Scan(&code, &name); err != nil {
+			return nil, fmt.Errorf("scan application environment option: %w", err)
+		}
+		environments = append(environments, domain.ApplicationOptionItem{
+			Label: code,
+			Value: code,
+		})
+		if name != "" && name != code {
+			environments[len(environments)-1].Label = name
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate application environment options: %w", err)
+	}
+
+	return environments, nil
+}
+
 func (r *ApplicationRepository) listApplicationEnvironments(ctx context.Context, querier applicationQuerier, applicationID string) ([]domain.ApplicationEnvironmentBinding, error) {
 	rows, err := querier.Query(ctx, `
 		select
 			e.code,
-			e.traffic_label,
+			'-' as traffic,
 			e.updated_at,
 			e.status
 		from application_environment_bindings b
@@ -417,6 +453,9 @@ func (r *ApplicationRepository) replaceApplicationRelations(ctx context.Context,
 			environment.Environment,
 			(index+1)*10,
 		); err != nil {
+			if isForeignKeyViolation(err) {
+				return domain.ErrInvalidApplicationInput
+			}
 			return fmt.Errorf("insert application environment: %w", err)
 		}
 	}
@@ -447,6 +486,19 @@ func (r *ApplicationRepository) replaceApplicationRelations(ctx context.Context,
 	}
 
 	return nil
+}
+
+func applicationOwnerUser(input domain.ApplicationInput) domain.UserInput {
+	return domain.UserInput{
+		ID:            input.OwnerUserID,
+		Name:          input.Owner,
+		Email:         input.OwnerEmail,
+		AvatarURL:     input.OwnerAvatarURL,
+		DepartmentIDs: input.OwnerDepartmentIDs,
+		FeishuUnionID: input.OwnerFeishuUnionID,
+		FeishuOpenID:  input.OwnerFeishuOpenID,
+		FeishuUserID:  input.OwnerFeishuUserID,
+	}
 }
 
 func memberKey(member domain.ApplicationMemberInput, index int) string {

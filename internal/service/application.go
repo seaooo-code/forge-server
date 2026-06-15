@@ -12,6 +12,7 @@ type ApplicationRepository interface {
 	CreateApplication(ctx context.Context, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
+	ListApplicationEnvironments(ctx context.Context) ([]domain.ApplicationOptionItem, error)
 	ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error)
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
@@ -102,6 +103,10 @@ func (s *ApplicationService) GetApplicationOptions(ctx context.Context) (domain.
 	if err != nil {
 		return domain.ApplicationOptions{}, err
 	}
+	environments, err := s.repository.ListApplicationEnvironments(ctx)
+	if err != nil {
+		return domain.ApplicationOptions{}, err
+	}
 
 	return domain.ApplicationOptions{
 		ApplicationStatuses: []domain.ApplicationOptionItem{
@@ -109,14 +114,8 @@ func (s *ApplicationService) GetApplicationOptions(ctx context.Context) (domain.
 			{Label: "维护中", Value: string(domain.ApplicationStatusMaintenance)},
 			{Label: "已下线", Value: string(domain.ApplicationStatusOffline)},
 		},
-		Environments: []domain.ApplicationOptionItem{
-			{Label: "dev", Value: "dev"},
-			{Label: "staging", Value: "staging"},
-			{Label: "preview", Value: "preview"},
-			{Label: "preProduct", Value: "preProduct"},
-			{Label: "product", Value: "product"},
-		},
-		Owners: owners,
+		Environments: environments,
+		Owners:       owners,
 		Platforms: []domain.ApplicationOptionItem{
 			{Label: "iOS", Value: "iOS"},
 			{Label: "Android", Value: "Android"},
@@ -127,18 +126,32 @@ func (s *ApplicationService) GetApplicationOptions(ctx context.Context) (domain.
 
 func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (domain.ApplicationInput, error) {
 	normalized := domain.ApplicationInput{
-		Slug:               strings.TrimSpace(input.Slug),
-		Name:               strings.TrimSpace(input.Name),
-		Platform:           strings.TrimSpace(input.Platform),
-		Owner:              strings.TrimSpace(input.Owner),
-		OwnerEmail:         strings.TrimSpace(input.OwnerEmail),
-		OwnerAvatarURL:     strings.TrimSpace(input.OwnerAvatarURL),
-		OwnerDepartmentIDs: trimStringSlice(input.OwnerDepartmentIDs),
-		Description:        strings.TrimSpace(input.Description),
-		Status:             input.Status,
-		Environments:       make([]domain.ApplicationEnvironmentInput, 0, len(input.Environments)),
-		Members:            make([]domain.ApplicationMemberInput, 0, len(input.Members)),
+		Slug:         strings.TrimSpace(input.Slug),
+		Name:         strings.TrimSpace(input.Name),
+		Platform:     strings.TrimSpace(input.Platform),
+		Description:  strings.TrimSpace(input.Description),
+		Status:       input.Status,
+		Environments: make([]domain.ApplicationEnvironmentInput, 0, len(input.Environments)),
+		Members:      make([]domain.ApplicationMemberInput, 0, len(input.Members)),
 	}
+	owner := normalizeOwnerUser(domain.UserInput{
+		ID:            input.OwnerUserID,
+		Name:          input.Owner,
+		Email:         input.OwnerEmail,
+		AvatarURL:     input.OwnerAvatarURL,
+		DepartmentIDs: input.OwnerDepartmentIDs,
+		FeishuUnionID: input.OwnerFeishuUnionID,
+		FeishuOpenID:  input.OwnerFeishuOpenID,
+		FeishuUserID:  input.OwnerFeishuUserID,
+	}, "")
+	normalized.OwnerUserID = owner.ID
+	normalized.Owner = owner.Name
+	normalized.OwnerEmail = owner.Email
+	normalized.OwnerAvatarURL = owner.AvatarURL
+	normalized.OwnerDepartmentIDs = owner.DepartmentIDs
+	normalized.OwnerFeishuUnionID = owner.FeishuUnionID
+	normalized.OwnerFeishuOpenID = owner.FeishuOpenID
+	normalized.OwnerFeishuUserID = owner.FeishuUserID
 
 	if requireSlug && !domain.IsValidApplicationSlug(normalized.Slug) {
 		return domain.ApplicationInput{}, domain.ErrInvalidApplicationInput
@@ -148,6 +161,7 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 	}
 	if normalized.Name == "" ||
 		normalized.Platform == "" ||
+		normalized.OwnerUserID == "" ||
 		normalized.Owner == "" ||
 		normalized.Description == "" {
 		return domain.ApplicationInput{}, domain.ErrInvalidApplicationInput
@@ -165,7 +179,7 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 	environmentSeen := map[string]struct{}{}
 	for _, environment := range input.Environments {
 		code := strings.TrimSpace(environment.Environment)
-		if !domain.IsValidEnvironmentCode(code) {
+		if code == "" {
 			return domain.ApplicationInput{}, domain.ErrInvalidApplicationInput
 		}
 		if _, ok := environmentSeen[code]; ok {
@@ -276,9 +290,11 @@ func withApplicationDerivedDetail(detail domain.ApplicationDetail) domain.Applic
 	detail.AppKey = "rn." + detail.Application.Slug
 	detail.Slug = detail.Application.Slug
 	detail.Name = detail.Application.Name
+	detail.OwnerUserID = detail.Application.OwnerUserID
 	detail.Owner = detail.Application.Owner
 	detail.OwnerEmail = detail.Application.OwnerEmail
 	detail.OwnerAvatarURL = detail.Application.OwnerAvatarURL
+	detail.OwnerDepartmentIDs = detail.Application.OwnerDepartmentIDs
 	detail.Application.EnvironmentCount = len(detail.Environments)
 	detail.Metrics = []domain.ApplicationDetailMetric{
 		{

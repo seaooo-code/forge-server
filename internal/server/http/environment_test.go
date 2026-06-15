@@ -14,7 +14,7 @@ import (
 
 func TestListEnvironments(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
-		EnvironmentService: fakeEnvironmentService{
+		EnvironmentService: &fakeEnvironmentService{
 			environments: testEnvironments(),
 		},
 	})
@@ -33,7 +33,7 @@ func TestListEnvironments(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	expectedCodes := []string{"dev", "staging", "preview", "preProduct", "product"}
+	expectedCodes := []string{"qa", "prod-cn"}
 	if len(response.Environments) != len(expectedCodes) {
 		t.Fatalf("expected %d environments, got %d", len(expectedCodes), len(response.Environments))
 	}
@@ -47,16 +47,88 @@ func TestListEnvironments(t *testing.T) {
 	if response.Environments[0].Status != "健康" {
 		t.Fatalf("expected healthy status label, got %q", response.Environments[0].Status)
 	}
-	if response.Environments[4].Status != "灰度中" {
-		t.Fatalf("expected gray status label, got %q", response.Environments[4].Status)
+	if response.Environments[1].Status != "灰度中" {
+		t.Fatalf("expected gray status label, got %q", response.Environments[1].Status)
+	}
+}
+
+func TestCreateEnvironment(t *testing.T) {
+	service := fakeEnvironmentService{}
+	e := New(config.Config{}, Dependencies{EnvironmentService: &service})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", jsonBody(environmentRequest{
+		Code:                   "qa",
+		Name:                   "QA 环境",
+		Status:                 "healthy",
+		Tone:                   "blue",
+		StorageConfigurationID: "storage-qa",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	if service.lastCreateInput.StorageConfigurationID != "storage-qa" {
+		t.Fatalf("expected storage configuration id, got %q", service.lastCreateInput.StorageConfigurationID)
+	}
+
+	var response environmentDetailResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Environment.StorageConfigurationID != "storage-qa" {
+		t.Fatalf("expected storage configuration in response, got %#v", response.Environment)
+	}
+}
+
+func TestUpdateEnvironment(t *testing.T) {
+	service := fakeEnvironmentService{}
+	e := New(config.Config{}, Dependencies{EnvironmentService: &service})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/environments/qa", jsonBody(environmentRequest{
+		Code:                   "qa",
+		Name:                   "QA 验收环境",
+		Status:                 "gray",
+		Tone:                   "sky",
+		StorageConfigurationID: "storage-qa-2",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	if service.lastUpdateCode != "qa" {
+		t.Fatalf("expected update code qa, got %q", service.lastUpdateCode)
+	}
+	if service.lastUpdateInput.StorageConfigurationID != "storage-qa-2" {
+		t.Fatalf("expected storage configuration id, got %q", service.lastUpdateInput.StorageConfigurationID)
+	}
+
+	var response environmentDetailResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Environment.ID != "qa" {
+		t.Fatalf("expected qa environment, got %q", response.Environment.ID)
+	}
+	if response.Environment.StorageConfigurationID != "storage-qa-2" {
+		t.Fatalf("expected updated storage configuration, got %#v", response.Environment)
 	}
 }
 
 func TestGetEnvironmentDetail(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
-		EnvironmentService: fakeEnvironmentService{
+		EnvironmentService: &fakeEnvironmentService{
 			details: map[string]domain.Environment{
-				"product": testEnvironment("product", "PRODUCT", domain.EnvironmentStatusGray),
+				"product": testEnvironment("product", domain.EnvironmentStatusGray),
 			},
 		},
 	})
@@ -81,14 +153,11 @@ func TestGetEnvironmentDetail(t *testing.T) {
 	if response.Environment.Status != "灰度中" {
 		t.Fatalf("expected gray status label, got %q", response.Environment.Status)
 	}
-	if response.Environment.Traffic == "" {
-		t.Fatalf("expected environment entity fields, got traffic=%q", response.Environment.Traffic)
-	}
 }
 
 func TestGetEnvironmentDetailNotFound(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
-		EnvironmentService: fakeEnvironmentService{
+		EnvironmentService: &fakeEnvironmentService{
 			details: map[string]domain.Environment{},
 		},
 	})
@@ -113,12 +182,24 @@ func TestGetEnvironmentDetailNotFound(t *testing.T) {
 }
 
 type fakeEnvironmentService struct {
-	environments []domain.Environment
-	details      map[string]domain.Environment
+	environments    []domain.Environment
+	details         map[string]domain.Environment
+	lastCreateInput domain.EnvironmentInput
+	lastUpdateCode  string
+	lastUpdateInput domain.EnvironmentInput
 }
 
 func (s fakeEnvironmentService) ListEnvironments(context.Context) ([]domain.Environment, error) {
 	return s.environments, nil
+}
+
+func (s *fakeEnvironmentService) CreateEnvironment(_ context.Context, input domain.EnvironmentInput) (domain.Environment, error) {
+	s.lastCreateInput = input
+	environment := testEnvironment(input.Code, input.Status)
+	environment.Name = input.Name
+	environment.StorageConfigurationID = input.StorageConfigurationID
+	environment.StorageConfigurationName = "QA OSS"
+	return environment, nil
 }
 
 func (s fakeEnvironmentService) GetEnvironmentDetail(_ context.Context, code string) (domain.Environment, error) {
@@ -129,25 +210,33 @@ func (s fakeEnvironmentService) GetEnvironmentDetail(_ context.Context, code str
 	return detail, nil
 }
 
+func (s *fakeEnvironmentService) UpdateEnvironment(_ context.Context, code string, input domain.EnvironmentInput) (domain.Environment, error) {
+	s.lastUpdateCode = code
+	s.lastUpdateInput = input
+	environment := testEnvironment(input.Code, input.Status)
+	environment.Name = input.Name
+	environment.Tone = input.Tone
+	environment.StorageConfigurationID = input.StorageConfigurationID
+	environment.StorageConfigurationName = "QA 灰度 OSS"
+	return environment, nil
+}
+
 func testEnvironments() []domain.Environment {
 	return []domain.Environment{
-		testEnvironment("dev", "DEV", domain.EnvironmentStatusHealthy),
-		testEnvironment("staging", "STAGING", domain.EnvironmentStatusHealthy),
-		testEnvironment("preview", "PREVIEW", domain.EnvironmentStatusHealthy),
-		testEnvironment("preProduct", "PREPRODUCT", domain.EnvironmentStatusHealthy),
-		testEnvironment("product", "PRODUCT", domain.EnvironmentStatusGray),
+		testEnvironment("qa", domain.EnvironmentStatusHealthy),
+		testEnvironment("prod-cn", domain.EnvironmentStatusGray),
 	}
 }
 
-func testEnvironment(code string, shortCode string, status domain.EnvironmentStatus) domain.Environment {
+func testEnvironment(code string, status domain.EnvironmentStatus) domain.Environment {
 	return domain.Environment{
-		Code:         code,
-		ShortCode:    shortCode,
-		Name:         shortCode + " 环境",
-		Status:       status,
-		Tone:         "blue",
-		Description:  "环境说明",
-		TrafficLabel: "研发内网",
-		UpdatedAt:    time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
+		Code:                     code,
+		Name:                     code + " 环境",
+		Status:                   status,
+		Tone:                     "blue",
+		Description:              "环境说明",
+		StorageConfigurationID:   "storage-qa",
+		StorageConfigurationName: "QA OSS",
+		UpdatedAt:                time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
 	}
 }

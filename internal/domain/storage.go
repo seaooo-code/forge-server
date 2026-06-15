@@ -9,6 +9,7 @@ import (
 var (
 	ErrStorageConfigurationNotFound     = errors.New("storage configuration not found")
 	ErrInvalidStorageConfigurationInput = errors.New("invalid storage configuration request")
+	ErrStorageConfigurationTestFailed   = errors.New("storage configuration test failed")
 )
 
 type StorageAdapter string
@@ -32,7 +33,10 @@ type StorageConfiguration struct {
 	Bucket         string
 	Endpoint       string
 	Region         string
+	OwnerUserID    string
 	Owner          string
+	OwnerEmail     string
+	OwnerAvatarURL string
 	PublicBaseURL  string
 	Status         StorageStatus
 	LastVerifiedAt *time.Time
@@ -41,16 +45,32 @@ type StorageConfiguration struct {
 }
 
 type StorageConfigurationInput struct {
-	Name            string
-	Adapter         StorageAdapter
-	Bucket          string
-	Endpoint        string
-	Region          string
-	Owner           string
-	PublicBaseURL   string
+	Name               string
+	Adapter            StorageAdapter
+	Bucket             string
+	Endpoint           string
+	Region             string
+	OwnerUserID        string
+	Owner              string
+	OwnerEmail         string
+	OwnerAvatarURL     string
+	OwnerFeishuUnionID string
+	OwnerFeishuOpenID  string
+	OwnerFeishuUserID  string
+	PublicBaseURL      string
+	AccessKeyID        string
+	SecretAccessKey    string
+	Status             StorageStatus
+}
+
+type StorageConfigurationCredentials struct {
 	AccessKeyID     string
 	SecretAccessKey string
-	Status          StorageStatus
+}
+
+type StorageConfigurationTestResult struct {
+	OK       bool
+	TestedAt time.Time
 }
 
 func (s StorageStatus) Label() string {

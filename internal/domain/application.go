@@ -42,6 +42,7 @@ type Application struct {
 	Name               string
 	Slug               string
 	Platform           string
+	OwnerUserID        string
 	Owner              string
 	OwnerEmail         string
 	OwnerAvatarURL     string
@@ -118,6 +119,7 @@ type ApplicationDetail struct {
 	Slug               string
 	Name               string
 	Description        string
+	OwnerUserID        string
 	Owner              string
 	OwnerEmail         string
 	OwnerAvatarURL     string
@@ -143,10 +145,14 @@ type ApplicationInput struct {
 	Slug               string
 	Name               string
 	Platform           string
+	OwnerUserID        string
 	Owner              string
 	OwnerEmail         string
 	OwnerAvatarURL     string
 	OwnerDepartmentIDs []string
+	OwnerFeishuUnionID string
+	OwnerFeishuOpenID  string
+	OwnerFeishuUserID  string
 	Description        string
 	Status             ApplicationStatus
 	Environments       []ApplicationEnvironmentInput

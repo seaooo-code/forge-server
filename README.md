@@ -29,6 +29,7 @@ http://localhost:8080/openapi.json
 - `DELETE /api/v1/applications/:slug`：删除应用。
 - `GET /api/v1/storage/configurations`：存储配置列表。
 - `GET /api/v1/storage/configurations/:id`：存储配置详情。
+- `POST /api/v1/storage/configurations/test`：测试存储配置连通性。
 - `POST /api/v1/storage/configurations`：创建存储配置。
 - `PATCH /api/v1/storage/configurations/:id`：更新存储配置。
 - `DELETE /api/v1/storage/configurations/:id`：删除存储配置。

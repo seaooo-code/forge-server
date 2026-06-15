@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"forge-server/internal/domain"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -169,6 +171,22 @@ func TestObjectMethodsRejectBlankKey(t *testing.T) {
 	}
 	if _, err := client.PresignPutObject(context.Background(), " ", ""); !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("expected invalid key from presign put, got %v", err)
+	}
+}
+
+func TestOptionsFromStorageConfigurationInputNormalizesEndpointAndRegion(t *testing.T) {
+	options := optionsFromStorageConfigurationInput(domain.StorageConfigurationInput{
+		Bucket:          "forge-assets",
+		Endpoint:        "s3.example.com",
+		AccessKeyID:     "access-key",
+		SecretAccessKey: "secret-key",
+	})
+
+	if options.Endpoint != "https://s3.example.com" {
+		t.Fatalf("expected https endpoint, got %q", options.Endpoint)
+	}
+	if options.Region != defaultStorageTestRegion {
+		t.Fatalf("expected default region, got %q", options.Region)
 	}
 }
 

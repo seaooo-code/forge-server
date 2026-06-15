@@ -29,6 +29,7 @@ type applicationResponse struct {
 	Name               string   `json:"name"`
 	Slug               string   `json:"slug"`
 	Platform           string   `json:"platform"`
+	OwnerUserID        string   `json:"ownerUserId"`
 	Owner              string   `json:"owner"`
 	OwnerEmail         string   `json:"ownerEmail"`
 	OwnerAvatarURL     string   `json:"ownerAvatarUrl"`
@@ -52,6 +53,7 @@ type applicationDetailFields struct {
 	Slug               string                           `json:"slug"`
 	Name               string                           `json:"name"`
 	Description        string                           `json:"description"`
+	OwnerUserID        string                           `json:"ownerUserId"`
 	Owner              string                           `json:"owner"`
 	OwnerEmail         string                           `json:"ownerEmail"`
 	OwnerAvatarURL     string                           `json:"ownerAvatarUrl"`
@@ -112,10 +114,14 @@ type applicationRequest struct {
 	Slug               string                          `json:"slug"`
 	Name               string                          `json:"name"`
 	Platform           string                          `json:"platform"`
+	OwnerUserID        string                          `json:"ownerUserId"`
 	Owner              string                          `json:"owner"`
 	OwnerEmail         string                          `json:"ownerEmail"`
 	OwnerAvatarURL     string                          `json:"ownerAvatarUrl"`
 	OwnerDepartmentIDs []string                        `json:"ownerDepartmentIds"`
+	OwnerFeishuUnionID string                          `json:"ownerFeishuUnionId"`
+	OwnerFeishuOpenID  string                          `json:"ownerFeishuOpenId"`
+	OwnerFeishuUserID  string                          `json:"ownerFeishuUserId"`
 	Description        string                          `json:"description"`
 	Status             domain.ApplicationStatus        `json:"status"`
 	Environments       []applicationEnvironmentRequest `json:"environments"`
@@ -281,10 +287,14 @@ func bindApplicationRequest(c echo.Context) (domain.ApplicationInput, bool) {
 		Slug:               request.Slug,
 		Name:               request.Name,
 		Platform:           request.Platform,
+		OwnerUserID:        request.OwnerUserID,
 		Owner:              request.Owner,
 		OwnerEmail:         request.OwnerEmail,
 		OwnerAvatarURL:     request.OwnerAvatarURL,
 		OwnerDepartmentIDs: request.OwnerDepartmentIDs,
+		OwnerFeishuUnionID: request.OwnerFeishuUnionID,
+		OwnerFeishuOpenID:  request.OwnerFeishuOpenID,
+		OwnerFeishuUserID:  request.OwnerFeishuUserID,
 		Description:        request.Description,
 		Status:             request.Status,
 		Environments:       environments,
@@ -319,6 +329,7 @@ func newApplicationResponse(application domain.Application) applicationResponse 
 		Name:               application.Name,
 		Slug:               application.Slug,
 		Platform:           application.Platform,
+		OwnerUserID:        application.OwnerUserID,
 		Owner:              application.Owner,
 		OwnerEmail:         application.OwnerEmail,
 		OwnerAvatarURL:     application.OwnerAvatarURL,
@@ -348,6 +359,7 @@ func newApplicationDetailResponse(detail domain.ApplicationDetail) applicationDe
 			Slug:               detail.Slug,
 			Name:               detail.Name,
 			Description:        detail.Description,
+			OwnerUserID:        detail.OwnerUserID,
 			Owner:              detail.Owner,
 			OwnerEmail:         detail.OwnerEmail,
 			OwnerAvatarURL:     detail.OwnerAvatarURL,

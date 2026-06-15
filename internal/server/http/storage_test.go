@@ -47,6 +47,9 @@ func TestListStorageConfigurations(t *testing.T) {
 	if response.Configurations[0].LastVerifiedAt == "" {
 		t.Fatal("expected last verified time")
 	}
+	if response.Configurations[0].OwnerUserID != "ou-rn-platform" || response.Configurations[0].OwnerEmail == "" || response.Configurations[0].OwnerAvatarURL == "" {
+		t.Fatalf("expected owner profile fields, got %#v", response.Configurations[0])
+	}
 }
 
 func TestGetStorageConfiguration(t *testing.T) {
@@ -94,6 +97,9 @@ func TestCreateStorageConfiguration(t *testing.T) {
 	}
 	if service.lastCreateInput.SecretAccessKey != "secret-key" {
 		t.Fatalf("expected secret to be bound")
+	}
+	if service.lastCreateInput.OwnerUserID != "ou-rn-platform" || service.lastCreateInput.OwnerEmail == "" || service.lastCreateInput.OwnerAvatarURL == "" {
+		t.Fatalf("expected owner profile input, got %#v", service.lastCreateInput)
 	}
 }
 
@@ -146,6 +152,60 @@ func TestDeleteStorageConfiguration(t *testing.T) {
 	}
 }
 
+func TestTestStorageConfiguration(t *testing.T) {
+	service := &fakeStorageService{
+		testResult: domain.StorageConfigurationTestResult{
+			OK:       true,
+			TestedAt: time.Date(2026, 6, 12, 11, 20, 0, 0, time.UTC),
+		},
+	}
+	e := New(config.Config{}, Dependencies{StorageService: service})
+
+	request := storageRequest()
+	request["id"] = "storage-prod"
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations/test", jsonBody(request))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if service.lastTestID != "storage-prod" {
+		t.Fatalf("expected storage id, got %q", service.lastTestID)
+	}
+	if service.lastTestInput.SecretAccessKey != "secret-key" {
+		t.Fatalf("expected secret to be bound")
+	}
+
+	var response storageConfigurationTestResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.OK || response.TestedAt == "" {
+		t.Fatalf("expected successful test response, got %#v", response)
+	}
+}
+
+func TestTestStorageConfigurationFailure(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		StorageService: &fakeStorageService{
+			err: domain.ErrStorageConfigurationTestFailed,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations/test", jsonBody(storageRequest()))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadGateway, rec.Code, rec.Body.String())
+	}
+}
+
 func TestStorageConfigurationNotFound(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		StorageService: &fakeStorageService{
@@ -182,11 +242,14 @@ func TestStorageConfigurationRejectsInvalidStatus(t *testing.T) {
 type fakeStorageService struct {
 	configuration   domain.StorageConfiguration
 	configurations  []domain.StorageConfiguration
+	testResult      domain.StorageConfigurationTestResult
 	err             error
 	lastCreateInput domain.StorageConfigurationInput
 	lastUpdateID    string
 	lastUpdateInput domain.StorageConfigurationInput
 	lastDeleteID    string
+	lastTestID      string
+	lastTestInput   domain.StorageConfigurationInput
 }
 
 func (s fakeStorageService) ListStorageConfigurations(context.Context) ([]domain.StorageConfiguration, error) {
@@ -228,6 +291,15 @@ func (s *fakeStorageService) DeleteStorageConfiguration(_ context.Context, id st
 	return s.configuration, nil
 }
 
+func (s *fakeStorageService) TestStorageConfiguration(_ context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
+	s.lastTestID = id
+	s.lastTestInput = input
+	if s.err != nil {
+		return domain.StorageConfigurationTestResult{}, s.err
+	}
+	return s.testResult, nil
+}
+
 func testHTTPStorageConfiguration(id string, status domain.StorageStatus) domain.StorageConfiguration {
 	lastVerifiedAt := time.Date(2026, 6, 12, 10, 30, 0, 0, time.UTC)
 	return domain.StorageConfiguration{
@@ -237,7 +309,10 @@ func testHTTPStorageConfiguration(id string, status domain.StorageStatus) domain
 		Bucket:         "xiaomi-auto-rn-prod",
 		Endpoint:       "oss-cn-beijing.aliyuncs.com",
 		Region:         "cn-beijing",
+		OwnerUserID:    "ou-rn-platform",
 		Owner:          "rn-platform",
+		OwnerEmail:     "rn-platform@xiaomi.com",
+		OwnerAvatarURL: "https://example.com/rn-platform.png",
 		PublicBaseURL:  "https://cdn.example.com/rn/prod",
 		Status:         status,
 		LastVerifiedAt: &lastVerifiedAt,
@@ -250,8 +325,12 @@ func storageRequest() map[string]string {
 		"adapter":         "S3",
 		"bucket":          "xiaomi-auto-rn-prod",
 		"endpoint":        "oss-cn-beijing.aliyuncs.com",
+		"id":              "",
 		"name":            "生产 OSS",
+		"ownerUserId":     "ou-rn-platform",
 		"owner":           "rn-platform",
+		"ownerEmail":      "rn-platform@xiaomi.com",
+		"ownerAvatarUrl":  "https://example.com/rn-platform.png",
 		"publicBaseUrl":   "https://cdn.example.com/rn/prod",
 		"region":          "cn-beijing",
 		"secretAccessKey": "secret-key",
