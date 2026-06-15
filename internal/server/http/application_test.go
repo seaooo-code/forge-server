@@ -286,14 +286,17 @@ func TestUpdateApplication(t *testing.T) {
 	}
 }
 
-func TestDeleteApplicationSoftDeletes(t *testing.T) {
+func TestUpdateApplicationStatus(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ApplicationService: fakeApplicationService{
-			detail: testHTTPApplicationDetail("mi-car", domain.ApplicationStatusOffline),
+			detail: testHTTPApplicationDetail("mi-car", domain.ApplicationStatusRunning),
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/applications/mi-car", nil)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/applications/mi-car/status", jsonBody(applicationStatusRequest{
+		Status: domain.ApplicationStatusRunning,
+	}))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -306,17 +309,90 @@ func TestDeleteApplicationSoftDeletes(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Application.Status != "offline" {
-		t.Fatalf("expected offline status, got %q", response.Application.Status)
+	if response.Application.Status != "running" {
+		t.Fatalf("expected running status, got %q", response.Application.Status)
+	}
+}
+
+func TestCheckApplicationDelete(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ApplicationService: fakeApplicationService{
+			deleteCheck: domain.ApplicationDeleteCheck{
+				Deletable: false,
+				Dependencies: []domain.ApplicationDeleteDependency{
+					{
+						ID:          "app-mi-car:modules",
+						Name:        "接入模块",
+						Type:        "module",
+						Description: "当前应用仍有 2 个接入模块",
+					},
+				},
+				Message: "应用仍有关联模块，不能删除",
+			},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications/mi-car/delete-check", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response applicationDeleteCheckResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Deletable || len(response.Dependencies) != 1 || response.Dependencies[0].Type != "module" {
+		t.Fatalf("unexpected delete check response: %#v", response)
+	}
+}
+
+func TestDeleteApplicationHardDeletes(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ApplicationService: fakeApplicationService{},
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/applications/mi-car", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected empty response body, got %q", rec.Body.String())
+	}
+}
+
+func TestDeleteApplicationRejectsDependencies(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ApplicationService: fakeApplicationService{
+			deleteErr: domain.ErrApplicationInUse,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/applications/mi-car", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
 	}
 }
 
 type fakeApplicationService struct {
 	applications []domain.Application
 	detail       domain.ApplicationDetail
+	deleteCheck  domain.ApplicationDeleteCheck
 	detailErr    error
 	createErr    error
 	updateErr    error
+	statusErr    error
 	deleteErr    error
 }
 
@@ -390,11 +466,22 @@ func (s fakeApplicationService) UpdateApplication(context.Context, string, domai
 	return s.detail, nil
 }
 
-func (s fakeApplicationService) DeleteApplication(context.Context, string) (domain.ApplicationDetail, error) {
-	if s.deleteErr != nil {
-		return domain.ApplicationDetail{}, s.deleteErr
+func (s fakeApplicationService) UpdateApplicationStatus(context.Context, string, domain.ApplicationStatus) (domain.ApplicationDetail, error) {
+	if s.statusErr != nil {
+		return domain.ApplicationDetail{}, s.statusErr
 	}
 	return s.detail, nil
+}
+
+func (s fakeApplicationService) CheckApplicationDelete(context.Context, string) (domain.ApplicationDeleteCheck, error) {
+	return s.deleteCheck, nil
+}
+
+func (s fakeApplicationService) DeleteApplication(context.Context, string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return nil
 }
 
 func testHTTPApplication(slug string, status domain.ApplicationStatus) domain.Application {

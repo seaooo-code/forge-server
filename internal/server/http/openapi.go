@@ -156,8 +156,33 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 				Delete: func() *openapi3.Operation {
-					op := operation("deleteApplication", "Soft delete application", []string{"Applications"}, responses(
-						response(http.StatusOK, "Application was marked offline.", schemaRef("ApplicationDetailResponse")),
+					op := operation("deleteApplication", "Delete application", []string{"Applications"}, responses(
+						responseNoBody(http.StatusNoContent, "Application was deleted."),
+						response(http.StatusConflict, "Application is referenced by modules.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = applicationSlugParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/applications/{slug}/status", &openapi3.PathItem{
+				Patch: func() *openapi3.Operation {
+					op := operation("updateApplicationStatus", "Update application status", []string{"Applications"}, responses(
+						response(http.StatusOK, "Application status updated.", schemaRef("ApplicationDetailResponse")),
+						response(http.StatusBadRequest, "Invalid application status request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = applicationSlugParameters()
+					op.RequestBody = requestBody("Application status update payload.", schemaRef("ApplicationStatusUpdateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/applications/{slug}/delete-check", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("checkApplicationDelete", "Check application delete dependencies", []string{"Applications"}, responses(
+						response(http.StatusOK, "Application delete dependency check.", schemaRef("ApplicationDeleteCheck")),
 						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -332,8 +357,11 @@ func openAPIDocument() *openapi3.T {
 				"ApplicationDetailResponse":          schemaValue(applicationDetailResponseSchema()),
 				"ApplicationCreateRequest":           schemaValue(applicationRequestSchema(true)),
 				"ApplicationUpdateRequest":           schemaValue(applicationRequestSchema(false)),
+				"ApplicationStatusUpdateRequest":     schemaValue(applicationStatusUpdateRequestSchema()),
 				"ApplicationEnvironmentRequest":      schemaValue(applicationEnvironmentRequestSchema()),
 				"ApplicationMemberRequest":           schemaValue(applicationMemberRequestSchema()),
+				"ApplicationDeleteCheck":             schemaValue(applicationDeleteCheckSchema()),
+				"ApplicationDeleteDependency":        schemaValue(applicationDeleteDependencySchema()),
 				"StorageConfiguration":               schemaValue(storageConfigurationSchema()),
 				"StorageConfigurationsResponse":      schemaValue(storageConfigurationsResponseSchema()),
 				"StorageConfigurationDetailResponse": schemaValue(storageConfigurationDetailResponseSchema()),
@@ -704,6 +732,26 @@ func applicationRequestSchema(includeSlug bool) *openapi3.Schema {
 		schema.WithProperty("slug", stringSchema("Immutable application slug."))
 	}
 	return schema
+}
+
+func applicationStatusUpdateRequestSchema() *openapi3.Schema {
+	return objectSchema("status").
+		WithProperty("status", enumStringSchema("Application status code.", "running", "maintenance", "offline"))
+}
+
+func applicationDeleteCheckSchema() *openapi3.Schema {
+	return objectSchema("deletable", "dependencies", "message").
+		WithProperty("deletable", boolSchema("Whether application can be deleted.")).
+		WithPropertyRef("dependencies", arraySchemaRef("ApplicationDeleteDependency")).
+		WithProperty("message", stringSchema("Delete check message."))
+}
+
+func applicationDeleteDependencySchema() *openapi3.Schema {
+	return objectSchema("id", "name", "type").
+		WithProperty("id", stringSchema("Dependency id.")).
+		WithProperty("name", stringSchema("Dependency display name.")).
+		WithProperty("type", stringSchema("Dependency type.")).
+		WithProperty("description", stringSchema("Dependency description."))
 }
 
 func applicationEnvironmentRequestSchema() *openapi3.Schema {

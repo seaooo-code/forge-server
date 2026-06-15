@@ -9,6 +9,7 @@ import (
 var (
 	ErrApplicationNotFound     = errors.New("application not found")
 	ErrApplicationSlugConflict = errors.New("application slug already exists")
+	ErrApplicationInUse        = errors.New("application is referenced by modules")
 	ErrInvalidApplicationInput = errors.New("invalid application request")
 )
 
@@ -169,6 +170,19 @@ type ApplicationOptions struct {
 	Environments        []ApplicationOptionItem
 	Owners              []ApplicationOptionItem
 	Platforms           []ApplicationOptionItem
+}
+
+type ApplicationDeleteDependency struct {
+	ID          string
+	Name        string
+	Type        string
+	Description string
+}
+
+type ApplicationDeleteCheck struct {
+	Deletable    bool
+	Dependencies []ApplicationDeleteDependency
+	Message      string
 }
 
 func (s ApplicationStatus) Label() string {

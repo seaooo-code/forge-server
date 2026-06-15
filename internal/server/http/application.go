@@ -24,6 +24,19 @@ type applicationDetailResponse struct {
 	Detail      applicationDetailFields `json:"detail"`
 }
 
+type applicationDeleteCheckResponse struct {
+	Deletable    bool                                  `json:"deletable"`
+	Dependencies []applicationDeleteDependencyResponse `json:"dependencies"`
+	Message      string                                `json:"message"`
+}
+
+type applicationDeleteDependencyResponse struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+}
+
 type applicationResponse struct {
 	ID                 string   `json:"id"`
 	Name               string   `json:"name"`
@@ -128,6 +141,10 @@ type applicationRequest struct {
 	Members            []applicationMemberRequest      `json:"members"`
 }
 
+type applicationStatusRequest struct {
+	Status domain.ApplicationStatus `json:"status"`
+}
+
 type applicationEnvironmentRequest struct {
 	Environment string `json:"environment"`
 }
@@ -155,9 +172,11 @@ func registerApplicationRoutes(group *echo.Group, service ApplicationService) {
 
 	group.GET("/applications", handler.list)
 	group.GET("/applications/options", handler.options)
+	group.GET("/applications/:slug/delete-check", handler.deleteCheck)
 	group.GET("/applications/:slug", handler.detail)
 	group.POST("/applications", handler.create)
 	group.PATCH("/applications/:slug", handler.update)
+	group.PATCH("/applications/:slug/status", handler.updateStatus)
 	group.DELETE("/applications/:slug", handler.delete)
 }
 
@@ -248,17 +267,47 @@ func (h applicationHandler) update(c echo.Context) error {
 	return c.JSON(http.StatusOK, newApplicationDetailResponse(detail))
 }
 
-func (h applicationHandler) delete(c echo.Context) error {
+func (h applicationHandler) updateStatus(c echo.Context) error {
 	if h.service == nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
 	}
 
-	detail, err := h.service.DeleteApplication(c.Request().Context(), c.Param("slug"))
+	var request applicationStatusRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
+	}
+
+	detail, err := h.service.UpdateApplicationStatus(c.Request().Context(), c.Param("slug"), request.Status)
 	if err != nil {
 		return applicationErrorResponse(c, err)
 	}
 
 	return c.JSON(http.StatusOK, newApplicationDetailResponse(detail))
+}
+
+func (h applicationHandler) deleteCheck(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
+	}
+
+	check, err := h.service.CheckApplicationDelete(c.Request().Context(), c.Param("slug"))
+	if err != nil {
+		return applicationErrorResponse(c, err)
+	}
+
+	return c.JSON(http.StatusOK, newApplicationDeleteCheckResponse(check))
+}
+
+func (h applicationHandler) delete(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
+	}
+
+	if err := h.service.DeleteApplication(c.Request().Context(), c.Param("slug")); err != nil {
+		return applicationErrorResponse(c, err)
+	}
+
+	return c.NoContent(http.StatusNoContent)
 }
 
 func bindApplicationRequest(c echo.Context) (domain.ApplicationInput, bool) {
@@ -308,6 +357,8 @@ func applicationErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "application not found"})
 	case errors.Is(err, domain.ErrApplicationSlugConflict):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "application slug already exists"})
+	case errors.Is(err, domain.ErrApplicationInUse):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "application is referenced by modules"})
 	case errors.Is(err, domain.ErrInvalidApplicationInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
 	default:
@@ -370,6 +421,23 @@ func newApplicationDetailResponse(detail domain.ApplicationDetail) applicationDe
 			Members:            newApplicationMemberResponses(detail.Members),
 			Pipelines:          newApplicationPipelineResponses(detail.Pipelines),
 		},
+	}
+}
+
+func newApplicationDeleteCheckResponse(check domain.ApplicationDeleteCheck) applicationDeleteCheckResponse {
+	dependencies := make([]applicationDeleteDependencyResponse, 0, len(check.Dependencies))
+	for _, dependency := range check.Dependencies {
+		dependencies = append(dependencies, applicationDeleteDependencyResponse{
+			ID:          dependency.ID,
+			Name:        dependency.Name,
+			Type:        dependency.Type,
+			Description: dependency.Description,
+		})
+	}
+	return applicationDeleteCheckResponse{
+		Deletable:    check.Deletable,
+		Dependencies: dependencies,
+		Message:      check.Message,
 	}
 }
 

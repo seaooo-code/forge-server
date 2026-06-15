@@ -9,13 +9,15 @@ import (
 )
 
 type ApplicationRepository interface {
+	CheckApplicationDelete(ctx context.Context, slug string) (domain.ApplicationDeleteCheck, error)
 	CreateApplication(ctx context.Context, input domain.ApplicationInput) (domain.ApplicationDetail, error)
-	DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error)
+	DeleteApplication(ctx context.Context, slug string) error
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	ListApplicationEnvironments(ctx context.Context) ([]domain.ApplicationOptionItem, error)
 	ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error)
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
+	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
 }
 
 type ApplicationService struct {
@@ -85,17 +87,48 @@ func (s *ApplicationService) UpdateApplication(ctx context.Context, slug string,
 	return withApplicationDerivedDetail(detail), nil
 }
 
-func (s *ApplicationService) DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error) {
+func (s *ApplicationService) UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error) {
 	if !domain.IsValidApplicationSlug(slug) {
 		return domain.ApplicationDetail{}, domain.ErrApplicationNotFound
 	}
+	if !domain.IsValidApplicationStatus(status) {
+		return domain.ApplicationDetail{}, domain.ErrInvalidApplicationInput
+	}
 
-	detail, err := s.repository.DeleteApplication(ctx, slug)
+	detail, err := s.repository.UpdateApplicationStatus(ctx, slug, status)
 	if err != nil {
 		return domain.ApplicationDetail{}, err
 	}
 
 	return withApplicationDerivedDetail(detail), nil
+}
+
+func (s *ApplicationService) CheckApplicationDelete(ctx context.Context, slug string) (domain.ApplicationDeleteCheck, error) {
+	if !domain.IsValidApplicationSlug(slug) {
+		return domain.ApplicationDeleteCheck{}, domain.ErrApplicationNotFound
+	}
+
+	check, err := s.repository.CheckApplicationDelete(ctx, slug)
+	if err != nil {
+		return domain.ApplicationDeleteCheck{}, err
+	}
+	return check, nil
+}
+
+func (s *ApplicationService) DeleteApplication(ctx context.Context, slug string) error {
+	if !domain.IsValidApplicationSlug(slug) {
+		return domain.ErrApplicationNotFound
+	}
+
+	check, err := s.repository.CheckApplicationDelete(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if !check.Deletable {
+		return domain.ErrApplicationInUse
+	}
+
+	return s.repository.DeleteApplication(ctx, slug)
 }
 
 func (s *ApplicationService) GetApplicationOptions(ctx context.Context) (domain.ApplicationOptions, error) {

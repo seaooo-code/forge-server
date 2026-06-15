@@ -26,7 +26,9 @@ http://localhost:8080/openapi.json
 - `GET /api/v1/applications/:slug`：应用详情。
 - `POST /api/v1/applications`：创建应用。
 - `PATCH /api/v1/applications/:slug`：更新应用。
-- `DELETE /api/v1/applications/:slug`：删除应用。
+- `PATCH /api/v1/applications/:slug/status`：上线或下线应用。
+- `GET /api/v1/applications/:slug/delete-check`：检查应用是否可删除。
+- `DELETE /api/v1/applications/:slug`：依赖检查通过后彻底删除应用。
 - `GET /api/v1/storage/configurations`：存储配置列表。
 - `GET /api/v1/storage/configurations/:id`：存储配置详情。
 - `POST /api/v1/storage/configurations/test`：测试存储配置连通性。

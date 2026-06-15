@@ -211,20 +211,77 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 	return r.GetApplicationDetail(ctx, slug)
 }
 
-func (r *ApplicationRepository) DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error) {
+func (r *ApplicationRepository) UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error) {
 	commandTag, err := r.pool.Exec(ctx, `
 		update applications
 		set status = $2, updated_at = now()
 		where slug = $1
-	`, slug, domain.ApplicationStatusOffline)
+	`, slug, status)
 	if err != nil {
-		return domain.ApplicationDetail{}, fmt.Errorf("soft delete application: %w", err)
+		return domain.ApplicationDetail{}, fmt.Errorf("update application status: %w", err)
 	}
 	if commandTag.RowsAffected() == 0 {
 		return domain.ApplicationDetail{}, domain.ErrApplicationNotFound
 	}
 
 	return r.GetApplicationDetail(ctx, slug)
+}
+
+func (r *ApplicationRepository) CheckApplicationDelete(ctx context.Context, slug string) (domain.ApplicationDeleteCheck, error) {
+	var applicationID string
+	var moduleCount int
+	if err := r.pool.QueryRow(ctx, `
+		select id, module_count
+		from applications
+		where slug = $1
+	`, slug).Scan(&applicationID, &moduleCount); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ApplicationDeleteCheck{}, domain.ErrApplicationNotFound
+		}
+		return domain.ApplicationDeleteCheck{}, fmt.Errorf("query application delete dependencies: %w", err)
+	}
+
+	check := domain.ApplicationDeleteCheck{
+		Deletable:    true,
+		Dependencies: []domain.ApplicationDeleteDependency{},
+		Message:      "应用没有模块依赖，可以删除",
+	}
+	if moduleCount > 0 {
+		check.Deletable = false
+		check.Message = "应用仍有关联模块，不能删除"
+		check.Dependencies = append(check.Dependencies, domain.ApplicationDeleteDependency{
+			ID:          applicationID + ":modules",
+			Name:        "接入模块",
+			Type:        "module",
+			Description: fmt.Sprintf("当前应用仍有 %d 个接入模块", moduleCount),
+		})
+	}
+	return check, nil
+}
+
+func (r *ApplicationRepository) DeleteApplication(ctx context.Context, slug string) error {
+	check, err := r.CheckApplicationDelete(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if !check.Deletable {
+		return domain.ErrApplicationInUse
+	}
+
+	commandTag, err := r.pool.Exec(ctx, `
+		delete from applications
+		where slug = $1
+	`, slug)
+	if err != nil {
+		if isForeignKeyViolation(err) {
+			return domain.ErrApplicationInUse
+		}
+		return fmt.Errorf("delete application: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return domain.ErrApplicationNotFound
+	}
+	return nil
 }
 
 type applicationQuerier interface {

@@ -163,34 +163,104 @@ func TestApplicationServiceReturnsApplicationOptions(t *testing.T) {
 	}
 }
 
-func TestApplicationServiceDeleteMarksOfflineThroughRepository(t *testing.T) {
+func TestApplicationServiceUpdateStatusThroughRepository(t *testing.T) {
 	repository := fakeApplicationRepository{
-		detail: testApplicationDetail("mi-car", domain.ApplicationStatusOffline),
+		detail: testApplicationDetail("mi-car", domain.ApplicationStatusRunning),
 	}
 	service := NewApplicationService(&repository)
 
-	detail, err := service.DeleteApplication(context.Background(), "mi-car")
+	detail, err := service.UpdateApplicationStatus(context.Background(), "mi-car", domain.ApplicationStatusRunning)
 	if err != nil {
-		t.Fatalf("delete application: %v", err)
+		t.Fatalf("update application status: %v", err)
 	}
 
-	if detail.Application.Status != domain.ApplicationStatusOffline {
-		t.Fatalf("expected offline status, got %q", detail.Application.Status)
+	if detail.Application.Status != domain.ApplicationStatusRunning {
+		t.Fatalf("expected running status, got %q", detail.Application.Status)
 	}
-	if repository.deleteCalls != 1 {
-		t.Fatalf("expected repository to be called once, got %d calls", repository.deleteCalls)
+	if repository.updateStatusCalls != 1 {
+		t.Fatalf("expected repository to be called once, got %d calls", repository.updateStatusCalls)
+	}
+}
+
+func TestApplicationServiceRejectsInvalidStatusUpdate(t *testing.T) {
+	repository := fakeApplicationRepository{}
+	service := NewApplicationService(&repository)
+
+	_, err := service.UpdateApplicationStatus(context.Background(), "mi-car", domain.ApplicationStatus("unknown"))
+	if !errors.Is(err, domain.ErrInvalidApplicationInput) {
+		t.Fatalf("expected invalid application input, got %v", err)
+	}
+	if repository.updateStatusCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d calls", repository.updateStatusCalls)
+	}
+}
+
+func TestApplicationServiceReturnsDeleteCheck(t *testing.T) {
+	repository := fakeApplicationRepository{
+		deleteCheck: domain.ApplicationDeleteCheck{
+			Deletable: true,
+			Message:   "ok",
+		},
+	}
+	service := NewApplicationService(&repository)
+
+	check, err := service.CheckApplicationDelete(context.Background(), "mi-car")
+	if err != nil {
+		t.Fatalf("check application delete: %v", err)
+	}
+	if !check.Deletable || repository.deleteCheckCalls != 1 {
+		t.Fatalf("expected deletable check, got check=%+v calls=%d", check, repository.deleteCheckCalls)
+	}
+}
+
+func TestApplicationServiceRejectsDeleteWhenDependenciesExist(t *testing.T) {
+	repository := fakeApplicationRepository{
+		deleteCheck: domain.ApplicationDeleteCheck{
+			Deletable: false,
+			Dependencies: []domain.ApplicationDeleteDependency{
+				{ID: "app-mi-car:modules", Name: "接入模块", Type: "module"},
+			},
+		},
+	}
+	service := NewApplicationService(&repository)
+
+	err := service.DeleteApplication(context.Background(), "mi-car")
+	if !errors.Is(err, domain.ErrApplicationInUse) {
+		t.Fatalf("expected application in use, got %v", err)
+	}
+	if repository.deleteCalls != 0 {
+		t.Fatalf("expected delete not to be called, got %d calls", repository.deleteCalls)
+	}
+}
+
+func TestApplicationServiceDeletesAfterDependencyCheck(t *testing.T) {
+	repository := fakeApplicationRepository{
+		deleteCheck: domain.ApplicationDeleteCheck{
+			Deletable: true,
+		},
+	}
+	service := NewApplicationService(&repository)
+
+	if err := service.DeleteApplication(context.Background(), "mi-car"); err != nil {
+		t.Fatalf("delete application: %v", err)
+	}
+	if repository.deleteCheckCalls != 1 || repository.deleteCalls != 1 {
+		t.Fatalf("expected check and delete calls, got check=%d delete=%d", repository.deleteCheckCalls, repository.deleteCalls)
 	}
 }
 
 type fakeApplicationRepository struct {
-	applications    []domain.Application
-	detail          domain.ApplicationDetail
-	lastCreateInput domain.ApplicationInput
-	lastListFilters domain.ApplicationListFilters
-	listCalls       int
-	createCalls     int
-	updateCalls     int
-	deleteCalls     int
+	applications      []domain.Application
+	deleteCheck       domain.ApplicationDeleteCheck
+	detail            domain.ApplicationDetail
+	lastCreateInput   domain.ApplicationInput
+	lastListFilters   domain.ApplicationListFilters
+	listCalls         int
+	createCalls       int
+	updateCalls       int
+	updateStatusCalls int
+	deleteCheckCalls  int
+	deleteCalls       int
 }
 
 func (r *fakeApplicationRepository) ListApplications(_ context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error) {
@@ -222,9 +292,19 @@ func (r *fakeApplicationRepository) UpdateApplication(context.Context, string, d
 	return r.detail, nil
 }
 
-func (r *fakeApplicationRepository) DeleteApplication(context.Context, string) (domain.ApplicationDetail, error) {
-	r.deleteCalls++
+func (r *fakeApplicationRepository) UpdateApplicationStatus(context.Context, string, domain.ApplicationStatus) (domain.ApplicationDetail, error) {
+	r.updateStatusCalls++
 	return r.detail, nil
+}
+
+func (r *fakeApplicationRepository) CheckApplicationDelete(context.Context, string) (domain.ApplicationDeleteCheck, error) {
+	r.deleteCheckCalls++
+	return r.deleteCheck, nil
+}
+
+func (r *fakeApplicationRepository) DeleteApplication(context.Context, string) error {
+	r.deleteCalls++
+	return nil
 }
 
 func validApplicationInput(slug string) domain.ApplicationInput {

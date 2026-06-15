@@ -14,6 +14,7 @@ import (
 type Config struct {
 	App       AppConfig
 	Feishu    FeishuConfig
+	GitHub    GitHubConfig
 	HTTP      HTTPConfig
 	Postgres  PostgresConfig
 	Redis     RedisConfig
@@ -55,6 +56,15 @@ type FeishuConfig struct {
 	UserSearchURL          string
 	UserBatchURL           string
 	DebugLogSearchResponse bool
+}
+
+type GitHubConfig struct {
+	APIBaseURL string
+	APIVersion string
+	AppID      string
+	AppSlug    string
+	PrivateKey string
+	WebURL     string
 }
 
 type PostgresConfig struct {
@@ -165,6 +175,14 @@ func Load() (Config, error) {
 			UserBatchURL:           defaultFeishuUserBatchURL,
 			DebugLogSearchResponse: boolEnv("FEISHU_DEBUG_LOG_SEARCH_RESPONSE", false),
 		},
+		GitHub: GitHubConfig{
+			APIBaseURL: stringEnv("GITHUB_API_BASE_URL", defaultGitHubAPIBaseURL),
+			APIVersion: stringEnv("GITHUB_API_VERSION", defaultGitHubAPIVersion),
+			AppID:      stringEnv("GITHUB_APP_ID", ""),
+			AppSlug:    stringEnv("GITHUB_APP_SLUG", ""),
+			PrivateKey: privateKeyEnv("GITHUB_APP_PRIVATE_KEY", ""),
+			WebURL:     stringEnv("GITHUB_WEB_URL", defaultGitHubWebURL),
+		},
 		Postgres: PostgresConfig{
 			DSN:             stringEnv("POSTGRES_DSN", "postgres://postgres:postgres@127.0.0.1:5432/forge_server?sslmode=disable"),
 			MaxConns:        int32(pgMaxConns),
@@ -219,6 +237,11 @@ func stringEnv(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func privateKeyEnv(key string, fallback string) string {
+	value := stringEnv(key, fallback)
+	return strings.ReplaceAll(value, `\n`, "\n")
 }
 
 func stringListEnv(key string, fallback []string) []string {

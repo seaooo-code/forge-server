@@ -33,12 +33,14 @@ type Dependencies struct {
 }
 
 type ApplicationService interface {
+	CheckApplicationDelete(ctx context.Context, slug string) (domain.ApplicationDeleteCheck, error)
 	CreateApplication(ctx context.Context, input domain.ApplicationInput) (domain.ApplicationDetail, error)
-	DeleteApplication(ctx context.Context, slug string) (domain.ApplicationDetail, error)
+	DeleteApplication(ctx context.Context, slug string) error
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	GetApplicationOptions(ctx context.Context) (domain.ApplicationOptions, error)
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
+	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
 }
 
 type EnvironmentService interface {
