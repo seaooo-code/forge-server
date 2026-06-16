@@ -17,8 +17,8 @@ func TestListModules(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{
 			modules: []domain.Module{
-				testHTTPModule("module-common", domain.ModuleKindCommon, domain.ModuleStatusActive),
-				testHTTPModule("module-home", domain.ModuleKindFeature, domain.ModuleStatusFrozen),
+				testHTTPModule("module-common", domain.ModuleKindCommon),
+				testHTTPModule("module-home", domain.ModuleKindFeature),
 			},
 		},
 	})
@@ -39,10 +39,10 @@ func TestListModules(t *testing.T) {
 	if len(response.Modules) != 2 {
 		t.Fatalf("expected 2 modules, got %d", len(response.Modules))
 	}
-	if response.Modules[0].RepositoryFullName != "mi-car/common" || response.Modules[0].Status != "active" {
+	if response.Modules[0].RepositoryFullName != "mi-car/common" {
 		t.Fatalf("unexpected module response: %#v", response.Modules[0])
 	}
-	if response.Summary.Total != 2 || response.Summary.Common != 1 || response.Summary.Feature != 1 || response.Summary.Active != 1 || response.Summary.Frozen != 1 {
+	if response.Summary.Total != 2 || response.Summary.Common != 1 || response.Summary.Feature != 1 {
 		t.Fatalf("unexpected summary: %+v", response.Summary)
 	}
 }
@@ -51,13 +51,13 @@ func TestListModulesWithFilters(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{
 			modules: []domain.Module{
-				testHTTPModule("module-common", domain.ModuleKindCommon, domain.ModuleStatusActive),
-				testHTTPModule("module-home", domain.ModuleKindFeature, domain.ModuleStatusFrozen),
+				testHTTPModule("module-common", domain.ModuleKindCommon),
+				testHTTPModule("module-home", domain.ModuleKindFeature),
 			},
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules?kind=Feature&status=frozen&owner=ou-li-ming&keyword=home", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules?kind=Feature&owner=ou-li-ming&keyword=home", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -75,14 +75,14 @@ func TestListModulesWithFilters(t *testing.T) {
 	}
 }
 
-func TestListModulesRejectsInvalidStatusFilter(t *testing.T) {
+func TestListModulesRejectsInvalidKindFilter(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{
 			listErr: domain.ErrInvalidModuleInput,
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules?status=unknown", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules?kind=Unknown", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -95,7 +95,7 @@ func TestListModulesRejectsInvalidStatusFilter(t *testing.T) {
 func TestGetModule(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{
-			module: testHTTPModule("module-home", domain.ModuleKindFeature, domain.ModuleStatusActive),
+			module: testHTTPModule("module-home", domain.ModuleKindFeature),
 		},
 	})
 
@@ -112,7 +112,7 @@ func TestGetModule(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Module.ID != "module-home" || response.Module.RepositoryID != "1001" || response.Module.RepositoryInstallationID != "2001" {
+	if response.Module.ID != "module-home" || response.Module.RepositoryID != "1001" || response.Module.RepositoryInstallationID != "2001" || response.Module.CommonModuleID != "module-common" {
 		t.Fatalf("unexpected module detail: %#v", response.Module)
 	}
 }
@@ -120,7 +120,7 @@ func TestGetModule(t *testing.T) {
 func TestCreateModule(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{
-			module: testHTTPModule("module-profile", domain.ModuleKindFeature, domain.ModuleStatusActive),
+			module: testHTTPModule("module-profile", domain.ModuleKindFeature),
 		},
 	})
 
@@ -161,15 +161,35 @@ func TestCreateModuleConflict(t *testing.T) {
 	}
 }
 
+func TestCreateModuleCommonConflict(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ModuleService: fakeModuleService{
+			createErr: domain.ErrModuleCommonConflict,
+		},
+	})
+
+	request := testModuleRequest("module-common")
+	request.Kind = domain.ModuleKindCommon
+	request.CommonModuleID = ""
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(request))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+}
+
 func TestUpdateModule(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{
-			module: testHTTPModule("module-home", domain.ModuleKindFeature, domain.ModuleStatusFrozen),
+			module: testHTTPModule("module-home", domain.ModuleKindFeature),
 		},
 	})
 
 	request := testModuleRequest("")
-	request.Status = domain.ModuleStatusFrozen
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/modules/module-home", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -184,8 +204,8 @@ func TestUpdateModule(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Module.Status != "frozen" {
-		t.Fatalf("expected frozen status, got %q", response.Module.Status)
+	if response.Module.CommonModuleName != "common" {
+		t.Fatalf("expected common module name, got %q", response.Module.CommonModuleName)
 	}
 }
 
@@ -238,10 +258,10 @@ func (s fakeModuleService) ListModules(_ context.Context, filters domain.ModuleL
 
 	modules := make([]domain.Module, 0, len(s.modules))
 	for _, module := range s.modules {
-		if filters.Kind != "" && module.Kind != filters.Kind {
+		if filters.ApplicationID != "" && module.ApplicationID != filters.ApplicationID {
 			continue
 		}
-		if filters.Status != "" && module.Status != filters.Status {
+		if filters.Kind != "" && module.Kind != filters.Kind {
 			continue
 		}
 		if filters.Owner != "" && module.OwnerUserID != filters.Owner {
@@ -260,12 +280,6 @@ func (s fakeModuleService) ListModules(_ context.Context, filters domain.ModuleL
 		}
 		if module.Kind == domain.ModuleKindFeature {
 			summary.Feature++
-		}
-		if module.Status == domain.ModuleStatusActive {
-			summary.Active++
-		}
-		if module.Status == domain.ModuleStatusFrozen {
-			summary.Frozen++
 		}
 	}
 	return modules, summary, nil
@@ -299,12 +313,21 @@ func (s fakeModuleService) DeleteModule(context.Context, string) error {
 	return nil
 }
 
-func testHTTPModule(id string, kind domain.ModuleKind, status domain.ModuleStatus) domain.Module {
+func testHTTPModule(id string, kind domain.ModuleKind) domain.Module {
 	name := strings.TrimPrefix(id, "module-")
+	commonModuleID := ""
+	commonModuleName := ""
+	if kind == domain.ModuleKindFeature {
+		commonModuleID = "module-common"
+		commonModuleName = "common"
+	}
+
 	return domain.Module{
 		ApplicationID:            "app-mi-car",
 		ApplicationName:          "小米汽车 App",
 		ApplicationSlug:          "mi-car",
+		CommonModuleID:           commonModuleID,
+		CommonModuleName:         commonModuleName,
 		CreatedAt:                time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
 		DefaultBranch:            "main",
 		ID:                       id,
@@ -321,7 +344,6 @@ func testHTTPModule(id string, kind domain.ModuleKind, status domain.ModuleStatu
 		RepositoryInstallationID: 2001,
 		RepositoryProvider:       domain.CodeSourceProviderGitHub,
 		RepositorySSHURL:         "git@github.com:mi-car/" + name + ".git",
-		Status:                   status,
 		UpdatedAt:                time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
 	}
 }
@@ -329,6 +351,7 @@ func testHTTPModule(id string, kind domain.ModuleKind, status domain.ModuleStatu
 func testModuleRequest(id string) moduleRequest {
 	return moduleRequest{
 		ApplicationID:      "app-mi-car",
+		CommonModuleID:     "module-common",
 		ID:                 id,
 		Kind:               domain.ModuleKindFeature,
 		Name:               "profile",
@@ -347,6 +370,5 @@ func testModuleRequest(id string) moduleRequest {
 			Provider:       "github",
 			SSHURL:         "git@github.com:mi-car/profile.git",
 		},
-		Status: domain.ModuleStatusActive,
 	}
 }

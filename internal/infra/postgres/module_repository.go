@@ -8,11 +8,16 @@ import (
 	"forge-server/internal/domain"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ModuleRepository struct {
 	pool *pgxpool.Pool
+}
+
+type moduleCommonQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 func NewModuleRepository(pool *pgxpool.Pool) *ModuleRepository {
@@ -25,7 +30,8 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 			m.id,
 			m.name,
 			m.kind,
-			m.status,
+			m.common_module_id,
+			cm.name as common_module_name,
 			m.application_id,
 			a.name as application_name,
 			a.slug as application_slug,
@@ -47,19 +53,21 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 		from modules m
 		join applications a on a.id = m.application_id
 		join users u on u.id = m.owner_user_id
+		left join modules cm on cm.id = m.common_module_id
 		where
 			($1 = '' or m.kind = $1)
-			and ($2 = '' or m.status = $2)
-			and ($3 = '' or m.owner_user_id = $3)
+			and ($2 = '' or m.owner_user_id = $2)
+			and ($3 = '' or m.application_id = $3)
 			and (
 				$4 = ''
 				or m.id ilike '%' || $4 || '%'
 				or m.name ilike '%' || $4 || '%'
 				or m.repository_full_name ilike '%' || $4 || '%'
 				or a.name ilike '%' || $4 || '%'
+				or cm.name ilike '%' || $4 || '%'
 			)
 		order by m.sort_order asc, m.created_at asc
-	`, string(filters.Kind), string(filters.Status), filters.Owner, filters.Keyword)
+	`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword)
 	if err != nil {
 		return nil, fmt.Errorf("query modules: %w", err)
 	}
@@ -94,12 +102,16 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 		return domain.Module{}, err
 	}
 
+	if err := validateModuleCommonBinding(ctx, tx, input.ID, input); err != nil {
+		return domain.Module{}, err
+	}
+
 	if _, err := tx.Exec(ctx, `
 		insert into modules (
 			id,
 			name,
 			kind,
-			status,
+			common_module_id,
 			application_id,
 			owner_user_id,
 			repository_provider,
@@ -132,7 +144,7 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 		input.ID,
 		input.Name,
 		input.Kind,
-		input.Status,
+		moduleCommonModuleID(input),
 		input.ApplicationID,
 		input.OwnerUserID,
 		input.Repository.Provider,
@@ -145,9 +157,15 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 		input.Repository.DefaultBranch,
 	); err != nil {
 		if isUniqueViolation(err) {
+			if isCommonModuleUniqueViolation(err) {
+				return domain.Module{}, domain.ErrModuleCommonConflict
+			}
 			return domain.Module{}, domain.ErrModuleIDConflict
 		}
 		if isForeignKeyViolation(err) {
+			return domain.Module{}, domain.ErrInvalidModuleInput
+		}
+		if isCheckViolation(err) {
 			return domain.Module{}, domain.ErrInvalidModuleInput
 		}
 		return domain.Module{}, fmt.Errorf("insert module: %w", err)
@@ -192,11 +210,18 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 		return domain.Module{}, err
 	}
 
+	if err := validateModuleCommonBinding(ctx, tx, id, input); err != nil {
+		return domain.Module{}, err
+	}
+	if err := validateModuleCommonDependents(ctx, tx, id, input); err != nil {
+		return domain.Module{}, err
+	}
+
 	if _, err := tx.Exec(ctx, `
 		update modules set
 			name = $2,
 			kind = $3,
-			status = $4,
+			common_module_id = $4,
 			application_id = $5,
 			owner_user_id = $6,
 			repository_provider = $7,
@@ -213,7 +238,7 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 		id,
 		input.Name,
 		input.Kind,
-		input.Status,
+		moduleCommonModuleID(input),
 		input.ApplicationID,
 		input.OwnerUserID,
 		input.Repository.Provider,
@@ -226,9 +251,15 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 		input.Repository.DefaultBranch,
 	); err != nil {
 		if isUniqueViolation(err) {
+			if isCommonModuleUniqueViolation(err) {
+				return domain.Module{}, domain.ErrModuleCommonConflict
+			}
 			return domain.Module{}, domain.ErrModuleIDConflict
 		}
 		if isForeignKeyViolation(err) {
+			return domain.Module{}, domain.ErrInvalidModuleInput
+		}
+		if isCheckViolation(err) {
 			return domain.Module{}, domain.ErrInvalidModuleInput
 		}
 		return domain.Module{}, fmt.Errorf("update module: %w", err)
@@ -274,6 +305,9 @@ func (r *ModuleRepository) DeleteModule(ctx context.Context, id string) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrModuleNotFound
 		}
+		if isForeignKeyViolation(err) {
+			return domain.ErrModuleInUse
+		}
 		return fmt.Errorf("delete module: %w", err)
 	}
 
@@ -301,7 +335,8 @@ func moduleSelectSQL() string {
 			m.id,
 			m.name,
 			m.kind,
-			m.status,
+			m.common_module_id,
+			cm.name as common_module_name,
 			m.application_id,
 			a.name as application_name,
 			a.slug as application_slug,
@@ -322,16 +357,20 @@ func moduleSelectSQL() string {
 			m.updated_at
 		from modules m
 		join applications a on a.id = m.application_id
-		join users u on u.id = m.owner_user_id`
+		join users u on u.id = m.owner_user_id
+		left join modules cm on cm.id = m.common_module_id`
 }
 
 func scanModule(row moduleRow) (domain.Module, error) {
 	var module domain.Module
+	var commonModuleID *string
+	var commonModuleName *string
 	if err := row.Scan(
 		&module.ID,
 		&module.Name,
 		&module.Kind,
-		&module.Status,
+		&commonModuleID,
+		&commonModuleName,
 		&module.ApplicationID,
 		&module.ApplicationName,
 		&module.ApplicationSlug,
@@ -356,6 +395,12 @@ func scanModule(row moduleRow) (domain.Module, error) {
 		}
 		return domain.Module{}, fmt.Errorf("scan module: %w", err)
 	}
+	if commonModuleID != nil {
+		module.CommonModuleID = *commonModuleID
+	}
+	if commonModuleName != nil {
+		module.CommonModuleName = *commonModuleName
+	}
 	return module, nil
 }
 
@@ -370,4 +415,80 @@ func moduleOwnerUser(input domain.ModuleInput) domain.UserInput {
 		FeishuOpenID:  input.OwnerFeishuOpenID,
 		FeishuUserID:  input.OwnerFeishuUserID,
 	}
+}
+
+func moduleCommonModuleID(input domain.ModuleInput) *string {
+	if input.CommonModuleID == "" {
+		return nil
+	}
+	return &input.CommonModuleID
+}
+
+func validateModuleCommonBinding(
+	ctx context.Context,
+	querier moduleCommonQuerier,
+	moduleID string,
+	input domain.ModuleInput,
+) error {
+	if input.Kind == domain.ModuleKindCommon {
+		return nil
+	}
+	if input.CommonModuleID == moduleID && moduleID != "" {
+		return domain.ErrInvalidModuleInput
+	}
+
+	var applicationID string
+	var kind domain.ModuleKind
+	if err := querier.QueryRow(ctx, `
+		select application_id, kind
+		from modules
+		where id = $1
+	`, input.CommonModuleID).Scan(&applicationID, &kind); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrModuleCommonMissing
+		}
+		return fmt.Errorf("query common module binding: %w", err)
+	}
+	if applicationID != input.ApplicationID || kind != domain.ModuleKindCommon {
+		return domain.ErrModuleCommonApplication
+	}
+	return nil
+}
+
+func validateModuleCommonDependents(
+	ctx context.Context,
+	querier moduleCommonQuerier,
+	moduleID string,
+	input domain.ModuleInput,
+) error {
+	if moduleID == "" {
+		return nil
+	}
+
+	var dependentCount int
+	if err := querier.QueryRow(ctx, `
+		select count(*)
+		from modules
+		where common_module_id = $1
+		  and ($2 <> 'Common' or application_id <> $3)
+	`, moduleID, input.Kind, input.ApplicationID).Scan(&dependentCount); err != nil {
+		return fmt.Errorf("query common module dependents: %w", err)
+	}
+	if dependentCount > 0 {
+		if input.Kind != domain.ModuleKindCommon {
+			return domain.ErrModuleInUse
+		}
+		return domain.ErrModuleCommonApplication
+	}
+	return nil
+}
+
+func isCommonModuleUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.ConstraintName == "idx_modules_common_application_unique"
+}
+
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }

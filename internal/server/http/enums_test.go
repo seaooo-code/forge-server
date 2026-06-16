@@ -29,9 +29,6 @@ func TestListEnums(t *testing.T) {
 	if len(response.ModuleKinds) != 2 || response.ModuleKinds[0].Value != "Common" || response.ModuleKinds[1].Value != "Feature" {
 		t.Fatalf("unexpected module kind enums: %#v", response.ModuleKinds)
 	}
-	if len(response.ModuleStatuses) != 2 || response.ModuleStatuses[0].Value != "active" || response.ModuleStatuses[0].Label != "活跃" {
-		t.Fatalf("unexpected module status enums: %#v", response.ModuleStatuses)
-	}
 	if len(response.ApplicationStatuses) != 3 || response.ApplicationStatuses[0].Value != "running" {
 		t.Fatalf("unexpected application status enums: %#v", response.ApplicationStatuses)
 	}

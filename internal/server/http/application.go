@@ -95,14 +95,13 @@ type applicationEnvironmentResponse struct {
 }
 
 type applicationModuleResponse struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
-	Repository    string `json:"repository"`
-	Owner         string `json:"owner"`
-	LatestVersion string `json:"latestVersion"`
-	Pipeline      string `json:"pipeline"`
-	Status        string `json:"status"`
+	CommonModuleID   string `json:"commonModuleId"`
+	CommonModuleName string `json:"commonModuleName"`
+	ID               string `json:"id"`
+	Kind             string `json:"kind"`
+	Name             string `json:"name"`
+	Owner            string `json:"owner"`
+	Repository       string `json:"repository"`
 }
 
 type applicationMemberResponse struct {
@@ -493,14 +492,13 @@ func newApplicationModuleResponses(modules []domain.ApplicationModule) []applica
 	response := make([]applicationModuleResponse, 0, len(modules))
 	for _, module := range modules {
 		response = append(response, applicationModuleResponse{
-			ID:            module.ID,
-			Name:          module.Name,
-			Kind:          module.Kind,
-			Repository:    module.Repository,
-			Owner:         module.Owner,
-			LatestVersion: module.LatestVersion,
-			Pipeline:      module.Pipeline,
-			Status:        module.Status,
+			CommonModuleID:   module.CommonModuleID,
+			CommonModuleName: module.CommonModuleName,
+			ID:               module.ID,
+			Kind:             module.Kind,
+			Name:             module.Name,
+			Owner:            module.Owner,
+			Repository:       module.Repository,
 		})
 	}
 	return response

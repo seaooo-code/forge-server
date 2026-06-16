@@ -633,10 +633,9 @@ func enumOptionSchema() *openapi3.Schema {
 }
 
 func enumsResponseSchema() *openapi3.Schema {
-	return objectSchema("applicationStatuses", "moduleKinds", "moduleStatuses", "platforms").
+	return objectSchema("applicationStatuses", "moduleKinds", "platforms").
 		WithPropertyRef("applicationStatuses", arraySchemaRef("EnumOption")).
 		WithPropertyRef("moduleKinds", arraySchemaRef("EnumOption")).
-		WithPropertyRef("moduleStatuses", arraySchemaRef("EnumOption")).
 		WithPropertyRef("platforms", arraySchemaRef("EnumOption"))
 }
 
@@ -811,14 +810,14 @@ func applicationListParameters() openapi3.Parameters {
 func moduleListParameters() openapi3.Parameters {
 	return openapi3.Parameters{
 		{
+			Value: openapi3.NewQueryParameter("applicationId").
+				WithDescription("Linked application id filter.").
+				WithSchema(stringSchema("Application id filter.")),
+		},
+		{
 			Value: openapi3.NewQueryParameter("kind").
 				WithDescription("Module kind filter.").
 				WithSchema(enumStringSchema("Module kind.", "Common", "Feature")),
-		},
-		{
-			Value: openapi3.NewQueryParameter("status").
-				WithDescription("Module status filter.").
-				WithSchema(enumStringSchema("Module status.", "active", "frozen")),
 		},
 		{
 			Value: openapi3.NewQueryParameter("owner").
@@ -905,15 +904,14 @@ func applicationEnvironmentSchema() *openapi3.Schema {
 }
 
 func applicationModuleSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "kind", "repository", "owner", "latestVersion", "pipeline", "status").
+	return objectSchema("id", "name", "kind", "repository", "owner").
+		WithProperty("commonModuleId", stringSchema("Common module id for feature modules.")).
+		WithProperty("commonModuleName", stringSchema("Common module name for feature modules.")).
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("name", stringSchema("Module name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
 		WithProperty("repository", stringSchema("Module repository.")).
-		WithProperty("owner", stringSchema("Module owner.")).
-		WithProperty("latestVersion", stringSchema("Latest online version.")).
-		WithProperty("pipeline", stringSchema("Pipeline name.")).
-		WithProperty("status", enumStringSchema("Module status.", "活跃", "冻结"))
+		WithProperty("owner", stringSchema("Module owner."))
 }
 
 func applicationMemberSchema() *openapi3.Schema {
@@ -1061,12 +1059,10 @@ func moduleDetailResponseSchema() *openapi3.Schema {
 }
 
 func moduleSummarySchema() *openapi3.Schema {
-	return objectSchema("total", "common", "feature", "active", "frozen").
+	return objectSchema("total", "common", "feature").
 		WithProperty("total", int32Schema("Module count.")).
 		WithProperty("common", int32Schema("Common module count.")).
-		WithProperty("feature", int32Schema("Feature module count.")).
-		WithProperty("active", int32Schema("Active module count.")).
-		WithProperty("frozen", int32Schema("Frozen module count."))
+		WithProperty("feature", int32Schema("Feature module count."))
 }
 
 func moduleSchema() *openapi3.Schema {
@@ -1074,7 +1070,6 @@ func moduleSchema() *openapi3.Schema {
 		"id",
 		"name",
 		"kind",
-		"status",
 		"applicationId",
 		"applicationName",
 		"ownerUserId",
@@ -1091,6 +1086,8 @@ func moduleSchema() *openapi3.Schema {
 		WithProperty("defaultBranch", stringSchema("Repository default branch.")).
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
+		WithProperty("commonModuleId", stringSchema("Common module id for feature modules.")).
+		WithProperty("commonModuleName", stringSchema("Common module name for feature modules.")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("owner", stringSchema("Module owner.")).
 		WithProperty("ownerAvatarUrl", stringSchema("Module owner avatar url.")).
@@ -1104,7 +1101,6 @@ func moduleSchema() *openapi3.Schema {
 		WithProperty("repositoryInstallationId", stringSchema("Provider installation id that currently grants repository access.")).
 		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github")).
 		WithProperty("repositorySshUrl", stringSchema("Repository SSH clone URL.")).
-		WithProperty("status", enumStringSchema("Module status.", "active", "frozen")).
 		WithProperty("updatedAt", dateTimeSchema("Module update time."))
 }
 
@@ -1112,7 +1108,6 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 	required := []string{
 		"name",
 		"kind",
-		"status",
 		"applicationId",
 		"ownerUserId",
 		"owner",
@@ -1123,6 +1118,7 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 	}
 	schema := objectSchema(required...).
 		WithProperty("applicationId", stringSchema("Linked application id.")).
+		WithProperty("commonModuleId", stringSchema("Required for Feature modules. Must point to a Common module of the same application.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("owner", stringSchema("Module owner.")).
@@ -1133,8 +1129,7 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 		WithProperty("ownerFeishuOpenId", stringSchema("Owner Feishu open_id.")).
 		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
 		WithProperty("ownerUserId", stringSchema("Module owner user id.")).
-		WithPropertyRef("repository", schemaRef("ModuleRepositoryRequest")).
-		WithProperty("status", enumStringSchema("Module status.", "active", "frozen"))
+		WithPropertyRef("repository", schemaRef("ModuleRepositoryRequest"))
 	if includeID {
 		schema.WithProperty("id", stringSchema("Immutable module id."))
 	}

@@ -7,10 +7,13 @@ import (
 )
 
 var (
-	ErrInvalidModuleInput = errors.New("invalid module request")
-	ErrModuleInUse        = errors.New("module is referenced")
-	ErrModuleNotFound     = errors.New("module not found")
-	ErrModuleIDConflict   = errors.New("module id already exists")
+	ErrInvalidModuleInput      = errors.New("invalid module request")
+	ErrModuleInUse             = errors.New("module is referenced")
+	ErrModuleNotFound          = errors.New("module not found")
+	ErrModuleIDConflict        = errors.New("module id already exists")
+	ErrModuleCommonConflict    = errors.New("application already has common module")
+	ErrModuleCommonMissing     = errors.New("feature module requires common module")
+	ErrModuleCommonApplication = errors.New("common module must belong to same application")
 )
 
 type ModuleKind string
@@ -18,13 +21,6 @@ type ModuleKind string
 const (
 	ModuleKindCommon  ModuleKind = "Common"
 	ModuleKindFeature ModuleKind = "Feature"
-)
-
-type ModuleStatus string
-
-const (
-	ModuleStatusActive ModuleStatus = "active"
-	ModuleStatusFrozen ModuleStatus = "frozen"
 )
 
 type ModuleRepositoryBinding struct {
@@ -46,6 +42,8 @@ type Module struct {
 	DefaultBranch            string
 	ID                       string
 	Kind                     ModuleKind
+	CommonModuleID           string
+	CommonModuleName         string
 	Name                     string
 	Owner                    string
 	OwnerAvatarURL           string
@@ -59,12 +57,12 @@ type Module struct {
 	RepositoryInstallationID int64
 	RepositoryProvider       CodeSourceProvider
 	RepositorySSHURL         string
-	Status                   ModuleStatus
 	UpdatedAt                time.Time
 }
 
 type ModuleInput struct {
 	ApplicationID      string
+	CommonModuleID     string
 	ID                 string
 	Kind               ModuleKind
 	Name               string
@@ -77,21 +75,18 @@ type ModuleInput struct {
 	OwnerFeishuUserID  string
 	OwnerUserID        string
 	Repository         ModuleRepositoryBinding
-	Status             ModuleStatus
 }
 
 type ModuleListFilters struct {
-	Kind    ModuleKind
-	Keyword string
-	Owner   string
-	Status  ModuleStatus
+	ApplicationID string
+	Kind          ModuleKind
+	Keyword       string
+	Owner         string
 }
 
 type ModuleSummary struct {
-	Active  int
 	Common  int
 	Feature int
-	Frozen  int
 	Total   int
 }
 
@@ -104,19 +99,4 @@ func IsValidModuleID(id string) bool {
 
 func IsValidModuleKind(kind ModuleKind) bool {
 	return kind == ModuleKindCommon || kind == ModuleKindFeature
-}
-
-func IsValidModuleStatus(status ModuleStatus) bool {
-	return status == ModuleStatusActive || status == ModuleStatusFrozen
-}
-
-func (s ModuleStatus) Label() string {
-	switch s {
-	case ModuleStatusActive:
-		return "活跃"
-	case ModuleStatusFrozen:
-		return "冻结"
-	default:
-		return string(s)
-	}
 }

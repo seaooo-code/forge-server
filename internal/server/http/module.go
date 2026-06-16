@@ -32,6 +32,8 @@ type moduleResponse struct {
 	DefaultBranch            string `json:"defaultBranch"`
 	ID                       string `json:"id"`
 	Kind                     string `json:"kind"`
+	CommonModuleID           string `json:"commonModuleId"`
+	CommonModuleName         string `json:"commonModuleName"`
 	Name                     string `json:"name"`
 	Owner                    string `json:"owner"`
 	OwnerAvatarURL           string `json:"ownerAvatarUrl"`
@@ -45,20 +47,18 @@ type moduleResponse struct {
 	RepositoryInstallationID string `json:"repositoryInstallationId"`
 	RepositoryProvider       string `json:"repositoryProvider"`
 	RepositorySSHURL         string `json:"repositorySshUrl"`
-	Status                   string `json:"status"`
 	UpdatedAt                string `json:"updatedAt"`
 }
 
 type moduleSummaryResponse struct {
-	Active  int `json:"active"`
 	Common  int `json:"common"`
 	Feature int `json:"feature"`
-	Frozen  int `json:"frozen"`
 	Total   int `json:"total"`
 }
 
 type moduleRequest struct {
 	ApplicationID      string                  `json:"applicationId"`
+	CommonModuleID     string                  `json:"commonModuleId"`
 	ID                 string                  `json:"id"`
 	Kind               domain.ModuleKind       `json:"kind"`
 	Name               string                  `json:"name"`
@@ -71,7 +71,6 @@ type moduleRequest struct {
 	OwnerFeishuUserID  string                  `json:"ownerFeishuUserId"`
 	OwnerUserID        string                  `json:"ownerUserId"`
 	Repository         moduleRepositoryRequest `json:"repository"`
-	Status             domain.ModuleStatus     `json:"status"`
 }
 
 type moduleRepositoryRequest struct {
@@ -101,10 +100,10 @@ func (h moduleHandler) list(c echo.Context) error {
 	}
 
 	modules, summary, err := h.service.ListModules(c.Request().Context(), domain.ModuleListFilters{
-		Kind:    domain.ModuleKind(strings.TrimSpace(c.QueryParam("kind"))),
-		Keyword: strings.TrimSpace(c.QueryParam("keyword")),
-		Owner:   strings.TrimSpace(c.QueryParam("owner")),
-		Status:  domain.ModuleStatus(strings.TrimSpace(c.QueryParam("status"))),
+		ApplicationID: strings.TrimSpace(c.QueryParam("applicationId")),
+		Kind:          domain.ModuleKind(strings.TrimSpace(c.QueryParam("kind"))),
+		Keyword:       strings.TrimSpace(c.QueryParam("keyword")),
+		Owner:         strings.TrimSpace(c.QueryParam("owner")),
 	})
 	if err != nil {
 		return moduleErrorResponse(c, err)
@@ -194,6 +193,7 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 
 	input := domain.ModuleInput{
 		ApplicationID:      request.ApplicationID,
+		CommonModuleID:     request.CommonModuleID,
 		Kind:               request.Kind,
 		Name:               request.Name,
 		Owner:              request.Owner,
@@ -214,7 +214,6 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 			SSHURL:         request.Repository.SSHURL,
 			DefaultBranch:  request.Repository.DefaultBranch,
 		},
-		Status: request.Status,
 	}
 	if includeID {
 		input.ID = request.ID
@@ -229,8 +228,14 @@ func moduleErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "module not found"})
 	case errors.Is(err, domain.ErrModuleIDConflict):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "module id already exists"})
+	case errors.Is(err, domain.ErrModuleCommonConflict):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "application already has common module"})
 	case errors.Is(err, domain.ErrModuleInUse):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "module is referenced"})
+	case errors.Is(err, domain.ErrModuleCommonMissing):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "feature module requires common module"})
+	case errors.Is(err, domain.ErrModuleCommonApplication):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "common module must belong to same application"})
 	case errors.Is(err, domain.ErrInvalidModuleInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid module request"})
 	default:
@@ -255,6 +260,8 @@ func newModuleResponse(module domain.Module) moduleResponse {
 		DefaultBranch:            module.DefaultBranch,
 		ID:                       module.ID,
 		Kind:                     string(module.Kind),
+		CommonModuleID:           module.CommonModuleID,
+		CommonModuleName:         module.CommonModuleName,
 		Name:                     module.Name,
 		Owner:                    module.Owner,
 		OwnerAvatarURL:           module.OwnerAvatarURL,
@@ -268,17 +275,14 @@ func newModuleResponse(module domain.Module) moduleResponse {
 		RepositoryInstallationID: strconv.FormatInt(module.RepositoryInstallationID, 10),
 		RepositoryProvider:       string(module.RepositoryProvider),
 		RepositorySSHURL:         module.RepositorySSHURL,
-		Status:                   string(module.Status),
 		UpdatedAt:                formatTime(module.UpdatedAt),
 	}
 }
 
 func newModuleSummaryResponse(summary domain.ModuleSummary) moduleSummaryResponse {
 	return moduleSummaryResponse{
-		Active:  summary.Active,
 		Common:  summary.Common,
 		Feature: summary.Feature,
-		Frozen:  summary.Frozen,
 		Total:   summary.Total,
 	}
 }

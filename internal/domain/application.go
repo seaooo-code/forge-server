@@ -92,14 +92,13 @@ type ApplicationMember struct {
 }
 
 type ApplicationModule struct {
-	ID            string
-	Name          string
-	Kind          string
-	Repository    string
-	Owner         string
-	LatestVersion string
-	Pipeline      string
-	Status        string
+	CommonModuleID   string
+	CommonModuleName string
+	ID               string
+	Kind             string
+	Name             string
+	Owner            string
+	Repository       string
 }
 
 type ApplicationPipeline struct {

@@ -212,7 +212,7 @@ create table modules (
     id text primary key,
     name text not null,
     kind text not null check (kind in ('Common', 'Feature')),
-    status text not null check (status in ('active', 'frozen')),
+    common_module_id text references modules(id) on delete restrict,
     application_id text not null references applications(id) on delete restrict,
     owner_user_id text not null references users(id) on delete restrict,
     repository_provider text not null check (repository_provider in ('github')),
@@ -226,11 +226,22 @@ create table modules (
     sort_order integer not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
+    check (
+        (kind = 'Common' and common_module_id is null)
+        or (kind = 'Feature' and common_module_id is not null and common_module_id <> id)
+    ),
     unique (repository_provider, provider_repository_id)
 );
 
 create index idx_modules_application
     on modules(application_id);
+
+create unique index idx_modules_common_application_unique
+    on modules(application_id)
+    where kind = 'Common';
+
+create index idx_modules_common_module
+    on modules(common_module_id);
 
 create index idx_modules_owner_user
     on modules(owner_user_id);
@@ -238,11 +249,43 @@ create index idx_modules_owner_user
 create index idx_modules_kind
     on modules(kind);
 
-create index idx_modules_status
-    on modules(status);
-
 create index idx_modules_repository_full_name
     on modules(repository_provider, repository_full_name);
 
 create index idx_modules_repository_installation
     on modules(repository_provider, provider_installation_id);
+
+create function ensure_module_common_binding()
+returns trigger as $$
+begin
+    if new.kind = 'Feature' then
+        if not exists (
+            select 1
+            from modules common_module
+            where common_module.id = new.common_module_id
+              and common_module.kind = 'Common'
+              and common_module.application_id = new.application_id
+        ) then
+            raise exception 'feature module common_module_id must point to a Common module of the same application'
+                using errcode = '23514';
+        end if;
+    end if;
+
+    if exists (
+        select 1
+        from modules feature_module
+        where feature_module.common_module_id = new.id
+          and (new.kind <> 'Common' or feature_module.application_id <> new.application_id)
+    ) then
+        raise exception 'module with feature dependents must remain a Common module of the same application'
+            using errcode = '23514';
+    end if;
+
+    return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_modules_common_binding
+before insert or update of kind, application_id, common_module_id
+on modules
+for each row execute function ensure_module_common_binding();

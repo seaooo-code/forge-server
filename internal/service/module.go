@@ -88,6 +88,7 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 
 	normalized := domain.ModuleInput{
 		ApplicationID:      strings.TrimSpace(input.ApplicationID),
+		CommonModuleID:     strings.TrimSpace(input.CommonModuleID),
 		ID:                 strings.TrimSpace(input.ID),
 		Kind:               input.Kind,
 		Name:               strings.TrimSpace(input.Name),
@@ -109,7 +110,6 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 			SSHURL:         strings.TrimSpace(input.Repository.SSHURL),
 			DefaultBranch:  strings.TrimSpace(input.Repository.DefaultBranch),
 		},
-		Status: input.Status,
 	}
 
 	if requireID && !domain.IsValidModuleID(normalized.ID) {
@@ -131,11 +131,11 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 	if !domain.IsValidModuleKind(normalized.Kind) {
 		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
 	}
-	if normalized.Status == "" {
-		normalized.Status = domain.ModuleStatusActive
-	}
-	if !domain.IsValidModuleStatus(normalized.Status) {
+	if normalized.Kind == domain.ModuleKindCommon && normalized.CommonModuleID != "" {
 		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
+	}
+	if normalized.Kind == domain.ModuleKindFeature && normalized.CommonModuleID == "" {
+		return domain.ModuleInput{}, domain.ErrModuleCommonMissing
 	}
 	if normalized.Repository.Provider != domain.CodeSourceProviderGitHub {
 		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
@@ -146,15 +146,12 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 
 func normalizeModuleListFilters(filters domain.ModuleListFilters) (domain.ModuleListFilters, error) {
 	normalized := domain.ModuleListFilters{
-		Kind:    filters.Kind,
-		Keyword: strings.TrimSpace(filters.Keyword),
-		Owner:   strings.TrimSpace(filters.Owner),
-		Status:  filters.Status,
+		ApplicationID: strings.TrimSpace(filters.ApplicationID),
+		Kind:          filters.Kind,
+		Keyword:       strings.TrimSpace(filters.Keyword),
+		Owner:         strings.TrimSpace(filters.Owner),
 	}
 	if normalized.Kind != "" && !domain.IsValidModuleKind(normalized.Kind) {
-		return domain.ModuleListFilters{}, domain.ErrInvalidModuleInput
-	}
-	if normalized.Status != "" && !domain.IsValidModuleStatus(normalized.Status) {
 		return domain.ModuleListFilters{}, domain.ErrInvalidModuleInput
 	}
 	return normalized, nil
@@ -168,12 +165,6 @@ func summarizeModules(modules []domain.Module) domain.ModuleSummary {
 			summary.Common++
 		case domain.ModuleKindFeature:
 			summary.Feature++
-		}
-		switch module.Status {
-		case domain.ModuleStatusActive:
-			summary.Active++
-		case domain.ModuleStatusFrozen:
-			summary.Frozen++
 		}
 	}
 	return summary

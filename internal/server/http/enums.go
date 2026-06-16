@@ -11,7 +11,6 @@ import (
 type enumsResponse struct {
 	ApplicationStatuses []enumOptionResponse `json:"applicationStatuses"`
 	ModuleKinds         []enumOptionResponse `json:"moduleKinds"`
-	ModuleStatuses      []enumOptionResponse `json:"moduleStatuses"`
 	Platforms           []enumOptionResponse `json:"platforms"`
 }
 
@@ -29,12 +28,8 @@ func registerEnumRoutes(group *echo.Group) {
 				{Label: domain.ApplicationStatusOffline.Label(), Value: string(domain.ApplicationStatusOffline)},
 			},
 			ModuleKinds: []enumOptionResponse{
-				{Label: "Common Bundle", Value: string(domain.ModuleKindCommon)},
-				{Label: "Feature Bundle", Value: string(domain.ModuleKindFeature)},
-			},
-			ModuleStatuses: []enumOptionResponse{
-				{Label: domain.ModuleStatusActive.Label(), Value: string(domain.ModuleStatusActive)},
-				{Label: domain.ModuleStatusFrozen.Label(), Value: string(domain.ModuleStatusFrozen)},
+				{Label: "通用模块", Value: string(domain.ModuleKindCommon)},
+				{Label: "功能模块", Value: string(domain.ModuleKindFeature)},
 			},
 			Platforms: []enumOptionResponse{
 				{Label: "iOS", Value: "iOS"},

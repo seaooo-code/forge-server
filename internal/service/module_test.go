@@ -96,8 +96,8 @@ func TestModuleServiceRejectsIDChangeOnUpdate(t *testing.T) {
 func TestModuleServiceReturnsSummary(t *testing.T) {
 	repository := fakeModuleRepository{
 		modules: []domain.Module{
-			testServiceModule("module-common", domain.ModuleKindCommon, domain.ModuleStatusActive),
-			testServiceModule("module-home", domain.ModuleKindFeature, domain.ModuleStatusFrozen),
+			testServiceModule("module-common", domain.ModuleKindCommon),
+			testServiceModule("module-home", domain.ModuleKindFeature),
 		},
 	}
 	service := NewModuleService(&repository)
@@ -107,23 +107,39 @@ func TestModuleServiceReturnsSummary(t *testing.T) {
 		t.Fatalf("list modules: %v", err)
 	}
 
-	if summary.Total != 2 || summary.Common != 1 || summary.Feature != 1 || summary.Active != 1 || summary.Frozen != 1 {
+	if summary.Total != 2 || summary.Common != 1 || summary.Feature != 1 {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
 }
 
-func TestModuleServiceRejectsInvalidListStatus(t *testing.T) {
+func TestModuleServiceRejectsFeatureWithoutCommonModule(t *testing.T) {
 	repository := fakeModuleRepository{}
 	service := NewModuleService(&repository)
 
-	_, _, err := service.ListModules(context.Background(), domain.ModuleListFilters{
-		Status: domain.ModuleStatus("unknown"),
-	})
+	input := validModuleInput("module-profile")
+	input.CommonModuleID = ""
+	_, err := service.CreateModule(context.Background(), input)
+	if !errors.Is(err, domain.ErrModuleCommonMissing) {
+		t.Fatalf("expected missing common module, got %v", err)
+	}
+	if repository.createCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
+	}
+}
+
+func TestModuleServiceRejectsCommonWithCommonModule(t *testing.T) {
+	repository := fakeModuleRepository{}
+	service := NewModuleService(&repository)
+
+	input := validModuleInput("module-common")
+	input.Kind = domain.ModuleKindCommon
+	input.CommonModuleID = "module-base"
+	_, err := service.CreateModule(context.Background(), input)
 	if !errors.Is(err, domain.ErrInvalidModuleInput) {
 		t.Fatalf("expected invalid module input, got %v", err)
 	}
-	if repository.listCalls != 0 {
-		t.Fatalf("expected repository not to be called, got %d calls", repository.listCalls)
+	if repository.createCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
 	}
 }
 
@@ -158,9 +174,6 @@ func (r *fakeModuleRepository) ListModules(_ context.Context, filters domain.Mod
 		if filters.Kind != "" && module.Kind != filters.Kind {
 			continue
 		}
-		if filters.Status != "" && module.Status != filters.Status {
-			continue
-		}
 		result = append(result, module)
 	}
 	return result, nil
@@ -173,14 +186,14 @@ func (r *fakeModuleRepository) GetModule(_ context.Context, _ string) (domain.Mo
 func (r *fakeModuleRepository) CreateModule(_ context.Context, input domain.ModuleInput) (domain.Module, error) {
 	r.createCalls++
 	r.lastCreateInput = input
-	return testServiceModule(input.ID, input.Kind, input.Status), nil
+	return testServiceModule(input.ID, input.Kind), nil
 }
 
 func (r *fakeModuleRepository) UpdateModule(_ context.Context, id string, input domain.ModuleInput) (domain.Module, error) {
 	r.updateCalls++
 	r.lastUpdateID = id
 	r.lastUpdateInput = input
-	return testServiceModule(id, input.Kind, input.Status), nil
+	return testServiceModule(id, input.Kind), nil
 }
 
 func (r *fakeModuleRepository) DeleteModule(_ context.Context, id string) error {
@@ -191,6 +204,7 @@ func (r *fakeModuleRepository) DeleteModule(_ context.Context, id string) error 
 func validModuleInput(id string) domain.ModuleInput {
 	return domain.ModuleInput{
 		ApplicationID:      "app-mi-car",
+		CommonModuleID:     "module-common",
 		ID:                 id,
 		Kind:               domain.ModuleKindFeature,
 		Name:               "profile",
@@ -209,15 +223,23 @@ func validModuleInput(id string) domain.ModuleInput {
 			SSHURL:         "git@github.com:mi-car/profile.git",
 			DefaultBranch:  "main",
 		},
-		Status: domain.ModuleStatusActive,
 	}
 }
 
-func testServiceModule(id string, kind domain.ModuleKind, status domain.ModuleStatus) domain.Module {
+func testServiceModule(id string, kind domain.ModuleKind) domain.Module {
+	commonModuleID := ""
+	commonModuleName := ""
+	if kind == domain.ModuleKindFeature {
+		commonModuleID = "module-common"
+		commonModuleName = "common"
+	}
+
 	return domain.Module{
 		ApplicationID:            "app-mi-car",
 		ApplicationName:          "小米汽车 App",
 		ApplicationSlug:          "mi-car",
+		CommonModuleID:           commonModuleID,
+		CommonModuleName:         commonModuleName,
 		CreatedAt:                time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
 		DefaultBranch:            "main",
 		ID:                       id,
@@ -229,7 +251,6 @@ func testServiceModule(id string, kind domain.ModuleKind, status domain.ModuleSt
 		RepositoryID:             1001,
 		RepositoryInstallationID: 2001,
 		RepositoryProvider:       domain.CodeSourceProviderGitHub,
-		Status:                   status,
 		UpdatedAt:                time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
 	}
 }

@@ -505,11 +505,13 @@ func (r *ApplicationRepository) listApplicationModules(ctx context.Context, quer
 			m.id,
 			m.name,
 			m.kind,
+			m.common_module_id,
+			cm.name as common_module_name,
 			m.repository_full_name,
-			u.name as owner,
-			m.status
+			u.name as owner
 		from modules m
 		join users u on u.id = m.owner_user_id
+		left join modules cm on cm.id = m.common_module_id
 		where m.application_id = $1
 		order by m.sort_order asc, m.created_at asc
 	`, applicationID)
@@ -521,20 +523,25 @@ func (r *ApplicationRepository) listApplicationModules(ctx context.Context, quer
 	modules := make([]domain.ApplicationModule, 0)
 	for rows.Next() {
 		var module domain.ApplicationModule
-		var status domain.ModuleStatus
+		var commonModuleID *string
+		var commonModuleName *string
 		if err := rows.Scan(
 			&module.ID,
 			&module.Name,
 			&module.Kind,
+			&commonModuleID,
+			&commonModuleName,
 			&module.Repository,
 			&module.Owner,
-			&status,
 		); err != nil {
 			return nil, fmt.Errorf("scan application module: %w", err)
 		}
-		module.LatestVersion = "-"
-		module.Pipeline = "-"
-		module.Status = status.Label()
+		if commonModuleID != nil {
+			module.CommonModuleID = *commonModuleID
+		}
+		if commonModuleName != nil {
+			module.CommonModuleName = *commonModuleName
+		}
 		modules = append(modules, module)
 	}
 
