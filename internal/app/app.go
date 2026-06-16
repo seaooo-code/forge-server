@@ -8,7 +8,9 @@ import (
 	"net/http"
 
 	"forge-server/internal/config"
+	"forge-server/internal/domain"
 	feishuinfra "forge-server/internal/infra/feishu"
+	githubinfra "forge-server/internal/infra/github"
 	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
 	redisinfra "forge-server/internal/infra/redis"
@@ -62,6 +64,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	environmentService := service.NewEnvironmentService(environmentRepository)
 	applicationRepository := postgres.NewApplicationRepository(postgresPool)
 	applicationService := service.NewApplicationService(applicationRepository)
+	codeSourceRepository := postgres.NewCodeSourceRepository(postgresPool)
+	githubClient := githubinfra.NewClient(cfg.GitHub, cfg.Telemetry.Enabled)
+	codeSourceService := service.NewCodeSourceService(codeSourceRepository, githubClient, domainCodeSourceAppConfig(cfg.GitHub))
+	moduleRepository := postgres.NewModuleRepository(postgresPool)
+	moduleService := service.NewModuleService(moduleRepository)
 	storageRepository := postgres.NewStorageRepository(postgresPool)
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
@@ -71,9 +78,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	server := httpserver.New(cfg, httpserver.Dependencies{
 		ApplicationService:   applicationService,
+		CodeSourceService:    codeSourceService,
 		EnvironmentService:   environmentService,
 		FeishuAuthService:    feishuAuthService,
 		FeishuContactService: feishuContactService,
+		ModuleService:        moduleService,
 		StorageService:       storageService,
 		Postgres:             postgresPool,
 		Redis:                redisClient,
@@ -87,6 +96,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		redis:    redisClient,
 		otel:     otelShutdown,
 	}, nil
+}
+
+func domainCodeSourceAppConfig(cfg config.GitHubConfig) domain.CodeSourceAppConfig {
+	return domain.CodeSourceAppConfig{
+		AppID:      cfg.AppID,
+		AppSlug:    cfg.AppSlug,
+		PrivateKey: cfg.PrivateKey,
+		Provider:   domain.CodeSourceProviderGitHub,
+	}
 }
 
 func (a *App) Run(ctx context.Context) error {

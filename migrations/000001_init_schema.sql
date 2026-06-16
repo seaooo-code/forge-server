@@ -146,3 +146,103 @@ create index idx_feishu_auth_sessions_union_id
     on feishu_auth_sessions(union_id);
 create index idx_feishu_auth_sessions_refresh_expiry
     on feishu_auth_sessions(refresh_token_expires_at);
+
+create table code_source_app_configs (
+    provider text primary key check (provider in ('github')),
+    provider_app_id text not null,
+    app_slug text not null,
+    name text not null default '',
+    html_url text not null default '',
+    private_key text not null,
+    webhook_secret text not null default '',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create table code_source_installations (
+    id bigserial primary key,
+    provider text not null check (provider in ('github')),
+    owner_union_id text not null,
+    provider_installation_id bigint not null,
+    account_login text not null default '',
+    account_type text not null default '',
+    repository_selection text not null default '',
+    status text not null check (status in ('active', 'deleted')),
+    installed_at timestamptz not null default now(),
+    deleted_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (provider, owner_union_id, provider_installation_id)
+);
+
+create index idx_code_source_installations_provider_owner_status
+    on code_source_installations(provider, owner_union_id, status);
+
+create table code_source_repositories (
+    provider text not null check (provider in ('github')),
+    owner_union_id text not null,
+    provider_repository_id bigint not null,
+    provider_installation_id bigint not null,
+    owner text not null,
+    name text not null,
+    full_name text not null,
+    private boolean not null default false,
+    html_url text not null default '',
+    clone_url text not null default '',
+    ssh_url text not null default '',
+    default_branch text not null default '',
+    description text not null default '',
+    repository_updated_at timestamptz,
+    last_synced_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (provider, owner_union_id, provider_repository_id),
+    foreign key (provider, owner_union_id, provider_installation_id)
+        references code_source_installations(provider, owner_union_id, provider_installation_id)
+        on delete cascade
+);
+
+create index idx_code_source_repositories_installation
+    on code_source_repositories(provider, owner_union_id, provider_installation_id);
+
+create index idx_code_source_repositories_full_name
+    on code_source_repositories(provider, owner_union_id, full_name);
+
+create table modules (
+    id text primary key,
+    name text not null,
+    kind text not null check (kind in ('Common', 'Feature')),
+    status text not null check (status in ('active', 'frozen')),
+    application_id text not null references applications(id) on delete restrict,
+    owner_user_id text not null references users(id) on delete restrict,
+    repository_provider text not null check (repository_provider in ('github')),
+    provider_repository_id bigint not null,
+    provider_installation_id bigint not null default 0,
+    repository_full_name text not null,
+    repository_html_url text not null default '',
+    repository_clone_url text not null default '',
+    repository_ssh_url text not null default '',
+    default_branch text not null default '',
+    sort_order integer not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (repository_provider, provider_repository_id)
+);
+
+create index idx_modules_application
+    on modules(application_id);
+
+create index idx_modules_owner_user
+    on modules(owner_user_id);
+
+create index idx_modules_kind
+    on modules(kind);
+
+create index idx_modules_status
+    on modules(status);
+
+create index idx_modules_repository_full_name
+    on modules(repository_provider, repository_full_name);
+
+create index idx_modules_repository_installation
+    on modules(repository_provider, provider_installation_id);

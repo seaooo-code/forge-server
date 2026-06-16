@@ -6,6 +6,7 @@ import (
 )
 
 var (
+	ErrCodeSourceAppNotFound          = errors.New("code source app not found")
 	ErrCodeSourceAuthNotConfigured    = errors.New("code source auth not configured")
 	ErrCodeSourceAuthorization        = errors.New("code source authorization failed")
 	ErrCodeSourceInstallationNotFound = errors.New("code source installation not found")
@@ -26,17 +27,40 @@ const (
 	CodeSourceAppStatusNotInstalled CodeSourceAppStatus = "notInstalled"
 )
 
+type CodeSourceAppConfigurationStatus string
+
+const (
+	CodeSourceAppConfigurationStatusConfigured    CodeSourceAppConfigurationStatus = "configured"
+	CodeSourceAppConfigurationStatusNotConfigured CodeSourceAppConfigurationStatus = "notConfigured"
+)
+
 type CodeSourceApp struct {
-	Description string
-	ID          CodeSourceProvider
-	InstalledAt *time.Time
-	Name        string
-	Provider    CodeSourceProvider
-	Status      CodeSourceAppStatus
+	ConfigurationStatus CodeSourceAppConfigurationStatus
+	Description         string
+	ID                  CodeSourceProvider
+	InstalledAt         *time.Time
+	Name                string
+	Provider            CodeSourceProvider
+	Status              CodeSourceAppStatus
 }
 
 type CodeSourceInstallURL struct {
 	URL string
+}
+
+type CodeSourceAppConfig struct {
+	AppID         string
+	AppSlug       string
+	HTMLURL       string
+	Name          string
+	PrivateKey    string
+	Provider      CodeSourceProvider
+	WebhookSecret string
+}
+
+type CodeSourceAppManifest struct {
+	ActionURL string
+	Payload   string
 }
 
 type CodeSourceInstallation struct {
@@ -45,6 +69,7 @@ type CodeSourceInstallation struct {
 	DeletedAt           *time.Time
 	InstallationID      int64
 	InstalledAt         time.Time
+	OwnerUnionID        string
 	Provider            CodeSourceProvider
 	RepositorySelection string
 	UpdatedAt           time.Time
@@ -72,9 +97,10 @@ type CodeSourceRepositoryPage struct {
 }
 
 type CodeSourceRepositorySearchInput struct {
-	PageSize int
-	Provider CodeSourceProvider
-	Query    string
+	OwnerUnionID string
+	PageSize     int
+	Provider     CodeSourceProvider
+	Query        string
 }
 
 type CodeSourceRepositorySearchResult struct {

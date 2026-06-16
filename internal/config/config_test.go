@@ -98,6 +98,49 @@ func TestLoadReadsFeishuSearchDebugFlag(t *testing.T) {
 	}
 }
 
+func TestLoadReadsGitHubAppConfig(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte("GITHUB_API_BASE_URL=https://api.github.test\nGITHUB_API_VERSION=2026-03-10\nGITHUB_APP_HOMEPAGE_URL=https://forge.example.com\nGITHUB_APP_ID=12345\nGITHUB_APP_INSTALL_CALLBACK_URL=https://api.forge.example.com/api/v1/code-sources/github/install/callback\nGITHUB_APP_INSTALL_REDIRECT_URL=https://forge.example.com/code-sources\nGITHUB_APP_MANIFEST_CALLBACK_URL=https://api.forge.example.com/api/v1/code-sources/github/manifest/callback\nGITHUB_APP_NAME=Forge Test\nGITHUB_APP_SLUG=forge-console\nGITHUB_APP_PRIVATE_KEY=line1\\nline2\nGITHUB_WEB_URL=https://github.test\n"), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	unsetEnv(t, "GITHUB_API_BASE_URL", "GITHUB_API_VERSION", "GITHUB_APP_HOMEPAGE_URL", "GITHUB_APP_ID", "GITHUB_APP_INSTALL_CALLBACK_URL", "GITHUB_APP_INSTALL_REDIRECT_URL", "GITHUB_APP_MANIFEST_CALLBACK_URL", "GITHUB_APP_NAME", "GITHUB_APP_SLUG", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEB_URL")
+	t.Setenv("ENV_FILE", envPath)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.GitHub.APIBaseURL != "https://api.github.test" {
+		t.Fatalf("expected github api base url, got %q", cfg.GitHub.APIBaseURL)
+	}
+	if cfg.GitHub.APIVersion != "2026-03-10" {
+		t.Fatalf("expected github api version, got %q", cfg.GitHub.APIVersion)
+	}
+	if cfg.GitHub.AppID != "12345" || cfg.GitHub.AppSlug != "forge-console" {
+		t.Fatalf("unexpected github app identity: %+v", cfg.GitHub)
+	}
+	if cfg.GitHub.AppHomepageURL != "https://forge.example.com" || cfg.GitHub.AppName != "Forge Test" {
+		t.Fatalf("unexpected github app metadata: %+v", cfg.GitHub)
+	}
+	if cfg.GitHub.InstallCallbackURL != "https://api.forge.example.com/api/v1/code-sources/github/install/callback" {
+		t.Fatalf("unexpected github install callback url: %+v", cfg.GitHub)
+	}
+	if cfg.GitHub.InstallRedirectURL != "https://forge.example.com/code-sources" {
+		t.Fatalf("unexpected github install redirect url: %+v", cfg.GitHub)
+	}
+	if cfg.GitHub.ManifestCallbackURL != "https://api.forge.example.com/api/v1/code-sources/github/manifest/callback" {
+		t.Fatalf("unexpected github manifest callback url: %+v", cfg.GitHub)
+	}
+	if cfg.GitHub.PrivateKey != "line1\nline2" {
+		t.Fatalf("expected escaped private key newlines to be restored, got %q", cfg.GitHub.PrivateKey)
+	}
+	if cfg.GitHub.WebURL != "https://github.test" {
+		t.Fatalf("expected github web url, got %q", cfg.GitHub.WebURL)
+	}
+}
+
 func TestLoadUsesFixedFeishuEndpointURLs(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {

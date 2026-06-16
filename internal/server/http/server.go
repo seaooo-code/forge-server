@@ -24,9 +24,11 @@ const httpExchangeStartedAtKey = "http_exchange_started_at"
 
 type Dependencies struct {
 	ApplicationService   ApplicationService
+	CodeSourceService    CodeSourceService
 	EnvironmentService   EnvironmentService
 	FeishuAuthService    FeishuAuthService
 	FeishuContactService FeishuContactService
+	ModuleService        ModuleService
 	StorageService       StorageService
 	Postgres             *pgxpool.Pool
 	Redis                *redis.Client
@@ -48,6 +50,24 @@ type EnvironmentService interface {
 	GetEnvironmentDetail(ctx context.Context, code string) (domain.Environment, error)
 	ListEnvironments(ctx context.Context) ([]domain.Environment, error)
 	UpdateEnvironment(ctx context.Context, code string, input domain.EnvironmentInput) (domain.Environment, error)
+}
+
+type CodeSourceService interface {
+	CompleteAppManifest(ctx context.Context, provider domain.CodeSourceProvider, code string) (domain.CodeSourceInstallURL, error)
+	CompleteInstallation(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string, installationID int64, setupAction string) (domain.CodeSourceApp, error)
+	DeleteInstallations(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string) error
+	GetAppManifest(ctx context.Context, provider domain.CodeSourceProvider) (domain.CodeSourceAppManifest, error)
+	GetInstallURL(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string) (domain.CodeSourceInstallURL, error)
+	ListCodeSources(ctx context.Context, ownerUnionID string) ([]domain.CodeSourceApp, error)
+	SearchRepositories(ctx context.Context, input domain.CodeSourceRepositorySearchInput) (domain.CodeSourceRepositorySearchResult, error)
+}
+
+type ModuleService interface {
+	CreateModule(ctx context.Context, input domain.ModuleInput) (domain.Module, error)
+	DeleteModule(ctx context.Context, id string) error
+	GetModule(ctx context.Context, id string) (domain.Module, error)
+	ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error)
+	UpdateModule(ctx context.Context, id string, input domain.ModuleInput) (domain.Module, error)
 }
 
 type FeishuAuthService interface {
@@ -99,10 +119,13 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 			"status": "ok",
 		})
 	})
+	registerEnumRoutes(api)
 	registerApplicationRoutes(api, deps.ApplicationService)
+	registerCodeSourceRoutes(api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)
 	registerEnvironmentRoutes(api, deps.EnvironmentService)
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
 	registerFeishuContactRoutes(api, deps.FeishuContactService, deps.FeishuAuthService)
+	registerModuleRoutes(api, deps.ModuleService)
 	registerStorageRoutes(api, deps.StorageService)
 
 	return e

@@ -348,12 +348,17 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 	}
 	detail.Members = members
 
+	modules, err := r.listApplicationModules(ctx, querier, detail.Application.ID)
+	if err != nil {
+		return domain.ApplicationDetail{}, err
+	}
+	detail.Modules = modules
+
 	detail.ID = detail.Application.ID
 	detail.AppKey = "rn." + detail.Application.Slug
 	detail.Slug = detail.Application.Slug
 	detail.Name = detail.Application.Name
 	detail.OwnerDepartmentIDs = detail.Application.OwnerDepartmentIDs
-	detail.Modules = []domain.ApplicationModule{}
 	detail.Pipelines = []domain.ApplicationPipeline{}
 
 	return detail, nil
@@ -492,6 +497,52 @@ func (r *ApplicationRepository) listApplicationMembers(ctx context.Context, quer
 	}
 
 	return members, nil
+}
+
+func (r *ApplicationRepository) listApplicationModules(ctx context.Context, querier applicationQuerier, applicationID string) ([]domain.ApplicationModule, error) {
+	rows, err := querier.Query(ctx, `
+		select
+			m.id,
+			m.name,
+			m.kind,
+			m.repository_full_name,
+			u.name as owner,
+			m.status
+		from modules m
+		join users u on u.id = m.owner_user_id
+		where m.application_id = $1
+		order by m.sort_order asc, m.created_at asc
+	`, applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("query application modules: %w", err)
+	}
+	defer rows.Close()
+
+	modules := make([]domain.ApplicationModule, 0)
+	for rows.Next() {
+		var module domain.ApplicationModule
+		var status domain.ModuleStatus
+		if err := rows.Scan(
+			&module.ID,
+			&module.Name,
+			&module.Kind,
+			&module.Repository,
+			&module.Owner,
+			&status,
+		); err != nil {
+			return nil, fmt.Errorf("scan application module: %w", err)
+		}
+		module.LatestVersion = "-"
+		module.Pipeline = "-"
+		module.Status = status.Label()
+		modules = append(modules, module)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate application modules: %w", err)
+	}
+
+	return modules, nil
 }
 
 func (r *ApplicationRepository) replaceApplicationRelations(ctx context.Context, tx pgx.Tx, applicationID string, input domain.ApplicationInput) error {

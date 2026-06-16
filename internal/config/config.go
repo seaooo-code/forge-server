@@ -59,12 +59,17 @@ type FeishuConfig struct {
 }
 
 type GitHubConfig struct {
-	APIBaseURL string
-	APIVersion string
-	AppID      string
-	AppSlug    string
-	PrivateKey string
-	WebURL     string
+	APIBaseURL          string
+	APIVersion          string
+	AppHomepageURL      string
+	AppID               string
+	AppName             string
+	AppSlug             string
+	InstallCallbackURL  string
+	InstallRedirectURL  string
+	ManifestCallbackURL string
+	PrivateKey          string
+	WebURL              string
 }
 
 type PostgresConfig struct {
@@ -176,12 +181,17 @@ func Load() (Config, error) {
 			DebugLogSearchResponse: boolEnv("FEISHU_DEBUG_LOG_SEARCH_RESPONSE", false),
 		},
 		GitHub: GitHubConfig{
-			APIBaseURL: stringEnv("GITHUB_API_BASE_URL", defaultGitHubAPIBaseURL),
-			APIVersion: stringEnv("GITHUB_API_VERSION", defaultGitHubAPIVersion),
-			AppID:      stringEnv("GITHUB_APP_ID", ""),
-			AppSlug:    stringEnv("GITHUB_APP_SLUG", ""),
-			PrivateKey: privateKeyEnv("GITHUB_APP_PRIVATE_KEY", ""),
-			WebURL:     stringEnv("GITHUB_WEB_URL", defaultGitHubWebURL),
+			APIBaseURL:          stringEnv("GITHUB_API_BASE_URL", defaultGitHubAPIBaseURL),
+			APIVersion:          stringEnv("GITHUB_API_VERSION", defaultGitHubAPIVersion),
+			AppHomepageURL:      stringEnv("GITHUB_APP_HOMEPAGE_URL", defaultGitHubAppHomepageURL),
+			AppID:               stringEnv("GITHUB_APP_ID", ""),
+			AppName:             stringEnv("GITHUB_APP_NAME", defaultGitHubAppName),
+			AppSlug:             stringEnv("GITHUB_APP_SLUG", ""),
+			InstallCallbackURL:  stringEnv("GITHUB_APP_INSTALL_CALLBACK_URL", defaultGitHubAppInstallCallbackURL),
+			InstallRedirectURL:  stringEnv("GITHUB_APP_INSTALL_REDIRECT_URL", defaultGitHubAppInstallRedirectURL),
+			ManifestCallbackURL: stringEnv("GITHUB_APP_MANIFEST_CALLBACK_URL", defaultGitHubAppManifestCallbackURL),
+			PrivateKey:          privateKeyEnv("GITHUB_APP_PRIVATE_KEY", ""),
+			WebURL:              stringEnv("GITHUB_WEB_URL", defaultGitHubWebURL),
 		},
 		Postgres: PostgresConfig{
 			DSN:             stringEnv("POSTGRES_DSN", "postgres://postgres:postgres@127.0.0.1:5432/forge_server?sslmode=disable"),

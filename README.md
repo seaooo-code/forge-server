@@ -19,6 +19,7 @@ http://localhost:8080/openapi.json
 - `GET /healthz`：进程存活检查。
 - `GET /readyz`：PostgreSQL 和 Redis 就绪检查。
 - `GET /api/v1/ping`：API 连通性检查。
+- `GET /api/v1/enums`：全局枚举选项。
 - `GET /api/v1/environments`：环境列表。
 - `GET /api/v1/environments/:code`：环境详情。
 - `GET /api/v1/applications`：应用列表。
@@ -29,6 +30,13 @@ http://localhost:8080/openapi.json
 - `PATCH /api/v1/applications/:slug/status`：上线或下线应用。
 - `GET /api/v1/applications/:slug/delete-check`：检查应用是否可删除。
 - `DELETE /api/v1/applications/:slug`：依赖检查通过后彻底删除应用。
+- `GET /api/v1/code-sources`：代码源应用安装状态。
+- `GET /api/v1/code-sources/:provider/manifest`：获取 GitHub App Manifest 创建参数。
+- `GET /api/v1/code-sources/:provider/manifest/callback`：接收 GitHub App Manifest 创建回调并保存 App 凭据。
+- `GET /api/v1/code-sources/:provider/install-url`：获取 GitHub App 安装地址。
+- `GET /api/v1/code-sources/:provider/install/callback`：接收 GitHub App 安装完成回调。
+- `DELETE /api/v1/code-sources/:provider/installations`：删除当前登录用户的 GitHub App 安装授权和仓库缓存。
+- `GET /api/v1/code-sources/:provider/repositories/search`：搜索 GitHub App 已授权仓库。
 - `GET /api/v1/storage/configurations`：存储配置列表。
 - `GET /api/v1/storage/configurations/:id`：存储配置详情。
 - `POST /api/v1/storage/configurations/test`：测试存储配置连通性。
@@ -67,6 +75,7 @@ ENV_FILE=/path/to/file go run ./cmd/forge-server
 - `POSTGRES_*`：PostgreSQL 连接和连接池配置。
 - `REDIS_*`：Redis 连接配置。
 - `FEISHU_*`：飞书应用凭证、回调地址、授权范围和调试开关。
+- `GITHUB_*`：GitHub App 安装、授权和仓库搜索配置。
 - `OTEL_*`：OpenTelemetry 追踪和日志导出配置。
 
 飞书 OAuth 至少需要配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URI`，并且需要在飞书开放平台中配置相同的回调地址。配合 `forge-console` 本地开发时，回调地址使用：
@@ -84,6 +93,25 @@ HTTP_CORS_ALLOW_CREDENTIALS=true
 `FEISHU_OAUTH_SCOPE` 默认保持为空，使用飞书应用已配置的权限；只有需要显式收窄授权范围时再设置。飞书用户搜索使用当前登录用户的 `user_access_token`，需要在飞书开放平台为应用开启对应通讯录权限。搜索结果中的邮箱来自飞书批量获取用户信息接口，应用需要具备 `contact:user.email:readonly` 字段权限才会返回该字段。
 
 飞书开放平台的固定接口地址不通过环境变量暴露，由 `internal/config/feishu.go` 统一管理。
+
+代码源管理采用 GitHub App Manifest 流程：页面点击创建后跳转 GitHub，GitHub 创建 App 后回调 `GITHUB_APP_MANIFEST_CALLBACK_URL`，服务端会换取并保存 App ID、slug、private key 和 webhook secret；随后自动跳转到 GitHub App 安装页。默认本地回调地址为：
+
+```text
+http://127.0.0.1:8080/api/v1/code-sources/github/manifest/callback
+```
+
+GitHub App 安装完成后，GitHub 会回调 `GITHUB_APP_INSTALL_CALLBACK_URL`，服务端记录 installation 元信息；搜索仓库时会用已保存的 GitHub App 私钥签 JWT，换取 installation access token，并读取该 installation 已授权的仓库。
+
+线上部署时需要把以下地址改成公网可访问域名：
+
+```text
+GITHUB_APP_HOMEPAGE_URL
+GITHUB_APP_MANIFEST_CALLBACK_URL
+GITHUB_APP_INSTALL_CALLBACK_URL
+GITHUB_APP_INSTALL_REDIRECT_URL
+```
+
+`GITHUB_APP_ID`、`GITHUB_APP_SLUG` 和 `GITHUB_APP_PRIVATE_KEY` 只作为兼容手动创建 GitHub App 的可选兜底配置；默认不需要手动填写。`GITHUB_API_BASE_URL`、`GITHUB_WEB_URL` 和 `GITHUB_API_VERSION` 默认使用 github.com，可按 GitHub Enterprise 环境覆盖。
 
 ## 可观测性
 
