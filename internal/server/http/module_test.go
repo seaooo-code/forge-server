@@ -182,6 +182,27 @@ func TestCreateModuleCommonConflict(t *testing.T) {
 	}
 }
 
+func TestCreateModuleRepositoryConflict(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		ModuleService: fakeModuleService{
+			createErr: domain.ErrModuleRepositoryConflict,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(testModuleRequest("module-profile")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "module repository already exists") {
+		t.Fatalf("expected repository conflict response, got %s", rec.Body.String())
+	}
+}
+
 func TestUpdateModule(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		ModuleService: fakeModuleService{

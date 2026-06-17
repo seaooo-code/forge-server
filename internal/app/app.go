@@ -69,6 +69,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	codeSourceService := service.NewCodeSourceService(codeSourceRepository, githubClient, domainCodeSourceAppConfig(cfg.GitHub))
 	moduleRepository := postgres.NewModuleRepository(postgresPool)
 	moduleService := service.NewModuleService(moduleRepository)
+	buildRepository := postgres.NewBuildRepository(postgresPool)
+	buildService := service.NewBuildService(buildRepository)
+	releaseRepository := postgres.NewReleaseRepository(postgresPool)
+	releaseService := service.NewReleaseService(releaseRepository)
 	storageRepository := postgres.NewStorageRepository(postgresPool)
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
@@ -78,11 +82,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	server := httpserver.New(cfg, httpserver.Dependencies{
 		ApplicationService:   applicationService,
+		BuildService:         buildService,
 		CodeSourceService:    codeSourceService,
 		EnvironmentService:   environmentService,
 		FeishuAuthService:    feishuAuthService,
 		FeishuContactService: feishuContactService,
 		ModuleService:        moduleService,
+		ReleaseService:       releaseService,
 		StorageService:       storageService,
 		Postgres:             postgresPool,
 		Redis:                redisClient,

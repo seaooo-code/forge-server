@@ -157,10 +157,7 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 		input.Repository.DefaultBranch,
 	); err != nil {
 		if isUniqueViolation(err) {
-			if isCommonModuleUniqueViolation(err) {
-				return domain.Module{}, domain.ErrModuleCommonConflict
-			}
-			return domain.Module{}, domain.ErrModuleIDConflict
+			return domain.Module{}, moduleUniqueViolationError(err)
 		}
 		if isForeignKeyViolation(err) {
 			return domain.Module{}, domain.ErrInvalidModuleInput
@@ -251,10 +248,7 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 		input.Repository.DefaultBranch,
 	); err != nil {
 		if isUniqueViolation(err) {
-			if isCommonModuleUniqueViolation(err) {
-				return domain.Module{}, domain.ErrModuleCommonConflict
-			}
-			return domain.Module{}, domain.ErrModuleIDConflict
+			return domain.Module{}, moduleUniqueViolationError(err)
 		}
 		if isForeignKeyViolation(err) {
 			return domain.Module{}, domain.ErrInvalidModuleInput
@@ -483,9 +477,22 @@ func validateModuleCommonDependents(
 	return nil
 }
 
-func isCommonModuleUniqueViolation(err error) bool {
+func moduleUniqueViolationError(err error) error {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.ConstraintName == "idx_modules_common_application_unique"
+	if !errors.As(err, &pgErr) {
+		return domain.ErrModuleIDConflict
+	}
+
+	switch pgErr.ConstraintName {
+	case "modules_pkey":
+		return domain.ErrModuleIDConflict
+	case "idx_modules_common_application_unique":
+		return domain.ErrModuleCommonConflict
+	case "modules_repository_provider_provider_repository_id_key":
+		return domain.ErrModuleRepositoryConflict
+	default:
+		return domain.ErrModuleIDConflict
+	}
 }
 
 func isCheckViolation(err error) bool {

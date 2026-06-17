@@ -7,13 +7,14 @@ import (
 )
 
 var (
-	ErrInvalidModuleInput      = errors.New("invalid module request")
-	ErrModuleInUse             = errors.New("module is referenced")
-	ErrModuleNotFound          = errors.New("module not found")
-	ErrModuleIDConflict        = errors.New("module id already exists")
-	ErrModuleCommonConflict    = errors.New("application already has common module")
-	ErrModuleCommonMissing     = errors.New("feature module requires common module")
-	ErrModuleCommonApplication = errors.New("common module must belong to same application")
+	ErrInvalidModuleInput       = errors.New("invalid module request")
+	ErrModuleInUse              = errors.New("module is referenced")
+	ErrModuleNotFound           = errors.New("module not found")
+	ErrModuleIDConflict         = errors.New("module id already exists")
+	ErrModuleRepositoryConflict = errors.New("module repository already exists")
+	ErrModuleCommonConflict     = errors.New("application already has common module")
+	ErrModuleCommonMissing      = errors.New("feature module requires common module")
+	ErrModuleCommonApplication  = errors.New("common module must belong to same application")
 )
 
 type ModuleKind string

@@ -61,6 +61,7 @@ func TestOpenAPIJSON(t *testing.T) {
 		"/api/v1/applications/{slug}/delete-check",
 		"/api/v1/modules",
 		"/api/v1/modules/{id}",
+		"/api/v1/builds",
 		"/api/v1/code-sources",
 		"/api/v1/code-sources/{provider}/manifest",
 		"/api/v1/code-sources/{provider}/manifest/callback",

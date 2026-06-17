@@ -228,6 +228,8 @@ func moduleErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "module not found"})
 	case errors.Is(err, domain.ErrModuleIDConflict):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "module id already exists"})
+	case errors.Is(err, domain.ErrModuleRepositoryConflict):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "module repository already exists"})
 	case errors.Is(err, domain.ErrModuleCommonConflict):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "application already has common module"})
 	case errors.Is(err, domain.ErrModuleInUse):

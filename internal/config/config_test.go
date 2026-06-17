@@ -141,6 +141,31 @@ func TestLoadReadsGitHubAppConfig(t *testing.T) {
 	}
 }
 
+func TestLoadReadsWorkerConfig(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte("FORGE_WORKER_ID=worker-a\nFORGE_WORKER_WORK_DIR=/tmp/forge-worker-test\nFORGE_WORKER_POLL_INTERVAL=2s\nFORGE_WORKER_LEASE_DURATION=3m\nFORGE_WORKER_BUILD_TIMEOUT=4m\nFORGE_WORKER_DOCKERFILE=docker/rn.Dockerfile\nFORGE_WORKER_ARTIFACT_PREFIX=/rn-bundles/\n"), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	unsetEnv(t, "FORGE_WORKER_ID", "FORGE_WORKER_WORK_DIR", "FORGE_WORKER_POLL_INTERVAL", "FORGE_WORKER_LEASE_DURATION", "FORGE_WORKER_BUILD_TIMEOUT", "FORGE_WORKER_DOCKERFILE", "FORGE_WORKER_ARTIFACT_PREFIX")
+	t.Setenv("ENV_FILE", envPath)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Worker.ID != "worker-a" || cfg.Worker.WorkDir != "/tmp/forge-worker-test" {
+		t.Fatalf("unexpected worker identity config: %+v", cfg.Worker)
+	}
+	if cfg.Worker.PollInterval.String() != "2s" || cfg.Worker.LeaseDuration.String() != "3m0s" || cfg.Worker.BuildTimeout.String() != "4m0s" {
+		t.Fatalf("unexpected worker duration config: %+v", cfg.Worker)
+	}
+	if cfg.Worker.Dockerfile != "docker/rn.Dockerfile" || cfg.Worker.ArtifactPrefix != "rn-bundles" {
+		t.Fatalf("unexpected worker build config: %+v", cfg.Worker)
+	}
+}
+
 func TestLoadUsesFixedFeishuEndpointURLs(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {

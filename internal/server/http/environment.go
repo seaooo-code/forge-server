@@ -3,6 +3,7 @@ package httpserver
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"forge-server/internal/domain"
@@ -173,4 +174,15 @@ func formatTime(value time.Time) string {
 		return ""
 	}
 	return value.Format(time.RFC3339)
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return formatTime(*value)
+}
+
+func int64String(value int64) string {
+	return strconv.FormatInt(value, 10)
 }

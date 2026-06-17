@@ -24,11 +24,13 @@ const httpExchangeStartedAtKey = "http_exchange_started_at"
 
 type Dependencies struct {
 	ApplicationService   ApplicationService
+	BuildService         BuildService
 	CodeSourceService    CodeSourceService
 	EnvironmentService   EnvironmentService
 	FeishuAuthService    FeishuAuthService
 	FeishuContactService FeishuContactService
 	ModuleService        ModuleService
+	ReleaseService       ReleaseService
 	StorageService       StorageService
 	Postgres             *pgxpool.Pool
 	Redis                *redis.Client
@@ -43,6 +45,17 @@ type ApplicationService interface {
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
+}
+
+type BuildService interface {
+	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
+	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+}
+
+type ReleaseService interface {
+	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error)
+	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 }
 
 type EnvironmentService interface {
@@ -121,11 +134,13 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	})
 	registerEnumRoutes(api)
 	registerApplicationRoutes(api, deps.ApplicationService)
+	registerBuildRoutes(api, deps.BuildService)
 	registerCodeSourceRoutes(api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)
 	registerEnvironmentRoutes(api, deps.EnvironmentService)
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
 	registerFeishuContactRoutes(api, deps.FeishuContactService, deps.FeishuAuthService)
 	registerModuleRoutes(api, deps.ModuleService)
+	registerReleaseRoutes(api, deps.ReleaseService)
 	registerStorageRoutes(api, deps.StorageService)
 
 	return e

@@ -45,6 +45,14 @@ func openAPIDocument() *openapi3.T {
 				Description: "RN module repository binding management.",
 			},
 			{
+				Name:        "Builds",
+				Description: "RN JS bundle build record management.",
+			},
+			{
+				Name:        "Releases",
+				Description: "RN JS bundle release routing and artifact resolution.",
+			},
+			{
 				Name:        "CodeSources",
 				Description: "Code source provider installation and repository discovery.",
 			},
@@ -254,6 +262,55 @@ func openAPIDocument() *openapi3.T {
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.Parameters = moduleIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/builds", &openapi3.PathItem{
+				Get: operation("listBuildRecords", "List RN JS bundle build records", []string{"Builds"}, responses(
+					response(http.StatusOK, "Build record list.", schemaRef("BuildRecordsResponse")),
+					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+				)),
+				Post: func() *openapi3.Operation {
+					op := operation("createBuildRecord", "Create RN JS bundle build record", []string{"Builds"}, responses(
+						response(http.StatusCreated, "Build record created.", schemaRef("BuildRecordDetailResponse")),
+						response(http.StatusBadRequest, "Invalid build request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module or environment not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Build creation payload.", schemaRef("BuildRecordCreateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/releases", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("listReleases", "List RN JS bundle releases", []string{"Releases"}, responses(
+						response(http.StatusOK, "Release list.", schemaRef("ReleasesResponse")),
+						response(http.StatusBadRequest, "Invalid release filter.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = releaseListParameters()
+					return op
+				}(),
+				Post: func() *openapi3.Operation {
+					op := operation("createRelease", "Create RN JS bundle release", []string{"Releases"}, responses(
+						response(http.StatusCreated, "Release created and route activated.", schemaRef("ReleaseDetailResponse")),
+						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Release creation payload.", schemaRef("ReleaseCreateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/releases/resolve", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("resolveReleaseRoute", "Resolve active release route", []string{"Releases"}, responses(
+						response(http.StatusOK, "Resolved release route.", schemaRef("ReleaseResolveResponse")),
+						response(http.StatusBadRequest, "Invalid release resolve request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Release route not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = releaseResolveParameters()
 					return op
 				}(),
 			}),
@@ -531,6 +588,17 @@ func openAPIDocument() *openapi3.T {
 				"ModuleRepositoryRequest":            schemaValue(moduleRepositoryRequestSchema()),
 				"ModuleCreateRequest":                schemaValue(moduleRequestSchema(true)),
 				"ModuleUpdateRequest":                schemaValue(moduleRequestSchema(false)),
+				"BuildRecord":                        schemaValue(buildRecordSchema()),
+				"BuildRecordCreateRequest":           schemaValue(buildRecordCreateRequestSchema()),
+				"BuildRecordDetailResponse":          schemaValue(buildRecordDetailResponseSchema()),
+				"BuildRecordSummary":                 schemaValue(buildRecordSummarySchema()),
+				"BuildRecordsResponse":               schemaValue(buildRecordsResponseSchema()),
+				"ReleaseRecord":                      schemaValue(releaseRecordSchema()),
+				"ReleaseRoute":                       schemaValue(releaseRouteSchema()),
+				"ReleaseCreateRequest":               schemaValue(releaseCreateRequestSchema()),
+				"ReleaseDetailResponse":              schemaValue(releaseDetailResponseSchema()),
+				"ReleaseResolveResponse":             schemaValue(releaseResolveResponseSchema()),
+				"ReleasesResponse":                   schemaValue(releasesResponseSchema()),
 				"CodeSourceApp":                      schemaValue(codeSourceAppSchema()),
 				"CodeSourceAppDetailResponse":        schemaValue(codeSourceAppDetailResponseSchema()),
 				"CodeSourceAppManifest":              schemaValue(codeSourceAppManifestSchema()),
@@ -828,6 +896,43 @@ func moduleListParameters() openapi3.Parameters {
 			Value: openapi3.NewQueryParameter("keyword").
 				WithDescription("Fuzzy module keyword.").
 				WithSchema(stringSchema("Module keyword.")),
+		},
+	}
+}
+
+func releaseListParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("moduleId").
+				WithDescription("Module id filter.").
+				WithSchema(stringSchema("Module id filter.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("environment").
+				WithDescription("Environment code filter.").
+				WithSchema(stringSchema("Environment code filter.")),
+		},
+	}
+}
+
+func releaseResolveParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("moduleId").
+				WithDescription("Module id.").
+				WithRequired(true).
+				WithSchema(stringSchema("Module id.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("environment").
+				WithDescription("Environment code.").
+				WithRequired(true).
+				WithSchema(stringSchema("Environment code.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("identifier").
+				WithDescription("Optional targeting identifier. Falls back to the default route when no identifier route exists.").
+				WithSchema(stringSchema("Targeting identifier.")),
 		},
 	}
 }
@@ -1146,6 +1251,177 @@ func moduleRepositoryRequestSchema() *openapi3.Schema {
 		WithProperty("installationId", stringSchema("Provider installation id that currently grants repository access.")).
 		WithProperty("provider", enumStringSchema("Code source provider.", "github")).
 		WithProperty("sshUrl", stringSchema("Repository SSH clone URL."))
+}
+
+func buildRecordCreateRequestSchema() *openapi3.Schema {
+	return objectSchema("moduleId", "environment").
+		WithProperty("branch", stringSchema("Git branch to build. Defaults to the module default branch when omitted.")).
+		WithProperty("moduleId", stringSchema("Module id to build.")).
+		WithProperty("environment", stringSchema("Environment code whose storage configuration receives artifacts.")).
+		WithProperty("triggerId", stringSchema("Trigger source id. Required when triggerType is pipeline.")).
+		WithProperty("triggerType", enumStringSchema("Build trigger type. Defaults to manual when omitted.", "manual", "pipeline"))
+}
+
+func buildRecordDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("build").
+		WithPropertyRef("build", schemaRef("BuildRecord"))
+}
+
+func buildRecordsResponseSchema() *openapi3.Schema {
+	return objectSchema("builds", "summary").
+		WithPropertyRef("builds", arraySchemaRef("BuildRecord")).
+		WithPropertyRef("summary", schemaRef("BuildRecordSummary"))
+}
+
+func buildRecordSummarySchema() *openapi3.Schema {
+	return objectSchema("failed", "pending", "running", "succeeded", "total").
+		WithProperty("failed", int32Schema("Failed build count.")).
+		WithProperty("pending", int32Schema("Pending build count.")).
+		WithProperty("running", int32Schema("Running build count.")).
+		WithProperty("succeeded", int32Schema("Succeeded build count.")).
+		WithProperty("total", int32Schema("Total build count."))
+}
+
+func buildRecordSchema() *openapi3.Schema {
+	return objectSchema(
+		"id",
+		"applicationName",
+		"moduleId",
+		"moduleName",
+		"environment",
+		"environmentName",
+		"branch",
+		"status",
+		"triggerType",
+		"repositoryProvider",
+		"repositoryId",
+		"repositoryInstallationId",
+		"repositoryFullName",
+		"storageConfigurationId",
+		"storageConfigurationName",
+		"queuedAt",
+		"createdAt",
+		"updatedAt",
+	).
+		WithProperty("applicationName", stringSchema("Application display name used in artifact object keys.")).
+		WithProperty("artifactKey", stringSchema("S3 object key root produced by the worker.")).
+		WithProperty("artifactUrl", stringSchema("Public artifact base URL when storage configuration provides one.")).
+		WithProperty("branch", stringSchema("Git branch selected for this build record.")).
+		WithProperty("createdAt", dateTimeSchema("Build record creation time.")).
+		WithProperty("defaultBranch", stringSchema("Repository branch used by the worker when configured on the module.")).
+		WithProperty("environment", stringSchema("Environment code.")).
+		WithProperty("environmentName", stringSchema("Environment display name used in artifact object keys.")).
+		WithProperty("errorMessage", stringSchema("Build failure message.")).
+		WithProperty("finishedAt", dateTimeSchema("Build finish time.")).
+		WithProperty("id", stringSchema("Build record id.")).
+		WithProperty("moduleId", stringSchema("Module id.")).
+		WithProperty("moduleName", stringSchema("Module display name.")).
+		WithProperty("queuedAt", dateTimeSchema("Build queue time.")).
+		WithProperty("repositoryFullName", stringSchema("Repository full name.")).
+		WithProperty("repositoryId", stringSchema("Provider repository id.")).
+		WithProperty("repositoryInstallationId", stringSchema("Provider installation id.")).
+		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github")).
+		WithProperty("startedAt", dateTimeSchema("Build start time.")).
+		WithProperty("status", enumStringSchema("Build status.", "pending", "running", "succeeded", "failed")).
+		WithProperty("storageConfigurationId", stringSchema("Storage configuration id bound to the environment at queue time.")).
+		WithProperty("storageConfigurationName", stringSchema("Storage configuration display name.")).
+		WithProperty("triggerId", stringSchema("Trigger source id. Empty for manual builds.")).
+		WithProperty("triggerType", enumStringSchema("Build trigger type.", "manual", "pipeline")).
+		WithProperty("updatedAt", dateTimeSchema("Build record update time.")).
+		WithProperty("workerId", stringSchema("Worker id that claimed the build."))
+}
+
+func releaseCreateRequestSchema() *openapi3.Schema {
+	return objectSchema("buildRecordId", "releaseType", "createdByUserId").
+		WithProperty("buildRecordId", stringSchema("Succeeded build record id to release.")).
+		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, targeted updates an identifier route.", "full", "targeted")).
+		WithProperty("identifier", stringSchema("Targeting identifier. Required for targeted releases and forbidden for full releases.")).
+		WithProperty("description", stringSchema("Release description.")).
+		WithProperty("createdByUserId", stringSchema("User id that creates the release."))
+}
+
+func releaseDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("release", "route").
+		WithPropertyRef("release", schemaRef("ReleaseRecord")).
+		WithPropertyRef("route", schemaRef("ReleaseRoute"))
+}
+
+func releasesResponseSchema() *openapi3.Schema {
+	return objectSchema("releases").
+		WithPropertyRef("releases", arraySchemaRef("ReleaseRecord"))
+}
+
+func releaseResolveResponseSchema() *openapi3.Schema {
+	return objectSchema("route").
+		WithPropertyRef("route", schemaRef("ReleaseRoute"))
+}
+
+func releaseRecordSchema() *openapi3.Schema {
+	return objectSchema(
+		"id",
+		"moduleId",
+		"moduleName",
+		"environment",
+		"environmentName",
+		"buildRecordId",
+		"releaseType",
+		"status",
+		"artifactKey",
+		"createdByUserId",
+		"createdAt",
+		"updatedAt",
+	).
+		WithProperty("applicationName", stringSchema("Application display name.")).
+		WithProperty("artifactKey", stringSchema("Released artifact object key root.")).
+		WithProperty("artifactUrl", stringSchema("Released artifact public URL.")).
+		WithProperty("buildRecordId", stringSchema("Build record id used by this release.")).
+		WithProperty("createdAt", dateTimeSchema("Release creation time.")).
+		WithProperty("createdBy", stringSchema("Release creator display name.")).
+		WithProperty("createdByUserId", stringSchema("Release creator user id.")).
+		WithProperty("description", stringSchema("Release description.")).
+		WithProperty("environment", stringSchema("Environment code.")).
+		WithProperty("environmentName", stringSchema("Environment display name.")).
+		WithProperty("id", stringSchema("Release id.")).
+		WithProperty("moduleId", stringSchema("Module id.")).
+		WithProperty("moduleName", stringSchema("Module display name.")).
+		WithProperty("releaseType", enumStringSchema("Release type.", "full", "targeted")).
+		WithProperty("status", enumStringSchema("Release status.", "active", "inactive", "revoked")).
+		WithProperty("updatedAt", dateTimeSchema("Release update time."))
+}
+
+func releaseRouteSchema() *openapi3.Schema {
+	return objectSchema(
+		"id",
+		"moduleId",
+		"moduleName",
+		"environment",
+		"environmentName",
+		"releaseId",
+		"buildRecordId",
+		"routeType",
+		"status",
+		"artifactKey",
+		"createdByUserId",
+		"createdAt",
+		"updatedAt",
+	).
+		WithProperty("applicationName", stringSchema("Application display name.")).
+		WithProperty("artifactKey", stringSchema("Resolved artifact object key root.")).
+		WithProperty("artifactUrl", stringSchema("Resolved artifact public URL.")).
+		WithProperty("buildRecordId", stringSchema("Build record id used by this route.")).
+		WithProperty("createdAt", dateTimeSchema("Route creation time.")).
+		WithProperty("createdBy", stringSchema("Route creator display name.")).
+		WithProperty("createdByUserId", stringSchema("Route creator user id.")).
+		WithProperty("environment", stringSchema("Environment code.")).
+		WithProperty("environmentName", stringSchema("Environment display name.")).
+		WithProperty("id", stringSchema("Release route id.")).
+		WithProperty("identifier", stringSchema("Targeting identifier for identifier routes.")).
+		WithProperty("moduleId", stringSchema("Module id.")).
+		WithProperty("moduleName", stringSchema("Module display name.")).
+		WithProperty("releaseId", stringSchema("Release id.")).
+		WithProperty("routeType", enumStringSchema("Route type.", "default", "identifier")).
+		WithProperty("status", enumStringSchema("Release route status.", "active", "inactive")).
+		WithProperty("updatedAt", dateTimeSchema("Route update time."))
 }
 
 func codeSourcesResponseSchema() *openapi3.Schema {

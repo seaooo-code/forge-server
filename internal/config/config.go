@@ -19,6 +19,7 @@ type Config struct {
 	Postgres  PostgresConfig
 	Redis     RedisConfig
 	Telemetry TelemetryConfig
+	Worker    WorkerConfig
 }
 
 type AppConfig struct {
@@ -86,6 +87,16 @@ type RedisConfig struct {
 	DB       int
 }
 
+type WorkerConfig struct {
+	ArtifactPrefix string
+	BuildTimeout   time.Duration
+	Dockerfile     string
+	ID             string
+	LeaseDuration  time.Duration
+	PollInterval   time.Duration
+	WorkDir        string
+}
+
 func Load() (Config, error) {
 	if err := loadDotenv(); err != nil {
 		return Config{}, err
@@ -117,6 +128,21 @@ func Load() (Config, error) {
 	}
 
 	redisDB, err := intEnv("REDIS_DB", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	workerPollInterval, err := durationEnv("FORGE_WORKER_POLL_INTERVAL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	workerLeaseDuration, err := durationEnv("FORGE_WORKER_LEASE_DURATION", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	workerBuildTimeout, err := durationEnv("FORGE_WORKER_BUILD_TIMEOUT", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
@@ -214,6 +240,15 @@ func Load() (Config, error) {
 			OTLPHeaders:     otelHeaders,
 			OTLPLogEndpoint: stringEnv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", stringEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")),
 			OTLPLogHeaders:  otelLogHeaders,
+		},
+		Worker: WorkerConfig{
+			ArtifactPrefix: strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
+			BuildTimeout:   workerBuildTimeout,
+			Dockerfile:     stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
+			ID:             stringEnv("FORGE_WORKER_ID", ""),
+			LeaseDuration:  workerLeaseDuration,
+			PollInterval:   workerPollInterval,
+			WorkDir:        stringEnv("FORGE_WORKER_WORK_DIR", "/tmp/forge-worker"),
 		},
 	}
 

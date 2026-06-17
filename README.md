@@ -8,6 +8,12 @@
 go run ./cmd/forge-server
 ```
 
+构建执行进程独立部署：
+
+```bash
+go run ./cmd/forge-worker
+```
+
 本地启动后，可以在 Apifox 导入：
 
 ```text
@@ -37,6 +43,8 @@ http://localhost:8080/openapi.json
 - `GET /api/v1/code-sources/:provider/install/callback`：接收 GitHub App 安装完成回调。
 - `DELETE /api/v1/code-sources/:provider/installations`：删除当前登录用户的 GitHub App 安装授权和仓库缓存。
 - `GET /api/v1/code-sources/:provider/repositories/search`：搜索 GitHub App 已授权仓库。
+- `GET /api/v1/builds`：查询 RN JS bundle 构建记录列表。
+- `POST /api/v1/builds`：传入模块 id、环境和可选分支，创建 RN JS bundle 构建记录。
 - `GET /api/v1/storage/configurations`：存储配置列表。
 - `GET /api/v1/storage/configurations/:id`：存储配置详情。
 - `POST /api/v1/storage/configurations/test`：测试存储配置连通性。
@@ -76,6 +84,7 @@ ENV_FILE=/path/to/file go run ./cmd/forge-server
 - `REDIS_*`：Redis 连接配置。
 - `FEISHU_*`：飞书应用凭证、回调地址、授权范围和调试开关。
 - `GITHUB_*`：GitHub App 安装、授权和仓库搜索配置。
+- `FORGE_WORKER_*`：构建 worker 的工作目录、轮询间隔、租约、Dockerfile 和产物对象前缀。
 - `OTEL_*`：OpenTelemetry 追踪和日志导出配置。
 
 飞书 OAuth 至少需要配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URI`，并且需要在飞书开放平台中配置相同的回调地址。配合 `forge-console` 本地开发时，回调地址使用：
@@ -113,6 +122,28 @@ GITHUB_APP_INSTALL_REDIRECT_URL
 
 `GITHUB_APP_ID`、`GITHUB_APP_SLUG` 和 `GITHUB_APP_PRIVATE_KEY` 只作为兼容手动创建 GitHub App 的可选兜底配置；默认不需要手动填写。`GITHUB_API_BASE_URL`、`GITHUB_WEB_URL` 和 `GITHUB_API_VERSION` 默认使用 github.com，可按 GitHub Enterprise 环境覆盖。
 
+## 构建 worker
+
+`forge-server` 只负责通过 `POST /api/v1/builds` 创建 `pending` 构建记录；`forge-worker` 通过 PostgreSQL 轮询并用 `FOR UPDATE SKIP LOCKED` 抢占记录，因此可以和 HTTP 服务独立部署，也可以水平扩容多个 worker。
+
+worker 执行流程：
+
+1. 使用模块绑定的 GitHub App installation id 换取 installation access token。
+2. 构建记录 id 使用创建时间 `yyyyMMddHHmmss`，按构建记录里的 `branch` 拉取模块 Git 仓库；API 未传分支时回落到模块记录里的 `default_branch`。
+3. 在仓库根目录执行 Dockerfile 构建镜像，推荐 Dockerfile 把产物写入最终镜像内 `/app/dist`。
+4. 导出构建产物到 worker 临时目录，并上传到环境绑定的 S3 存储配置。worker 默认从临时容器复制 `/app/dist`；也兼容 `FROM scratch` 产物镜像里通过 `COPY --from=<stage> /app/dist/ /` 暴露到根目录的写法，这类镜像会通过 `docker build --output` 直接导出最终产物层。上传时递归上传产物 `dist` 下的文件和目录；对象路径为 `rn-bundles/{应用名}/{模块名}/{环境名}/{yyyyMMddHHmmss}/{dist 内相对路径}`。
+5. 回写构建记录状态、错误信息、`artifactKey` 和 `artifactUrl`。
+
+worker 常用配置：
+
+- `FORGE_WORKER_ID`：worker 实例标识，默认使用主机名。
+- `FORGE_WORKER_WORK_DIR`：构建临时目录，默认 `/tmp/forge-worker`。
+- `FORGE_WORKER_POLL_INTERVAL`：轮询间隔，默认 `5s`。
+- `FORGE_WORKER_LEASE_DURATION`：任务租约，默认 `30m`；运行时不会短于构建超时。
+- `FORGE_WORKER_BUILD_TIMEOUT`：单次构建超时，默认 `30m`。
+- `FORGE_WORKER_DOCKERFILE`：仓库内 Dockerfile 路径，默认 `Dockerfile`。
+- `FORGE_WORKER_ARTIFACT_PREFIX`：S3 对象前缀，默认 `rn-bundles`。
+
 ## 可观测性
 
 OpenTelemetry 默认关闭。导出追踪到本地 OpenTelemetry Collector：
@@ -142,7 +173,8 @@ OTEL_EXPORTER_OTLP_HEADERS=authorization=<your-clickstack-ingestion-key>
 .
 ├── cmd/
 │   ├── forge-migrate/   # 手动执行数据库迁移的入口
-│   └── forge-server/    # HTTP 服务启动入口
+│   ├── forge-server/    # HTTP 服务启动入口
+│   └── forge-worker/    # RN JS bundle 构建 worker 入口
 ├── internal/
 │   ├── app/             # 应用装配，连接配置、基础设施、服务和 HTTP 服务
 │   ├── config/          # 运行时配置解析与校验
@@ -155,7 +187,8 @@ OTEL_EXPORTER_OTLP_HEADERS=authorization=<your-clickstack-ingestion-key>
 │   │   └── s3/          # S3 兼容对象存储客户端
 │   ├── server/
 │   │   └── http/        # Echo 路由、中间件、处理器和 OpenAPI 文档
-│   └── service/         # 业务用例和仓储接口
+│   ├── service/         # 业务用例和仓储接口
+│   └── worker/          # 构建任务轮询和 git/docker/S3 执行器
 ├── migrations/          # PostgreSQL 迁移文件
 ├── AGENTS.md            # 项目开发约束
 ├── README.md            # 项目说明

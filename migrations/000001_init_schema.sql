@@ -255,6 +255,98 @@ create index idx_modules_repository_full_name
 create index idx_modules_repository_installation
     on modules(repository_provider, provider_installation_id);
 
+create table build_records (
+    id text primary key,
+    module_id text not null references modules(id) on delete restrict,
+    environment_code text not null references environments(code) on delete restrict,
+    storage_configuration_id text not null references storage_configurations(id) on delete restrict,
+    branch text not null default '',
+    status text not null check (status in ('pending', 'running', 'succeeded', 'failed')),
+    trigger_type text not null default 'manual' check (trigger_type in ('manual', 'pipeline')),
+    trigger_id text not null default '',
+    worker_id text not null default '',
+    lease_expires_at timestamptz,
+    artifact_key text not null default '',
+    artifact_url text not null default '',
+    error_message text not null default '',
+    queued_at timestamptz not null default now(),
+    started_at timestamptz,
+    finished_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    check (trigger_type <> 'pipeline' or trigger_id <> '')
+);
+
+create index idx_build_records_status_queue
+    on build_records(status, queued_at);
+
+create index idx_build_records_module
+    on build_records(module_id);
+
+create index idx_build_records_environment
+    on build_records(environment_code);
+
+create index idx_build_records_storage_configuration
+    on build_records(storage_configuration_id);
+
+create index idx_build_records_trigger
+    on build_records(trigger_type, trigger_id);
+
+create table release_records (
+    id text primary key,
+    module_id text not null references modules(id) on delete restrict,
+    environment_code text not null references environments(code) on delete restrict,
+    build_record_id text not null references build_records(id) on delete restrict,
+    release_type text not null check (release_type in ('full', 'targeted')),
+    status text not null check (status in ('active', 'inactive', 'revoked')),
+    artifact_key text not null,
+    artifact_url text not null default '',
+    description text not null default '',
+    created_by_user_id text not null references users(id) on delete restrict,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index idx_release_records_module_environment
+    on release_records(module_id, environment_code, created_at desc);
+
+create index idx_release_records_build
+    on release_records(build_record_id);
+
+create index idx_release_records_created_by
+    on release_records(created_by_user_id);
+
+create table release_routes (
+    id text primary key,
+    module_id text not null references modules(id) on delete restrict,
+    environment_code text not null references environments(code) on delete restrict,
+    release_id text not null references release_records(id) on delete restrict,
+    route_type text not null check (route_type in ('default', 'identifier')),
+    identifier text not null default '',
+    status text not null check (status in ('active', 'inactive')),
+    created_by_user_id text not null references users(id) on delete restrict,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    check (
+        (route_type = 'default' and identifier = '')
+        or (route_type = 'identifier' and identifier <> '')
+    )
+);
+
+create unique index idx_release_routes_default_active
+    on release_routes(module_id, environment_code)
+    where route_type = 'default' and status = 'active';
+
+create unique index idx_release_routes_identifier_active
+    on release_routes(module_id, environment_code, identifier)
+    where route_type = 'identifier' and status = 'active';
+
+create index idx_release_routes_release
+    on release_routes(release_id);
+
+create index idx_release_routes_created_by
+    on release_routes(created_by_user_id);
+
 create function ensure_module_common_binding()
 returns trigger as $$
 begin

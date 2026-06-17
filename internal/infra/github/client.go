@@ -213,6 +213,10 @@ func (c *Client) ListRepositories(ctx context.Context, appConfig domain.CodeSour
 	}, nil
 }
 
+func (c *Client) InstallationAccessToken(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) (string, error) {
+	return c.installationAccessToken(ctx, appConfig, installationID)
+}
+
 func (c *Client) installationAccessToken(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) (string, error) {
 	jwt, err := c.appJWT(appConfig)
 	if err != nil {
