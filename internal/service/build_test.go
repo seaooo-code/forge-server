@@ -108,6 +108,29 @@ func TestBuildServiceCompleteRequiresArtifactKey(t *testing.T) {
 	}
 }
 
+func TestBuildServiceCompleteNormalizesManifestSummary(t *testing.T) {
+	repository := fakeBuildRecordRepository{}
+	service := NewBuildService(&repository)
+
+	_, err := service.CompleteBuildRecord(context.Background(), "build-1", domain.BuildRecordCompletion{
+		ArtifactKey:    " /rn-bundles/app/module/qa/build-1/ ",
+		ArtifactURL:    " https://cdn.example.com/build-1 ",
+		ManifestKey:    " /rn-bundles/app/module/qa/build-1/manifest.json ",
+		FileCount:      2,
+		TotalSizeBytes: 12,
+	})
+	if err != nil {
+		t.Fatalf("complete build record: %v", err)
+	}
+
+	if repository.lastCompletion.ArtifactKey != "rn-bundles/app/module/qa/build-1" ||
+		repository.lastCompletion.ManifestKey != "rn-bundles/app/module/qa/build-1/manifest.json" ||
+		repository.lastCompletion.FileCount != 2 ||
+		repository.lastCompletion.TotalSizeBytes != 12 {
+		t.Fatalf("unexpected completion: %+v", repository.lastCompletion)
+	}
+}
+
 func TestBuildServiceListBuildRecords(t *testing.T) {
 	repository := fakeBuildRecordRepository{
 		records: []domain.BuildRecord{{ID: "build-1"}},
@@ -152,10 +175,85 @@ func TestBuildServiceGetBuildRecordRejectsEmptyID(t *testing.T) {
 	}
 }
 
+func TestBuildServiceGetBuildRecordBuildsArtifactTree(t *testing.T) {
+	repository := fakeBuildRecordRepository{
+		record: domain.BuildRecord{
+			ID:             "build-1",
+			ManifestKey:    "rn-bundles/app/module/qa/build-1/manifest.json",
+			FileCount:      2,
+			TotalSizeBytes: 12,
+		},
+	}
+	reader := fakeArtifactManifestReader{
+		manifest: domain.ArtifactManifest{
+			FileCount:      2,
+			TotalSizeBytes: 12,
+			Files: []domain.ArtifactManifestFile{
+				{
+					Path:        "index.bundle",
+					ObjectKey:   "rn-bundles/app/module/qa/build-1/index.bundle",
+					SizeBytes:   6,
+					ContentType: "application/javascript",
+					SHA256:      "hash-1",
+				},
+				{
+					Path:        "assets/images/icon.png",
+					ObjectKey:   "rn-bundles/app/module/qa/build-1/assets/images/icon.png",
+					SizeBytes:   6,
+					ContentType: "image/png",
+					SHA256:      "hash-2",
+				},
+			},
+		},
+	}
+	service := NewBuildServiceWithManifestReader(&repository, &reader)
+
+	record, err := service.GetBuildRecord(context.Background(), "build-1")
+	if err != nil {
+		t.Fatalf("get build record: %v", err)
+	}
+
+	if record.ArtifactTree.FileCount != 2 || record.ArtifactTree.TotalSizeBytes != 12 {
+		t.Fatalf("unexpected artifact tree summary: %+v", record.ArtifactTree)
+	}
+	if len(record.ArtifactTree.Nodes) != 2 || record.ArtifactTree.Nodes[0].Name != "assets" || record.ArtifactTree.Nodes[1].Name != "index.bundle" {
+		t.Fatalf("unexpected artifact tree nodes: %+v", record.ArtifactTree.Nodes)
+	}
+	assets := record.ArtifactTree.Nodes[0]
+	if assets.SizeBytes != 6 || len(assets.Children) != 1 || assets.Children[0].Name != "images" {
+		t.Fatalf("unexpected nested directory: %+v", assets)
+	}
+	if repository.lastGetID != "build-1" || reader.calls != 1 {
+		t.Fatalf("expected repository and reader calls, got id=%q calls=%d", repository.lastGetID, reader.calls)
+	}
+}
+
+func TestBuildServiceGetBuildRecordKeepsEmptyTreeWhenManifestReadFails(t *testing.T) {
+	repository := fakeBuildRecordRepository{
+		record: domain.BuildRecord{
+			ID:             "build-1",
+			ManifestKey:    "rn-bundles/app/module/qa/build-1/manifest.json",
+			FileCount:      2,
+			TotalSizeBytes: 12,
+		},
+	}
+	reader := fakeArtifactManifestReader{err: errors.New("read failed")}
+	service := NewBuildServiceWithManifestReader(&repository, &reader)
+
+	record, err := service.GetBuildRecord(context.Background(), "build-1")
+	if err != nil {
+		t.Fatalf("get build record: %v", err)
+	}
+	if record.ArtifactTree.FileCount != 2 || record.ArtifactTree.TotalSizeBytes != 12 || len(record.ArtifactTree.Nodes) != 0 {
+		t.Fatalf("expected empty tree with summary, got %+v", record.ArtifactTree)
+	}
+}
+
 type fakeBuildRecordRepository struct {
 	createCalls     int
 	getCalls        int
 	lastCreateInput domain.BuildRecordInput
+	lastCompletion  domain.BuildRecordCompletion
 	lastGetID       string
 	record          domain.BuildRecord
 	records         []domain.BuildRecord
@@ -180,7 +278,15 @@ func (r *fakeBuildRecordRepository) AcquireNextBuildRecord(context.Context, stri
 }
 
 func (r *fakeBuildRecordRepository) CompleteBuildRecord(_ context.Context, id string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
-	return domain.BuildRecord{ID: id, ArtifactKey: completion.ArtifactKey, ArtifactURL: completion.ArtifactURL}, nil
+	r.lastCompletion = completion
+	return domain.BuildRecord{
+		ID:             id,
+		ArtifactKey:    completion.ArtifactKey,
+		ArtifactURL:    completion.ArtifactURL,
+		ManifestKey:    completion.ManifestKey,
+		FileCount:      completion.FileCount,
+		TotalSizeBytes: completion.TotalSizeBytes,
+	}, nil
 }
 
 func (r *fakeBuildRecordRepository) FailBuildRecord(_ context.Context, id string, message string) (domain.BuildRecord, error) {
@@ -195,4 +301,18 @@ func (r *fakeBuildRecordRepository) GetBuildRecord(_ context.Context, id string)
 
 func (r *fakeBuildRecordRepository) ListBuildRecords(context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
 	return r.records, r.summary, nil
+}
+
+type fakeArtifactManifestReader struct {
+	calls    int
+	err      error
+	manifest domain.ArtifactManifest
+}
+
+func (r *fakeArtifactManifestReader) ReadArtifactManifest(context.Context, domain.BuildRecord) (domain.ArtifactManifest, error) {
+	r.calls++
+	if r.err != nil {
+		return domain.ArtifactManifest{}, r.err
+	}
+	return r.manifest, nil
 }

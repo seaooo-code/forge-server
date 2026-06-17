@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -224,6 +226,45 @@ func TestArtifactFilesIncludesDistRootFilesAndDirectories(t *testing.T) {
 	}
 	if len(files) != 2 || !got["index.bundle"] || !got["assets/image.png"] {
 		t.Fatalf("expected root and nested files, got %#v", files)
+	}
+}
+
+func TestArtifactManifestFileIncludesNestedMetadata(t *testing.T) {
+	artifactRoot := t.TempDir()
+	nestedDir := filepath.Join(artifactRoot, "assets", "images", "icons")
+	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+		t.Fatalf("create nested dir: %v", err)
+	}
+	content := []byte("image")
+	path := filepath.Join(nestedDir, "home.png")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	file, err := artifactManifestFile(artifactFile{
+		key:  "assets/images/icons/home.png",
+		path: path,
+	}, "rn-bundles/app/module/qa/build-1/assets/images/icons/home.png")
+	if err != nil {
+		t.Fatalf("artifact manifest file: %v", err)
+	}
+
+	if file.Path != "assets/images/icons/home.png" ||
+		file.ObjectKey != "rn-bundles/app/module/qa/build-1/assets/images/icons/home.png" ||
+		file.SizeBytes != int64(len(content)) ||
+		file.ContentType != "image/png" ||
+		file.SHA256 != fmt.Sprintf("%x", sha256.Sum256(content)) {
+		t.Fatalf("unexpected manifest file: %+v", file)
+	}
+}
+
+func TestNewArtifactManifestAndManifestKey(t *testing.T) {
+	manifest := newArtifactManifest("rn-bundles/app/module/qa/build-1")
+	if manifest.Version != 1 || manifest.ArtifactKey != "rn-bundles/app/module/qa/build-1" || len(manifest.Files) != 0 {
+		t.Fatalf("unexpected manifest: %+v", manifest)
+	}
+	if got := artifactManifestKey("rn-bundles/app/module/qa/build-1/"); got != "rn-bundles/app/module/qa/build-1/manifest.json" {
+		t.Fatalf("unexpected manifest key %q", got)
 	}
 }
 

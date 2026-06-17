@@ -2,6 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,12 +21,21 @@ type BuildRecordRepository interface {
 	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
 }
 
+type ArtifactManifestReader interface {
+	ReadArtifactManifest(ctx context.Context, record domain.BuildRecord) (domain.ArtifactManifest, error)
+}
+
 type BuildService struct {
-	repository BuildRecordRepository
+	manifestReader ArtifactManifestReader
+	repository     BuildRecordRepository
 }
 
 func NewBuildService(repository BuildRecordRepository) *BuildService {
 	return &BuildService{repository: repository}
+}
+
+func NewBuildServiceWithManifestReader(repository BuildRecordRepository, manifestReader ArtifactManifestReader) *BuildService {
+	return &BuildService{repository: repository, manifestReader: manifestReader}
 }
 
 func (s *BuildService) CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
@@ -42,7 +55,25 @@ func (s *BuildService) GetBuildRecord(ctx context.Context, id string) (domain.Bu
 	if normalizedID == "" {
 		return domain.BuildRecord{}, domain.ErrBuildRecordNotFound
 	}
-	return s.repository.GetBuildRecord(ctx, normalizedID)
+	record, err := s.repository.GetBuildRecord(ctx, normalizedID)
+	if err != nil {
+		return domain.BuildRecord{}, err
+	}
+	record.ArtifactTree = domain.ArtifactTree{
+		FileCount:      record.FileCount,
+		TotalSizeBytes: record.TotalSizeBytes,
+		Nodes:          []domain.ArtifactTreeNode{},
+	}
+	if record.ManifestKey == "" || s.manifestReader == nil {
+		return record, nil
+	}
+
+	manifest, err := s.manifestReader.ReadArtifactManifest(ctx, record)
+	if err != nil {
+		return record, nil
+	}
+	record.ArtifactTree = buildArtifactTree(manifest)
+	return record, nil
 }
 
 func (s *BuildService) AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration) (domain.BuildRecord, error) {
@@ -60,11 +91,14 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, compl
 	}
 
 	normalized := domain.BuildRecordCompletion{
-		ArtifactKey:  strings.Trim(strings.TrimSpace(completion.ArtifactKey), "/"),
-		ArtifactURL:  strings.TrimSpace(completion.ArtifactURL),
-		ErrorMessage: strings.TrimSpace(completion.ErrorMessage),
+		ArtifactKey:    strings.Trim(strings.TrimSpace(completion.ArtifactKey), "/"),
+		ArtifactURL:    strings.TrimSpace(completion.ArtifactURL),
+		ManifestKey:    strings.Trim(strings.TrimSpace(completion.ManifestKey), "/"),
+		FileCount:      completion.FileCount,
+		TotalSizeBytes: completion.TotalSizeBytes,
+		ErrorMessage:   strings.TrimSpace(completion.ErrorMessage),
 	}
-	if normalized.ArtifactKey == "" {
+	if normalized.ArtifactKey == "" || normalized.FileCount < 0 || normalized.TotalSizeBytes < 0 {
 		return domain.BuildRecord{}, domain.ErrInvalidBuildInput
 	}
 	return s.repository.CompleteBuildRecord(ctx, normalizedID, normalized)
@@ -81,6 +115,100 @@ func (s *BuildService) FailBuildRecord(ctx context.Context, id string, message s
 		normalizedMessage = "build failed"
 	}
 	return s.repository.FailBuildRecord(ctx, normalizedID, normalizedMessage)
+}
+
+func DecodeArtifactManifest(reader io.Reader) (domain.ArtifactManifest, error) {
+	var manifest domain.ArtifactManifest
+	if err := json.NewDecoder(reader).Decode(&manifest); err != nil {
+		return domain.ArtifactManifest{}, err
+	}
+	return manifest, nil
+}
+
+func buildArtifactTree(manifest domain.ArtifactManifest) domain.ArtifactTree {
+	root := artifactTreeBuilderNode{
+		children: map[string]*artifactTreeBuilderNode{},
+		node: domain.ArtifactTreeNode{
+			Type: "directory",
+		},
+	}
+
+	for _, file := range manifest.Files {
+		relativePath := cleanArtifactRelativePath(file.Path)
+		if relativePath == "" {
+			continue
+		}
+		segments := strings.Split(relativePath, "/")
+		current := &root
+		for index, segment := range segments {
+			if segment == "" || segment == "." {
+				continue
+			}
+			childPath := strings.Join(segments[:index+1], "/")
+			child, ok := current.children[segment]
+			if !ok {
+				nodeType := "directory"
+				if index == len(segments)-1 {
+					nodeType = "file"
+				}
+				child = &artifactTreeBuilderNode{
+					children: map[string]*artifactTreeBuilderNode{},
+					node: domain.ArtifactTreeNode{
+						Name: segment,
+						Path: childPath,
+						Type: nodeType,
+					},
+				}
+				current.children[segment] = child
+			}
+			child.node.SizeBytes += file.SizeBytes
+			if index == len(segments)-1 {
+				child.node.Type = "file"
+				child.node.ObjectKey = file.ObjectKey
+				child.node.ContentType = file.ContentType
+				child.node.SHA256 = file.SHA256
+			}
+			current = child
+		}
+	}
+
+	return domain.ArtifactTree{
+		FileCount:      manifest.FileCount,
+		TotalSizeBytes: manifest.TotalSizeBytes,
+		Nodes:          artifactTreeNodes(root.children),
+	}
+}
+
+type artifactTreeBuilderNode struct {
+	children map[string]*artifactTreeBuilderNode
+	node     domain.ArtifactTreeNode
+}
+
+func artifactTreeNodes(children map[string]*artifactTreeBuilderNode) []domain.ArtifactTreeNode {
+	names := make([]string, 0, len(children))
+	for name := range children {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	nodes := make([]domain.ArtifactTreeNode, 0, len(names))
+	for _, name := range names {
+		child := children[name]
+		node := child.node
+		if node.Type == "directory" {
+			node.Children = artifactTreeNodes(child.children)
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+func cleanArtifactRelativePath(value string) string {
+	cleaned := path.Clean(strings.TrimSpace(strings.ReplaceAll(value, "\\", "/")))
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." || strings.HasPrefix(cleaned, "/") {
+		return ""
+	}
+	return cleaned
 }
 
 func validateBuildRecordInput(input domain.BuildRecordInput) (domain.BuildRecordInput, error) {

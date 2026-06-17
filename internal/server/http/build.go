@@ -31,32 +31,53 @@ type buildRecordsResponse struct {
 }
 
 type buildRecordResponse struct {
-	ApplicationName          string `json:"applicationName"`
-	ArtifactKey              string `json:"artifactKey"`
-	ArtifactURL              string `json:"artifactUrl"`
-	CreatedAt                string `json:"createdAt"`
-	Branch                   string `json:"branch"`
-	DefaultBranch            string `json:"defaultBranch"`
-	Environment              string `json:"environment"`
-	EnvironmentName          string `json:"environmentName"`
-	ErrorMessage             string `json:"errorMessage"`
-	FinishedAt               string `json:"finishedAt"`
-	ID                       string `json:"id"`
-	ModuleID                 string `json:"moduleId"`
-	ModuleName               string `json:"moduleName"`
-	QueuedAt                 string `json:"queuedAt"`
-	RepositoryFullName       string `json:"repositoryFullName"`
-	RepositoryID             string `json:"repositoryId"`
-	RepositoryInstallationID string `json:"repositoryInstallationId"`
-	RepositoryProvider       string `json:"repositoryProvider"`
-	StartedAt                string `json:"startedAt"`
-	Status                   string `json:"status"`
-	StorageConfigurationID   string `json:"storageConfigurationId"`
-	StorageConfigurationName string `json:"storageConfigurationName"`
-	TriggerID                string `json:"triggerId"`
-	TriggerType              string `json:"triggerType"`
-	UpdatedAt                string `json:"updatedAt"`
-	WorkerID                 string `json:"workerId"`
+	ApplicationName          string                `json:"applicationName"`
+	ArtifactTree             *artifactTreeResponse `json:"artifactTree,omitempty"`
+	ArtifactKey              string                `json:"artifactKey"`
+	ArtifactURL              string                `json:"artifactUrl"`
+	CreatedAt                string                `json:"createdAt"`
+	Branch                   string                `json:"branch"`
+	DefaultBranch            string                `json:"defaultBranch"`
+	Environment              string                `json:"environment"`
+	EnvironmentName          string                `json:"environmentName"`
+	ErrorMessage             string                `json:"errorMessage"`
+	FinishedAt               string                `json:"finishedAt"`
+	ID                       string                `json:"id"`
+	ModuleID                 string                `json:"moduleId"`
+	ModuleName               string                `json:"moduleName"`
+	ManifestKey              string                `json:"manifestKey"`
+	FileCount                int                   `json:"fileCount"`
+	TotalSizeBytes           int64                 `json:"totalSizeBytes"`
+	QueuedAt                 string                `json:"queuedAt"`
+	RepositoryFullName       string                `json:"repositoryFullName"`
+	RepositoryID             string                `json:"repositoryId"`
+	RepositoryInstallationID string                `json:"repositoryInstallationId"`
+	RepositoryProvider       string                `json:"repositoryProvider"`
+	StartedAt                string                `json:"startedAt"`
+	Status                   string                `json:"status"`
+	StorageConfigurationID   string                `json:"storageConfigurationId"`
+	StorageConfigurationName string                `json:"storageConfigurationName"`
+	TriggerID                string                `json:"triggerId"`
+	TriggerType              string                `json:"triggerType"`
+	UpdatedAt                string                `json:"updatedAt"`
+	WorkerID                 string                `json:"workerId"`
+}
+
+type artifactTreeResponse struct {
+	FileCount      int                        `json:"fileCount"`
+	TotalSizeBytes int64                      `json:"totalSizeBytes"`
+	Nodes          []artifactTreeNodeResponse `json:"nodes"`
+}
+
+type artifactTreeNodeResponse struct {
+	Children    []artifactTreeNodeResponse `json:"children,omitempty"`
+	ContentType string                     `json:"contentType,omitempty"`
+	Name        string                     `json:"name"`
+	ObjectKey   string                     `json:"objectKey,omitempty"`
+	Path        string                     `json:"path"`
+	SHA256      string                     `json:"sha256,omitempty"`
+	SizeBytes   int64                      `json:"sizeBytes"`
+	Type        string                     `json:"type"`
 }
 
 type buildRecordSummaryResponse struct {
@@ -101,7 +122,7 @@ func (h buildHandler) get(c echo.Context) error {
 		return buildErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusOK, buildRecordDetailResponse{Build: newBuildRecordResponse(record)})
+	return c.JSON(http.StatusOK, buildRecordDetailResponse{Build: newBuildRecordDetailResponse(record)})
 }
 
 func (h buildHandler) create(c echo.Context) error {
@@ -154,7 +175,15 @@ func newBuildRecordResponses(records []domain.BuildRecord) []buildRecordResponse
 }
 
 func newBuildRecordResponse(record domain.BuildRecord) buildRecordResponse {
-	return buildRecordResponse{
+	return newBuildRecordResponseWithTree(record, false)
+}
+
+func newBuildRecordDetailResponse(record domain.BuildRecord) buildRecordResponse {
+	return newBuildRecordResponseWithTree(record, true)
+}
+
+func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTree bool) buildRecordResponse {
+	response := buildRecordResponse{
 		ApplicationName:          record.ApplicationName,
 		ArtifactKey:              record.ArtifactKey,
 		ArtifactURL:              record.ArtifactURL,
@@ -168,6 +197,9 @@ func newBuildRecordResponse(record domain.BuildRecord) buildRecordResponse {
 		ID:                       record.ID,
 		ModuleID:                 record.ModuleID,
 		ModuleName:               record.ModuleName,
+		ManifestKey:              record.ManifestKey,
+		FileCount:                record.FileCount,
+		TotalSizeBytes:           record.TotalSizeBytes,
 		QueuedAt:                 formatTime(record.QueuedAt),
 		RepositoryFullName:       record.RepositoryFullName,
 		RepositoryID:             int64String(record.RepositoryID),
@@ -181,6 +213,40 @@ func newBuildRecordResponse(record domain.BuildRecord) buildRecordResponse {
 		TriggerType:              string(record.TriggerType),
 		UpdatedAt:                formatTime(record.UpdatedAt),
 		WorkerID:                 record.WorkerID,
+	}
+	if includeArtifactTree {
+		tree := newArtifactTreeResponse(record.ArtifactTree)
+		response.ArtifactTree = &tree
+	}
+	return response
+}
+
+func newArtifactTreeResponse(tree domain.ArtifactTree) artifactTreeResponse {
+	nodes := make([]artifactTreeNodeResponse, 0, len(tree.Nodes))
+	for _, node := range tree.Nodes {
+		nodes = append(nodes, newArtifactTreeNodeResponse(node))
+	}
+	return artifactTreeResponse{
+		FileCount:      tree.FileCount,
+		TotalSizeBytes: tree.TotalSizeBytes,
+		Nodes:          nodes,
+	}
+}
+
+func newArtifactTreeNodeResponse(node domain.ArtifactTreeNode) artifactTreeNodeResponse {
+	children := make([]artifactTreeNodeResponse, 0, len(node.Children))
+	for _, child := range node.Children {
+		children = append(children, newArtifactTreeNodeResponse(child))
+	}
+	return artifactTreeNodeResponse{
+		Children:    children,
+		ContentType: node.ContentType,
+		Name:        node.Name,
+		ObjectKey:   node.ObjectKey,
+		Path:        node.Path,
+		SHA256:      node.SHA256,
+		SizeBytes:   node.SizeBytes,
+		Type:        node.Type,
 	}
 }
 

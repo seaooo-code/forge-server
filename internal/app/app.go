@@ -70,7 +70,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	moduleRepository := postgres.NewModuleRepository(postgresPool)
 	moduleService := service.NewModuleService(moduleRepository)
 	buildRepository := postgres.NewBuildRepository(postgresPool)
-	buildService := service.NewBuildService(buildRepository)
+	buildService := service.NewBuildServiceWithManifestReader(buildRepository, s3infra.NewManifestReader())
 	releaseRepository := postgres.NewReleaseRepository(postgresPool)
 	releaseService := service.NewReleaseService(releaseRepository)
 	storageRepository := postgres.NewStorageRepository(postgresPool)

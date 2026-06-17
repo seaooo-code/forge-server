@@ -2,9 +2,11 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -13,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
@@ -98,13 +101,17 @@ func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (doma
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
-	if err := e.uploadOutput(ctx, record, artifactRoot, artifactKey); err != nil {
+	manifest, err := e.uploadOutput(ctx, record, artifactRoot, artifactKey)
+	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
 
 	return domain.BuildRecordCompletion{
-		ArtifactKey: artifactKey,
-		ArtifactURL: artifactURL(record.StoragePublicBaseURL, artifactKey),
+		ArtifactKey:    artifactKey,
+		ArtifactURL:    artifactURL(record.StoragePublicBaseURL, artifactKey),
+		ManifestKey:    artifactManifestKey(artifactKey),
+		FileCount:      manifest.FileCount,
+		TotalSizeBytes: manifest.TotalSizeBytes,
 	}, nil
 }
 
@@ -376,7 +383,7 @@ func (e *Executor) cleanupDockerImage(imageTag string) {
 	}
 }
 
-func (e *Executor) uploadOutput(ctx context.Context, record domain.BuildRecord, artifactRoot string, artifactKey string) error {
+func (e *Executor) uploadOutput(ctx context.Context, record domain.BuildRecord, artifactRoot string, artifactKey string) (domain.ArtifactManifest, error) {
 	client, err := s3infra.NewClient(s3infra.Options{
 		Region:          record.StorageRegion,
 		Bucket:          record.StorageBucket,
@@ -385,30 +392,80 @@ func (e *Executor) uploadOutput(ctx context.Context, record domain.BuildRecord, 
 		SecretAccessKey: record.StorageSecretAccessKey,
 	})
 	if err != nil {
-		return err
+		return domain.ArtifactManifest{}, err
 	}
 
 	files, err := artifactFiles(artifactRoot)
 	if err != nil {
-		return fmt.Errorf("list build artifacts: %w", err)
+		return domain.ArtifactManifest{}, fmt.Errorf("list build artifacts: %w", err)
 	}
+	if len(files) == 0 {
+		return domain.ArtifactManifest{}, errors.New("docker build produced no artifacts")
+	}
+
+	manifest := newArtifactManifest(artifactKey)
 	for _, artifact := range files {
 		objectKey := strings.TrimRight(artifactKey, "/") + "/" + strings.TrimLeft(artifact.key, "/")
+		manifestFile, err := artifactManifestFile(artifact, objectKey)
+		if err != nil {
+			return domain.ArtifactManifest{}, err
+		}
 
 		file, err := os.Open(artifact.path)
 		if err != nil {
-			return err
+			return domain.ArtifactManifest{}, err
 		}
-		defer file.Close()
+		if err := client.PutObject(ctx, objectKey, file, manifestFile.ContentType); err != nil {
+			_ = file.Close()
+			return domain.ArtifactManifest{}, err
+		}
+		if err := file.Close(); err != nil {
+			return domain.ArtifactManifest{}, err
+		}
 
-		if err := client.PutObject(ctx, objectKey, file, contentType(artifact.path)); err != nil {
-			return err
-		}
+		manifest.Files = append(manifest.Files, manifestFile)
+		manifest.FileCount++
+		manifest.TotalSizeBytes += manifestFile.SizeBytes
 	}
-	if len(files) == 0 {
-		return errors.New("docker build produced no artifacts")
+	manifestPayload, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return domain.ArtifactManifest{}, fmt.Errorf("encode artifact manifest: %w", err)
 	}
-	return nil
+	if err := client.PutObject(ctx, artifactManifestKey(artifactKey), strings.NewReader(string(manifestPayload)), "application/json"); err != nil {
+		return domain.ArtifactManifest{}, err
+	}
+	return manifest, nil
+}
+
+func newArtifactManifest(artifactKey string) domain.ArtifactManifest {
+	return domain.ArtifactManifest{
+		Version:     1,
+		ArtifactKey: artifactKey,
+		GeneratedAt: time.Now().UTC(),
+		Files:       []domain.ArtifactManifestFile{},
+	}
+}
+
+func artifactManifestFile(artifact artifactFile, objectKey string) (domain.ArtifactManifestFile, error) {
+	file, err := os.Open(artifact.path)
+	if err != nil {
+		return domain.ArtifactManifestFile{}, err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	size, err := io.Copy(hash, file)
+	if err != nil {
+		return domain.ArtifactManifestFile{}, err
+	}
+
+	return domain.ArtifactManifestFile{
+		Path:        artifact.key,
+		ObjectKey:   objectKey,
+		SizeBytes:   size,
+		ContentType: contentType(artifact.path),
+		SHA256:      fmt.Sprintf("%x", hash.Sum(nil)),
+	}, nil
 }
 
 type artifactFile struct {
@@ -545,6 +602,10 @@ func artifactURL(publicBaseURL string, artifactKey string) string {
 		return ""
 	}
 	return strings.TrimRight(publicBaseURL, "/") + "/" + artifactKey
+}
+
+func artifactManifestKey(artifactKey string) string {
+	return strings.TrimRight(strings.TrimSpace(artifactKey), "/") + "/manifest.json"
 }
 
 func contentType(path string) string {

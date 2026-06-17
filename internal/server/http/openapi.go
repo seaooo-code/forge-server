@@ -600,6 +600,8 @@ func openAPIDocument() *openapi3.T {
 				"ModuleCreateRequest":                schemaValue(moduleRequestSchema(true)),
 				"ModuleUpdateRequest":                schemaValue(moduleRequestSchema(false)),
 				"BuildRecord":                        schemaValue(buildRecordSchema()),
+				"BuildArtifactTree":                  schemaValue(buildArtifactTreeSchema()),
+				"BuildArtifactTreeNode":              schemaValue(buildArtifactTreeNodeSchema()),
 				"BuildRecordCreateRequest":           schemaValue(buildRecordCreateRequestSchema()),
 				"BuildRecordDetailResponse":          schemaValue(buildRecordDetailResponseSchema()),
 				"BuildRecordSummary":                 schemaValue(buildRecordSummarySchema()),
@@ -1325,6 +1327,7 @@ func buildRecordSchema() *openapi3.Schema {
 		"updatedAt",
 	).
 		WithProperty("applicationName", stringSchema("Application display name used in artifact object keys.")).
+		WithPropertyRef("artifactTree", schemaRef("BuildArtifactTree")).
 		WithProperty("artifactKey", stringSchema("S3 object key root produced by the worker.")).
 		WithProperty("artifactUrl", stringSchema("Public artifact base URL when storage configuration provides one.")).
 		WithProperty("branch", stringSchema("Git branch selected for this build record.")).
@@ -1335,6 +1338,9 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("errorMessage", stringSchema("Build failure message.")).
 		WithProperty("finishedAt", dateTimeSchema("Build finish time.")).
 		WithProperty("id", stringSchema("Build record id.")).
+		WithProperty("manifestKey", stringSchema("S3 object key of the artifact manifest.")).
+		WithProperty("fileCount", int32Schema("Uploaded artifact file count.")).
+		WithProperty("totalSizeBytes", int64Schema("Total uploaded artifact file size in bytes.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("queuedAt", dateTimeSchema("Build queue time.")).
@@ -1350,6 +1356,27 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("triggerType", enumStringSchema("Build trigger type.", "manual", "pipeline")).
 		WithProperty("updatedAt", dateTimeSchema("Build record update time.")).
 		WithProperty("workerId", stringSchema("Worker id that claimed the build."))
+}
+
+func buildArtifactTreeSchema() *openapi3.Schema {
+	return objectSchema("fileCount", "totalSizeBytes", "nodes").
+		WithProperty("fileCount", int32Schema("Uploaded artifact file count.")).
+		WithProperty("totalSizeBytes", int64Schema("Total uploaded artifact file size in bytes.")).
+		WithPropertyRef("nodes", arraySchemaRef("BuildArtifactTreeNode"))
+}
+
+func buildArtifactTreeNodeSchema() *openapi3.Schema {
+	children := openapi3.NewArraySchema()
+	children.Items = schemaRef("BuildArtifactTreeNode")
+	return objectSchema("name", "path", "type", "sizeBytes").
+		WithProperty("children", children).
+		WithProperty("contentType", stringSchema("File content type.")).
+		WithProperty("name", stringSchema("File or directory name.")).
+		WithProperty("objectKey", stringSchema("S3 object key for file nodes.")).
+		WithProperty("path", stringSchema("Relative artifact path.")).
+		WithProperty("sha256", stringSchema("File SHA-256 digest.")).
+		WithProperty("sizeBytes", int64Schema("File size or aggregated directory size in bytes.")).
+		WithProperty("type", enumStringSchema("Artifact tree node type.", "directory", "file"))
 }
 
 func releaseCreateRequestSchema() *openapi3.Schema {

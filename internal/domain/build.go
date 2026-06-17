@@ -50,6 +50,10 @@ type BuildRecord struct {
 	StorageSecretAccessKey   string
 	ArtifactKey              string
 	ArtifactURL              string
+	ManifestKey              string
+	FileCount                int
+	TotalSizeBytes           int64
+	ArtifactTree             ArtifactTree
 	Status                   BuildStatus
 	TriggerID                string
 	TriggerType              BuildTriggerType
@@ -79,9 +83,46 @@ type BuildRecordSummary struct {
 }
 
 type BuildRecordCompletion struct {
-	ArtifactKey  string
-	ArtifactURL  string
-	ErrorMessage string
+	ArtifactKey    string
+	ArtifactURL    string
+	ManifestKey    string
+	FileCount      int
+	TotalSizeBytes int64
+	ErrorMessage   string
+}
+
+type ArtifactManifest struct {
+	Version        int                    `json:"version"`
+	ArtifactKey    string                 `json:"artifactKey"`
+	GeneratedAt    time.Time              `json:"generatedAt"`
+	FileCount      int                    `json:"fileCount"`
+	TotalSizeBytes int64                  `json:"totalSizeBytes"`
+	Files          []ArtifactManifestFile `json:"files"`
+}
+
+type ArtifactManifestFile struct {
+	Path        string `json:"path"`
+	ObjectKey   string `json:"objectKey"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	ContentType string `json:"contentType"`
+	SHA256      string `json:"sha256"`
+}
+
+type ArtifactTree struct {
+	FileCount      int                `json:"fileCount"`
+	TotalSizeBytes int64              `json:"totalSizeBytes"`
+	Nodes          []ArtifactTreeNode `json:"nodes"`
+}
+
+type ArtifactTreeNode struct {
+	Name        string             `json:"name"`
+	Path        string             `json:"path"`
+	Type        string             `json:"type"`
+	SizeBytes   int64              `json:"sizeBytes"`
+	ObjectKey   string             `json:"objectKey,omitempty"`
+	ContentType string             `json:"contentType,omitempty"`
+	SHA256      string             `json:"sha256,omitempty"`
+	Children    []ArtifactTreeNode `json:"children,omitempty"`
 }
 
 func IsValidBuildStatus(status BuildStatus) bool {

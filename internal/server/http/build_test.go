@@ -126,6 +126,12 @@ func TestGetBuildRecord(t *testing.T) {
 	if response.Build.ID != "build-1" || response.Build.ModuleID != "module-profile" {
 		t.Fatalf("unexpected build detail response: %#v", response.Build)
 	}
+	if response.Build.ManifestKey != "rn-bundles/seaooo/profile/QA/build-1/manifest.json" ||
+		response.Build.FileCount != 2 ||
+		response.Build.TotalSizeBytes != 12 ||
+		len(response.Build.ArtifactTree.Nodes) != 1 {
+		t.Fatalf("unexpected artifact tree response: %#v", response.Build)
+	}
 	if service.lastGetID != "build-1" {
 		t.Fatalf("expected build id to be passed to service, got %q", service.lastGetID)
 	}
@@ -242,12 +248,40 @@ func testHTTPBuildRecord() domain.BuildRecord {
 		StorageConfigurationID:   "storage-1",
 		StorageConfigurationName: "QA 存储",
 		StorageSecretAccessKey:   "secret",
-		Status:                   domain.BuildStatusPending,
-		TriggerID:                "pipeline-main",
-		TriggerType:              domain.BuildTriggerTypePipeline,
-		QueuedAt:                 time.Date(2026, 6, 16, 10, 59, 0, 0, time.UTC),
-		StartedAt:                &startedAt,
-		CreatedAt:                time.Date(2026, 6, 16, 10, 59, 0, 0, time.UTC),
-		UpdatedAt:                time.Date(2026, 6, 16, 10, 59, 0, 0, time.UTC),
+		ArtifactKey:              "rn-bundles/seaooo/profile/QA/build-1",
+		ArtifactURL:              "https://cdn.example.com/rn-bundles/seaooo/profile/QA/build-1",
+		ManifestKey:              "rn-bundles/seaooo/profile/QA/build-1/manifest.json",
+		FileCount:                2,
+		TotalSizeBytes:           12,
+		ArtifactTree: domain.ArtifactTree{
+			FileCount:      2,
+			TotalSizeBytes: 12,
+			Nodes: []domain.ArtifactTreeNode{
+				{
+					Name:      "assets",
+					Path:      "assets",
+					Type:      "directory",
+					SizeBytes: 12,
+					Children: []domain.ArtifactTreeNode{
+						{
+							Name:        "icon.png",
+							Path:        "assets/icon.png",
+							Type:        "file",
+							SizeBytes:   12,
+							ObjectKey:   "rn-bundles/seaooo/profile/QA/build-1/assets/icon.png",
+							ContentType: "image/png",
+							SHA256:      "hash",
+						},
+					},
+				},
+			},
+		},
+		Status:      domain.BuildStatusPending,
+		TriggerID:   "pipeline-main",
+		TriggerType: domain.BuildTriggerTypePipeline,
+		QueuedAt:    time.Date(2026, 6, 16, 10, 59, 0, 0, time.UTC),
+		StartedAt:   &startedAt,
+		CreatedAt:   time.Date(2026, 6, 16, 10, 59, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 6, 16, 10, 59, 0, 0, time.UTC),
 	}
 }

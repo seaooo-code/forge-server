@@ -234,7 +234,10 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, co
 				lease_expires_at = null,
 				artifact_key = $2,
 				artifact_url = $3,
-				error_message = $4,
+				manifest_key = $4,
+				file_count = $5,
+				total_size_bytes = $6,
+				error_message = $7,
 				finished_at = now(),
 				updated_at = now()
 			where id = $1
@@ -245,7 +248,7 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, co
 		join applications a on a.id = m.application_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ErrorMessage))
+	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage))
 	if err != nil {
 		return domain.BuildRecord{}, err
 	}
@@ -307,6 +310,9 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			s.secret_access_key as storage_secret_access_key,
 			br.artifact_key,
 			br.artifact_url,
+			br.manifest_key,
+			br.file_count,
+			br.total_size_bytes,
 			br.status,
 			br.trigger_type,
 			br.trigger_id,
@@ -349,6 +355,9 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.StorageSecretAccessKey,
 		&record.ArtifactKey,
 		&record.ArtifactURL,
+		&record.ManifestKey,
+		&record.FileCount,
+		&record.TotalSizeBytes,
 		&record.Status,
 		&record.TriggerType,
 		&record.TriggerID,
