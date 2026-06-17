@@ -155,6 +155,16 @@ func (r *BuildRepository) ListBuildRecords(ctx context.Context) ([]domain.BuildR
 	return records, summary, nil
 }
 
+func (r *BuildRepository) GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error) {
+	return scanBuildRecord(r.pool.QueryRow(ctx, buildRecordSelectSQL("build_records", `
+		join modules m on m.id = br.module_id
+		join applications a on a.id = m.application_id
+		join environments e on e.code = br.environment_code
+		join storage_configurations s on s.id = br.storage_configuration_id
+		where br.id = $1
+	`), id))
+}
+
 func (r *BuildRepository) buildRecordSummary(ctx context.Context) (domain.BuildRecordSummary, error) {
 	var summary domain.BuildRecordSummary
 	if err := r.pool.QueryRow(ctx, `

@@ -49,6 +49,7 @@ type ApplicationService interface {
 
 type BuildService interface {
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
+	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
 	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
 }
 

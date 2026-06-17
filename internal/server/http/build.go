@@ -72,6 +72,7 @@ func registerBuildRoutes(group *echo.Group, service BuildService) {
 
 	group.GET("/builds", handler.list)
 	group.POST("/builds", handler.create)
+	group.GET("/builds/:id", handler.get)
 }
 
 func (h buildHandler) list(c echo.Context) error {
@@ -88,6 +89,19 @@ func (h buildHandler) list(c echo.Context) error {
 		Builds:  newBuildRecordResponses(records),
 		Summary: newBuildRecordSummaryResponse(summary),
 	})
+}
+
+func (h buildHandler) get(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "build service unavailable"})
+	}
+
+	record, err := h.service.GetBuildRecord(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return buildErrorResponse(c, err)
+	}
+
+	return c.JSON(http.StatusOK, buildRecordDetailResponse{Build: newBuildRecordResponse(record)})
 }
 
 func (h buildHandler) create(c echo.Context) error {

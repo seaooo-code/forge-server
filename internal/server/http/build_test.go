@@ -102,6 +102,55 @@ func TestListBuildRecords(t *testing.T) {
 	}
 }
 
+func TestGetBuildRecord(t *testing.T) {
+	service := &fakeBuildService{
+		record: testHTTPBuildRecord(),
+	}
+	e := New(config.Config{}, Dependencies{
+		BuildService: service,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/build-1", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response buildRecordDetailResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Build.ID != "build-1" || response.Build.ModuleID != "module-profile" {
+		t.Fatalf("unexpected build detail response: %#v", response.Build)
+	}
+	if service.lastGetID != "build-1" {
+		t.Fatalf("expected build id to be passed to service, got %q", service.lastGetID)
+	}
+	if strings.Contains(rec.Body.String(), "secret") {
+		t.Fatalf("build response must not expose storage secrets: %s", rec.Body.String())
+	}
+}
+
+func TestGetBuildRecordNotFound(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		BuildService: &fakeBuildService{
+			err: domain.ErrBuildRecordNotFound,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/missing", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNotFound, rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateBuildRecordRejectsInvalidRequest(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		BuildService: &fakeBuildService{
@@ -147,12 +196,21 @@ type fakeBuildService struct {
 	record    domain.BuildRecord
 	records   []domain.BuildRecord
 	err       error
+	lastGetID string
 	lastInput domain.BuildRecordInput
 	summary   domain.BuildRecordSummary
 }
 
 func (s *fakeBuildService) CreateBuildRecord(_ context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
 	s.lastInput = input
+	if s.err != nil {
+		return domain.BuildRecord{}, s.err
+	}
+	return s.record, nil
+}
+
+func (s *fakeBuildService) GetBuildRecord(_ context.Context, id string) (domain.BuildRecord, error) {
+	s.lastGetID = id
 	if s.err != nil {
 		return domain.BuildRecord{}, s.err
 	}

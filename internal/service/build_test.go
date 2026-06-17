@@ -124,9 +124,40 @@ func TestBuildServiceListBuildRecords(t *testing.T) {
 	}
 }
 
+func TestBuildServiceGetBuildRecord(t *testing.T) {
+	repository := fakeBuildRecordRepository{
+		record: domain.BuildRecord{ID: "build-1"},
+	}
+	service := NewBuildService(&repository)
+
+	record, err := service.GetBuildRecord(context.Background(), " build-1 ")
+	if err != nil {
+		t.Fatalf("get build record: %v", err)
+	}
+	if record.ID != "build-1" || repository.lastGetID != "build-1" {
+		t.Fatalf("unexpected get result: record=%+v id=%q", record, repository.lastGetID)
+	}
+}
+
+func TestBuildServiceGetBuildRecordRejectsEmptyID(t *testing.T) {
+	repository := fakeBuildRecordRepository{}
+	service := NewBuildService(&repository)
+
+	_, err := service.GetBuildRecord(context.Background(), " ")
+	if !errors.Is(err, domain.ErrBuildRecordNotFound) {
+		t.Fatalf("expected build record not found, got %v", err)
+	}
+	if repository.getCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d", repository.getCalls)
+	}
+}
+
 type fakeBuildRecordRepository struct {
 	createCalls     int
+	getCalls        int
 	lastCreateInput domain.BuildRecordInput
+	lastGetID       string
+	record          domain.BuildRecord
 	records         []domain.BuildRecord
 	summary         domain.BuildRecordSummary
 }
@@ -154,6 +185,12 @@ func (r *fakeBuildRecordRepository) CompleteBuildRecord(_ context.Context, id st
 
 func (r *fakeBuildRecordRepository) FailBuildRecord(_ context.Context, id string, message string) (domain.BuildRecord, error) {
 	return domain.BuildRecord{ID: id, ErrorMessage: message}, nil
+}
+
+func (r *fakeBuildRecordRepository) GetBuildRecord(_ context.Context, id string) (domain.BuildRecord, error) {
+	r.getCalls++
+	r.lastGetID = id
+	return r.record, nil
 }
 
 func (r *fakeBuildRecordRepository) ListBuildRecords(context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {

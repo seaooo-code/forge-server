@@ -13,6 +13,7 @@ type BuildRecordRepository interface {
 	CompleteBuildRecord(ctx context.Context, id string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error)
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
 	FailBuildRecord(ctx context.Context, id string, message string) (domain.BuildRecord, error)
+	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
 	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
 }
 
@@ -34,6 +35,14 @@ func (s *BuildService) CreateBuildRecord(ctx context.Context, input domain.Build
 
 func (s *BuildService) ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
 	return s.repository.ListBuildRecords(ctx)
+}
+
+func (s *BuildService) GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error) {
+	normalizedID := strings.TrimSpace(id)
+	if normalizedID == "" {
+		return domain.BuildRecord{}, domain.ErrBuildRecordNotFound
+	}
+	return s.repository.GetBuildRecord(ctx, normalizedID)
 }
 
 func (s *BuildService) AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration) (domain.BuildRecord, error) {

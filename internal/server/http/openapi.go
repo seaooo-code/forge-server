@@ -281,6 +281,17 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/builds/{id}", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("getBuildRecord", "Get RN JS bundle build record detail", []string{"Builds"}, responses(
+						response(http.StatusOK, "Build record detail.", schemaRef("BuildRecordDetailResponse")),
+						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildRecordIDParameters()
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/releases", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("listReleases", "List RN JS bundle releases", []string{"Releases"}, responses(
@@ -788,6 +799,16 @@ func moduleIDParameters() openapi3.Parameters {
 			Value: openapi3.NewPathParameter("id").
 				WithDescription("Module id.").
 				WithSchema(stringSchema("Module id.")),
+		},
+	}
+}
+
+func buildRecordIDParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewPathParameter("id").
+				WithDescription("Build record id.").
+				WithSchema(stringSchema("Build record id.")),
 		},
 	}
 }
