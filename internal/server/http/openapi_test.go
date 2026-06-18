@@ -63,6 +63,8 @@ func TestOpenAPIJSON(t *testing.T) {
 		"/api/v1/modules/{id}",
 		"/api/v1/builds",
 		"/api/v1/builds/{id}",
+		"/api/v1/artifacts/applications/{applicationSlug}/modules/{moduleId}/environments/{environment}/builds/{buildId}/file",
+		"/api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/manifest",
 		"/api/v1/releases",
 		"/api/v1/releases/resolve",
 		"/api/v1/code-sources",

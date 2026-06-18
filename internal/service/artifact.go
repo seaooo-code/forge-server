@@ -1,0 +1,271 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"net/url"
+	"path"
+	"strings"
+
+	"forge-server/internal/domain"
+
+	"github.com/google/uuid"
+)
+
+type ArtifactRepository interface {
+	GetArtifactBuildRecord(ctx context.Context, input domain.ArtifactDownloadInput) (domain.BuildRecord, error)
+	GetArtifactManifestSource(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactManifestSource, error)
+}
+
+type ArtifactBuildRepository interface {
+	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
+}
+
+type ArtifactObjectReader interface {
+	GetArtifactObject(ctx context.Context, record domain.BuildRecord, objectKey string) (domain.ArtifactObject, error)
+}
+
+type ArtifactService struct {
+	buildRepository ArtifactBuildRepository
+	manifestReader  ArtifactManifestReader
+	objectReader    ArtifactObjectReader
+	repository      ArtifactRepository
+}
+
+func NewArtifactService(repository ArtifactRepository, buildRepository ArtifactBuildRepository, manifestReader ArtifactManifestReader, objectReader ArtifactObjectReader) *ArtifactService {
+	return &ArtifactService{
+		buildRepository: buildRepository,
+		manifestReader:  manifestReader,
+		objectReader:    objectReader,
+		repository:      repository,
+	}
+}
+
+func (s *ArtifactService) DownloadArtifactFile(ctx context.Context, input domain.ArtifactDownloadInput) (domain.ArtifactObject, error) {
+	normalized, err := normalizeArtifactDownloadInput(input)
+	if err != nil {
+		return domain.ArtifactObject{}, err
+	}
+	if s.repository == nil || s.manifestReader == nil || s.objectReader == nil {
+		return domain.ArtifactObject{}, domain.ErrArtifactNotFound
+	}
+
+	record, err := s.repository.GetArtifactBuildRecord(ctx, normalized)
+	if err != nil {
+		if errors.Is(err, domain.ErrBuildRecordNotFound) {
+			return domain.ArtifactObject{}, domain.ErrArtifactNotFound
+		}
+		return domain.ArtifactObject{}, err
+	}
+	if record.Status != domain.BuildStatusSucceeded || record.ManifestKey == "" {
+		return domain.ArtifactObject{}, domain.ErrArtifactNotFound
+	}
+
+	manifest, err := s.manifestReader.ReadArtifactManifest(ctx, record)
+	if err != nil {
+		return domain.ArtifactObject{}, err
+	}
+	file, ok := artifactManifestFileByPath(manifest, normalized.Path)
+	if !ok {
+		return domain.ArtifactObject{}, domain.ErrArtifactNotFound
+	}
+
+	objectKey := artifactObjectKey(record, file)
+	object, err := s.objectReader.GetArtifactObject(ctx, record, objectKey)
+	if err != nil {
+		return domain.ArtifactObject{}, err
+	}
+	object.ContentType = firstNonEmpty(object.ContentType, file.ContentType)
+	if object.ContentLength <= 0 {
+		object.ContentLength = file.SizeBytes
+	}
+	object.Name = path.Base(normalized.Path)
+	object.ObjectKey = objectKey
+	object.Path = normalized.Path
+	return object, nil
+}
+
+func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactApplicationManifest, error) {
+	normalized, err := normalizeArtifactManifestInput(input)
+	if err != nil {
+		return domain.ArtifactApplicationManifest{}, err
+	}
+	if s.repository == nil || s.buildRepository == nil || s.manifestReader == nil {
+		return domain.ArtifactApplicationManifest{}, domain.ErrArtifactNotFound
+	}
+
+	source, err := s.repository.GetArtifactManifestSource(ctx, normalized)
+	if err != nil {
+		return domain.ArtifactApplicationManifest{}, err
+	}
+
+	result := domain.ArtifactApplicationManifest{
+		Application:    source.Application,
+		Environment:    source.Environment,
+		Identifier:     normalized.Identifier,
+		Modules:        []domain.ArtifactModuleManifest{},
+		MissingModules: []domain.ArtifactMissingModule{},
+	}
+	for _, module := range source.Modules {
+		if module.BuildRecordID == "" {
+			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, "release not found"))
+			continue
+		}
+
+		record, err := s.buildRepository.GetBuildRecord(ctx, module.BuildRecordID)
+		if err != nil {
+			if errors.Is(err, domain.ErrBuildRecordNotFound) {
+				result.MissingModules = append(result.MissingModules, missingArtifactModule(module, "build not found"))
+				continue
+			}
+			return domain.ArtifactApplicationManifest{}, err
+		}
+		if record.Status != domain.BuildStatusSucceeded || record.ManifestKey == "" {
+			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, "build artifact not available"))
+			continue
+		}
+
+		manifest, err := s.manifestReader.ReadArtifactManifest(ctx, record)
+		if err != nil {
+			return domain.ArtifactApplicationManifest{}, err
+		}
+
+		result.Modules = append(result.Modules, domain.ArtifactModuleManifest{
+			ID:            module.ID,
+			Name:          module.Name,
+			Kind:          module.Kind,
+			ReleaseID:     module.ReleaseID,
+			ReleaseType:   module.ReleaseType,
+			Identifier:    module.Identifier,
+			BuildRecordID: record.ID,
+			ArtifactKey:   record.ArtifactKey,
+			ManifestKey:   record.ManifestKey,
+			Files:         resolvedArtifactManifestFiles(normalized, record, manifest),
+		})
+	}
+	return result, nil
+}
+
+func normalizeArtifactDownloadInput(input domain.ArtifactDownloadInput) (domain.ArtifactDownloadInput, error) {
+	normalized := domain.ArtifactDownloadInput{
+		ApplicationSlug: strings.TrimSpace(input.ApplicationSlug),
+		ModuleID:        strings.TrimSpace(input.ModuleID),
+		Environment:     strings.TrimSpace(input.Environment),
+		BuildRecordID:   strings.TrimSpace(input.BuildRecordID),
+	}
+	artifactPath, err := normalizeArtifactFilePath(input.Path)
+	if err != nil {
+		return domain.ArtifactDownloadInput{}, err
+	}
+	normalized.Path = artifactPath
+	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) ||
+		!domain.IsValidModuleID(normalized.ModuleID) ||
+		normalized.Environment == "" {
+		return domain.ArtifactDownloadInput{}, domain.ErrInvalidArtifactInput
+	}
+	if _, err := uuid.Parse(normalized.BuildRecordID); err != nil {
+		return domain.ArtifactDownloadInput{}, domain.ErrInvalidArtifactInput
+	}
+	return normalized, nil
+}
+
+func normalizeArtifactManifestInput(input domain.ArtifactManifestInput) (domain.ArtifactManifestInput, error) {
+	normalized := domain.ArtifactManifestInput{
+		ApplicationSlug: strings.TrimSpace(input.ApplicationSlug),
+		Environment:     strings.TrimSpace(input.Environment),
+		Identifier:      strings.TrimSpace(input.Identifier),
+	}
+	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) || normalized.Environment == "" {
+		return domain.ArtifactManifestInput{}, domain.ErrInvalidArtifactInput
+	}
+	return normalized, nil
+}
+
+func normalizeArtifactFilePath(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.Contains(trimmed, "\\") || strings.HasPrefix(trimmed, "/") {
+		return "", domain.ErrInvalidArtifactInput
+	}
+	for _, segment := range strings.Split(trimmed, "/") {
+		if segment == ".." {
+			return "", domain.ErrInvalidArtifactInput
+		}
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", domain.ErrInvalidArtifactInput
+	}
+	return cleaned, nil
+}
+
+func artifactManifestFileByPath(manifest domain.ArtifactManifest, filePath string) (domain.ArtifactManifestFile, bool) {
+	for _, file := range manifest.Files {
+		if cleanArtifactRelativePath(file.Path) == filePath {
+			return file, true
+		}
+	}
+	return domain.ArtifactManifestFile{}, false
+}
+
+func resolvedArtifactManifestFiles(input domain.ArtifactManifestInput, record domain.BuildRecord, manifest domain.ArtifactManifest) []domain.ArtifactManifestResolvedFile {
+	files := make([]domain.ArtifactManifestResolvedFile, 0, len(manifest.Files))
+	for _, file := range manifest.Files {
+		filePath := cleanArtifactRelativePath(file.Path)
+		if filePath == "" {
+			continue
+		}
+		objectKey := artifactObjectKey(record, file)
+		files = append(files, domain.ArtifactManifestResolvedFile{
+			Path:        filePath,
+			URL:         artifactFileURL(input, record, objectKey, filePath),
+			ContentType: file.ContentType,
+			SizeBytes:   file.SizeBytes,
+			SHA256:      file.SHA256,
+		})
+	}
+	return files
+}
+
+func artifactFileURL(input domain.ArtifactManifestInput, record domain.BuildRecord, objectKey string, filePath string) string {
+	if strings.TrimSpace(record.StoragePublicBaseURL) != "" && objectKey != "" {
+		return strings.TrimRight(strings.TrimSpace(record.StoragePublicBaseURL), "/") + "/" + strings.TrimLeft(objectKey, "/")
+	}
+	values := url.Values{}
+	values.Set("path", filePath)
+	return "/api/v1/artifacts/applications/" +
+		url.PathEscape(input.ApplicationSlug) +
+		"/modules/" +
+		url.PathEscape(record.ModuleID) +
+		"/environments/" +
+		url.PathEscape(input.Environment) +
+		"/builds/" +
+		url.PathEscape(record.ID) +
+		"/file?" +
+		values.Encode()
+}
+
+func artifactObjectKey(record domain.BuildRecord, file domain.ArtifactManifestFile) string {
+	objectKey := strings.Trim(strings.TrimSpace(file.ObjectKey), "/")
+	if objectKey != "" {
+		return objectKey
+	}
+	return strings.TrimRight(strings.TrimSpace(record.ArtifactKey), "/") + "/" + cleanArtifactRelativePath(file.Path)
+}
+
+func missingArtifactModule(module domain.ArtifactModuleReleaseSource, reason string) domain.ArtifactMissingModule {
+	return domain.ArtifactMissingModule{
+		ID:     module.ID,
+		Name:   module.Name,
+		Kind:   module.Kind,
+		Reason: reason,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}

@@ -45,6 +45,7 @@ type ReleaseRecord struct {
 	Environment     string
 	EnvironmentName string
 	BuildRecordID   string
+	Identifier      string
 	ReleaseType     ReleaseType
 	Status          ReleaseStatus
 	ArtifactKey     string

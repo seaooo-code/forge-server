@@ -46,6 +46,7 @@ type releaseRecordResponse struct {
 	Environment     string `json:"environment"`
 	EnvironmentName string `json:"environmentName"`
 	ID              string `json:"id"`
+	Identifier      string `json:"identifier"`
 	ModuleID        string `json:"moduleId"`
 	ModuleName      string `json:"moduleName"`
 	ReleaseType     string `json:"releaseType"`
@@ -182,6 +183,7 @@ func newReleaseRecordResponse(record domain.ReleaseRecord) releaseRecordResponse
 		Environment:     record.Environment,
 		EnvironmentName: record.EnvironmentName,
 		ID:              record.ID,
+		Identifier:      record.Identifier,
 		ModuleID:        record.ModuleID,
 		ModuleName:      record.ModuleName,
 		ReleaseType:     string(record.ReleaseType),

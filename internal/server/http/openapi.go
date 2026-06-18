@@ -49,6 +49,10 @@ func openAPIDocument() *openapi3.T {
 				Description: "RN JS bundle build record management.",
 			},
 			{
+				Name:        "Artifacts",
+				Description: "RN JS bundle artifact download and application manifest APIs.",
+			},
+			{
 				Name:        "Releases",
 				Description: "RN JS bundle release routing and artifact resolution.",
 			},
@@ -289,6 +293,30 @@ func openAPIDocument() *openapi3.T {
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.Parameters = buildRecordIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/artifacts/applications/{applicationSlug}/modules/{moduleId}/environments/{environment}/builds/{buildId}/file", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("downloadArtifactFile", "Download a single build artifact file", []string{"Artifacts"}, responses(
+						responseNoBody(http.StatusOK, "Artifact file stream."),
+						response(http.StatusBadRequest, "Invalid artifact request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Artifact not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = artifactDownloadParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/manifest", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("getApplicationArtifactManifest", "Get application module artifact manifest", []string{"Artifacts"}, responses(
+						response(http.StatusOK, "Application module artifact manifest.", schemaRef("ArtifactManifestResponse")),
+						response(http.StatusBadRequest, "Invalid artifact manifest request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Application environment manifest not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = artifactManifestParameters()
 					return op
 				}(),
 			}),
@@ -606,6 +634,12 @@ func openAPIDocument() *openapi3.T {
 				"BuildRecordDetailResponse":          schemaValue(buildRecordDetailResponseSchema()),
 				"BuildRecordSummary":                 schemaValue(buildRecordSummarySchema()),
 				"BuildRecordsResponse":               schemaValue(buildRecordsResponseSchema()),
+				"ArtifactManifestResponse":           schemaValue(artifactManifestResponseSchema()),
+				"ArtifactManifestApplication":        schemaValue(artifactManifestApplicationSchema()),
+				"ArtifactManifestEnvironment":        schemaValue(artifactManifestEnvironmentSchema()),
+				"ArtifactManifestModule":             schemaValue(artifactManifestModuleSchema()),
+				"ArtifactManifestFile":               schemaValue(artifactManifestFileSchema()),
+				"ArtifactMissingModule":              schemaValue(artifactMissingModuleSchema()),
 				"ReleaseRecord":                      schemaValue(releaseRecordSchema()),
 				"ReleaseRoute":                       schemaValue(releaseRouteSchema()),
 				"ReleaseCreateRequest":               schemaValue(releaseCreateRequestSchema()),
@@ -811,6 +845,57 @@ func buildRecordIDParameters() openapi3.Parameters {
 			Value: openapi3.NewPathParameter("id").
 				WithDescription("Build record UUID.").
 				WithSchema(stringSchema("Build record UUID.")),
+		},
+	}
+}
+
+func artifactDownloadParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewPathParameter("applicationSlug").
+				WithDescription("Application slug.").
+				WithSchema(stringSchema("Application slug.")),
+		},
+		{
+			Value: openapi3.NewPathParameter("moduleId").
+				WithDescription("Module id.").
+				WithSchema(stringSchema("Module id.")),
+		},
+		{
+			Value: openapi3.NewPathParameter("environment").
+				WithDescription("Environment code.").
+				WithSchema(stringSchema("Environment code.")),
+		},
+		{
+			Value: openapi3.NewPathParameter("buildId").
+				WithDescription("Build record UUID.").
+				WithSchema(stringSchema("Build record UUID.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("path").
+				WithDescription("Artifact file relative path from the build artifact manifest.").
+				WithRequired(true).
+				WithSchema(stringSchema("Artifact file relative path.")),
+		},
+	}
+}
+
+func artifactManifestParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewPathParameter("applicationSlug").
+				WithDescription("Application slug.").
+				WithSchema(stringSchema("Application slug.")),
+		},
+		{
+			Value: openapi3.NewPathParameter("environment").
+				WithDescription("Environment code.").
+				WithSchema(stringSchema("Environment code.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("identifier").
+				WithDescription("Optional targeting identifier. Identifier release wins when present, otherwise default release is used.").
+				WithSchema(stringSchema("Targeting identifier.")),
 		},
 	}
 }
@@ -1379,6 +1464,59 @@ func buildArtifactTreeNodeSchema() *openapi3.Schema {
 		WithProperty("type", enumStringSchema("Artifact tree node type.", "directory", "file"))
 }
 
+func artifactManifestResponseSchema() *openapi3.Schema {
+	return objectSchema("application", "environment", "identifier", "modules", "missingModules").
+		WithPropertyRef("application", schemaRef("ArtifactManifestApplication")).
+		WithPropertyRef("environment", schemaRef("ArtifactManifestEnvironment")).
+		WithProperty("identifier", stringSchema("Requested targeting identifier.")).
+		WithPropertyRef("modules", arraySchemaRef("ArtifactManifestModule")).
+		WithPropertyRef("missingModules", arraySchemaRef("ArtifactMissingModule"))
+}
+
+func artifactManifestApplicationSchema() *openapi3.Schema {
+	return objectSchema("id", "name", "slug").
+		WithProperty("id", stringSchema("Application id.")).
+		WithProperty("name", stringSchema("Application display name.")).
+		WithProperty("slug", stringSchema("Application slug."))
+}
+
+func artifactManifestEnvironmentSchema() *openapi3.Schema {
+	return objectSchema("id", "name").
+		WithProperty("id", stringSchema("Environment code.")).
+		WithProperty("name", stringSchema("Environment display name."))
+}
+
+func artifactManifestModuleSchema() *openapi3.Schema {
+	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "buildRecordId", "artifactKey", "manifestKey", "files").
+		WithProperty("id", stringSchema("Module id.")).
+		WithProperty("name", stringSchema("Module display name.")).
+		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
+		WithProperty("releaseId", stringSchema("Matched release UUID.")).
+		WithProperty("releaseType", enumStringSchema("Matched release type.", "full", "targeted")).
+		WithProperty("identifier", stringSchema("Matched targeting identifier for targeted releases.")).
+		WithProperty("buildRecordId", stringSchema("Matched build record UUID.")).
+		WithProperty("artifactKey", stringSchema("Artifact object key root.")).
+		WithProperty("manifestKey", stringSchema("Artifact manifest object key.")).
+		WithPropertyRef("files", arraySchemaRef("ArtifactManifestFile"))
+}
+
+func artifactManifestFileSchema() *openapi3.Schema {
+	return objectSchema("path", "url", "contentType", "sizeBytes", "sha256").
+		WithProperty("path", stringSchema("Artifact file relative path.")).
+		WithProperty("url", stringSchema("Download URL. Uses public base URL when configured, otherwise the artifact download API.")).
+		WithProperty("contentType", stringSchema("File content type.")).
+		WithProperty("sizeBytes", int64Schema("File size in bytes.")).
+		WithProperty("sha256", stringSchema("File SHA-256 digest."))
+}
+
+func artifactMissingModuleSchema() *openapi3.Schema {
+	return objectSchema("id", "name", "kind", "reason").
+		WithProperty("id", stringSchema("Module id.")).
+		WithProperty("name", stringSchema("Module display name.")).
+		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
+		WithProperty("reason", stringSchema("Why this module is absent from the manifest modules list."))
+}
+
 func releaseCreateRequestSchema() *openapi3.Schema {
 	return objectSchema("buildRecordId", "releaseType", "createdByUserId").
 		WithProperty("buildRecordId", stringSchema("Succeeded build record UUID to release.")).
@@ -1430,6 +1568,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("environmentName", stringSchema("Environment display name.")).
 		WithProperty("id", stringSchema("Release UUID.")).
+		WithProperty("identifier", stringSchema("Targeting identifier for targeted releases.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseType", enumStringSchema("Release type.", "full", "targeted")).

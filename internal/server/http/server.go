@@ -24,6 +24,7 @@ const httpExchangeStartedAtKey = "http_exchange_started_at"
 
 type Dependencies struct {
 	ApplicationService   ApplicationService
+	ArtifactService      ArtifactService
 	BuildService         BuildService
 	CodeSourceService    CodeSourceService
 	EnvironmentService   EnvironmentService
@@ -45,6 +46,11 @@ type ApplicationService interface {
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
+}
+
+type ArtifactService interface {
+	DownloadArtifactFile(ctx context.Context, input domain.ArtifactDownloadInput) (domain.ArtifactObject, error)
+	GetApplicationManifest(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactApplicationManifest, error)
 }
 
 type BuildService interface {
@@ -135,6 +141,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	})
 	registerEnumRoutes(api)
 	registerApplicationRoutes(api, deps.ApplicationService)
+	registerArtifactRoutes(api, deps.ArtifactService)
 	registerBuildRoutes(api, deps.BuildService)
 	registerCodeSourceRoutes(api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)
 	registerEnvironmentRoutes(api, deps.EnvironmentService)

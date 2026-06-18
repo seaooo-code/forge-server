@@ -308,6 +308,7 @@ func releaseRecordSelectSQL() string {
 			rr.environment_code,
 			e.name as environment_name,
 			rr.build_record_id,
+			route.identifier,
 			rr.release_type,
 			rr.status,
 			rr.artifact_key,
@@ -322,6 +323,7 @@ func releaseRecordSelectSQL() string {
 		join applications a on a.id = m.application_id
 		join environments e on e.code = rr.environment_code
 		join users u on u.id = rr.created_by_user_id
+		join release_routes route on route.release_id = rr.id
 	`
 }
 
@@ -364,6 +366,7 @@ func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 		&record.Environment,
 		&record.EnvironmentName,
 		&record.BuildRecordID,
+		&record.Identifier,
 		&record.ReleaseType,
 		&record.Status,
 		&record.ArtifactKey,

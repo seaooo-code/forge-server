@@ -84,6 +84,9 @@ func TestCreateTargetedRelease(t *testing.T) {
 	if response.Route.RouteType != "identifier" || response.Route.Identifier != "staff-1" {
 		t.Fatalf("unexpected targeted route response: %#v", response.Route)
 	}
+	if response.Release.ReleaseType != "targeted" || response.Release.Identifier != "staff-1" {
+		t.Fatalf("unexpected targeted release response: %#v", response.Release)
+	}
 	if service.lastCreateInput.Identifier != "staff-1" ||
 		service.lastCreateInput.ReleaseType != domain.ReleaseTypeTargeted {
 		t.Fatalf("unexpected service input: %+v", service.lastCreateInput)
@@ -92,7 +95,7 @@ func TestCreateTargetedRelease(t *testing.T) {
 
 func TestListReleases(t *testing.T) {
 	service := &fakeReleaseService{
-		records: []domain.ReleaseRecord{testHTTPReleaseRecord(domain.ReleaseTypeFull)},
+		records: []domain.ReleaseRecord{testHTTPReleaseRecord(domain.ReleaseTypeTargeted)},
 	}
 	e := New(config.Config{}, Dependencies{
 		ReleaseService: service,
@@ -111,7 +114,7 @@ func TestListReleases(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(response.Releases) != 1 || response.Releases[0].ID != "rel-1" {
+	if len(response.Releases) != 1 || response.Releases[0].ID != "rel-1" || response.Releases[0].Identifier != "staff-1" {
 		t.Fatalf("unexpected releases response: %#v", response.Releases)
 	}
 	if service.lastListModuleID != "module-profile" || service.lastListEnvironment != "qa" {
@@ -218,6 +221,7 @@ func testHTTPReleaseRecord(releaseType domain.ReleaseType) domain.ReleaseRecord 
 		Environment:     "qa",
 		EnvironmentName: "QA",
 		BuildRecordID:   "build-1",
+		Identifier:      releaseIdentifier(releaseType),
 		ReleaseType:     releaseType,
 		Status:          domain.ReleaseStatusActive,
 		ArtifactKey:     "rn-bundles/seaooo/profile/QA/build-1",
@@ -228,6 +232,13 @@ func testHTTPReleaseRecord(releaseType domain.ReleaseType) domain.ReleaseRecord 
 		CreatedAt:       time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC),
 		UpdatedAt:       time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC),
 	}
+}
+
+func releaseIdentifier(releaseType domain.ReleaseType) string {
+	if releaseType == domain.ReleaseTypeTargeted {
+		return "staff-1"
+	}
+	return ""
 }
 
 func testHTTPReleaseRoute(routeType domain.ReleaseRouteType, identifier string) domain.ReleaseRoute {

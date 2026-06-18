@@ -70,7 +70,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	moduleRepository := postgres.NewModuleRepository(postgresPool)
 	moduleService := service.NewModuleService(moduleRepository)
 	buildRepository := postgres.NewBuildRepository(postgresPool)
-	buildService := service.NewBuildServiceWithManifestReader(buildRepository, s3infra.NewManifestReader())
+	artifactManifestReader := s3infra.NewManifestReader()
+	artifactObjectReader := s3infra.NewObjectReader()
+	buildService := service.NewBuildServiceWithManifestReader(buildRepository, artifactManifestReader)
+	artifactRepository := postgres.NewArtifactRepository(postgresPool)
+	artifactService := service.NewArtifactService(artifactRepository, buildRepository, artifactManifestReader, artifactObjectReader)
 	releaseRepository := postgres.NewReleaseRepository(postgresPool)
 	releaseService := service.NewReleaseService(releaseRepository)
 	storageRepository := postgres.NewStorageRepository(postgresPool)
@@ -82,6 +86,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	server := httpserver.New(cfg, httpserver.Dependencies{
 		ApplicationService:   applicationService,
+		ArtifactService:      artifactService,
 		BuildService:         buildService,
 		CodeSourceService:    codeSourceService,
 		EnvironmentService:   environmentService,
