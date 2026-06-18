@@ -256,7 +256,7 @@ create index idx_modules_repository_installation
     on modules(repository_provider, provider_installation_id);
 
 create table build_records (
-    id text primary key,
+    id uuid primary key,
     module_id text not null references modules(id) on delete restrict,
     environment_code text not null references environments(code) on delete restrict,
     storage_configuration_id text not null references storage_configurations(id) on delete restrict,
@@ -296,10 +296,10 @@ create index idx_build_records_trigger
     on build_records(trigger_type, trigger_id);
 
 create table release_records (
-    id text primary key,
+    id uuid primary key,
     module_id text not null references modules(id) on delete restrict,
     environment_code text not null references environments(code) on delete restrict,
-    build_record_id text not null references build_records(id) on delete restrict,
+    build_record_id uuid not null references build_records(id) on delete restrict,
     release_type text not null check (release_type in ('full', 'targeted')),
     status text not null check (status in ('active', 'inactive', 'revoked')),
     artifact_key text not null,
@@ -323,7 +323,7 @@ create table release_routes (
     id text primary key,
     module_id text not null references modules(id) on delete restrict,
     environment_code text not null references environments(code) on delete restrict,
-    release_id text not null references release_records(id) on delete restrict,
+    release_id uuid not null references release_records(id) on delete restrict,
     route_type text not null check (route_type in ('default', 'identifier')),
     identifier text not null default '',
     status text not null check (status in ('active', 'inactive')),

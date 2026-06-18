@@ -9,6 +9,7 @@ import (
 
 	"forge-server/internal/domain"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,7 +29,6 @@ func (r *BuildRepository) CreateBuildRecord(ctx context.Context, input domain.Bu
 			return record, nil
 		}
 		if isUniqueViolation(err) {
-			waitUntilNextSecond()
 			continue
 		}
 		return domain.BuildRecord{}, err
@@ -388,10 +388,5 @@ func intervalString(duration time.Duration) string {
 }
 
 func newBuildRecordID() string {
-	return time.Now().Format("20060102150405")
-}
-
-func waitUntilNextSecond() {
-	now := time.Now()
-	time.Sleep(now.Truncate(time.Second).Add(time.Second).Sub(now))
+	return uuid.NewString()
 }

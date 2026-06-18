@@ -515,7 +515,7 @@ func (e *Executor) artifactKey(record domain.BuildRecord) string {
 		artifactPathSegment(record.ApplicationName),
 		artifactPathSegment(record.ModuleName),
 		artifactPathSegment(environmentName),
-		artifactPathSegment(recordBuildTimestamp(record)),
+		artifactPathSegment(recordBuildKeySegment(record)),
 	}
 	if prefix != "" {
 		parts = append([]string{prefix}, parts...)
@@ -523,27 +523,15 @@ func (e *Executor) artifactKey(record domain.BuildRecord) string {
 	return strings.Join(parts, "/")
 }
 
-func recordBuildTimestamp(record domain.BuildRecord) string {
+func recordBuildKeySegment(record domain.BuildRecord) string {
 	id := strings.TrimSpace(record.ID)
-	if isBuildTimestamp(id) {
+	if id != "" {
 		return id
 	}
 	if !record.CreatedAt.IsZero() {
 		return record.CreatedAt.Format("20060102150405")
 	}
 	return id
-}
-
-func isBuildTimestamp(value string) bool {
-	if len(value) != len("20060102150405") {
-		return false
-	}
-	for _, char := range value {
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func buildArtifactRoot(outputDir string) (string, error) {

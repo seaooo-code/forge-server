@@ -809,8 +809,8 @@ func buildRecordIDParameters() openapi3.Parameters {
 	return openapi3.Parameters{
 		{
 			Value: openapi3.NewPathParameter("id").
-				WithDescription("Build record id.").
-				WithSchema(stringSchema("Build record id.")),
+				WithDescription("Build record UUID.").
+				WithSchema(stringSchema("Build record UUID.")),
 		},
 	}
 }
@@ -1337,7 +1337,7 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("environmentName", stringSchema("Environment display name used in artifact object keys.")).
 		WithProperty("errorMessage", stringSchema("Build failure message.")).
 		WithProperty("finishedAt", dateTimeSchema("Build finish time.")).
-		WithProperty("id", stringSchema("Build record id.")).
+		WithProperty("id", stringSchema("Build record UUID.")).
 		WithProperty("manifestKey", stringSchema("S3 object key of the artifact manifest.")).
 		WithProperty("fileCount", int32Schema("Uploaded artifact file count.")).
 		WithProperty("totalSizeBytes", int64Schema("Total uploaded artifact file size in bytes.")).
@@ -1381,7 +1381,7 @@ func buildArtifactTreeNodeSchema() *openapi3.Schema {
 
 func releaseCreateRequestSchema() *openapi3.Schema {
 	return objectSchema("buildRecordId", "releaseType", "createdByUserId").
-		WithProperty("buildRecordId", stringSchema("Succeeded build record id to release.")).
+		WithProperty("buildRecordId", stringSchema("Succeeded build record UUID to release.")).
 		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, targeted updates an identifier route.", "full", "targeted")).
 		WithProperty("identifier", stringSchema("Targeting identifier. Required for targeted releases and forbidden for full releases.")).
 		WithProperty("description", stringSchema("Release description.")).
@@ -1422,14 +1422,14 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("applicationName", stringSchema("Application display name.")).
 		WithProperty("artifactKey", stringSchema("Released artifact object key root.")).
 		WithProperty("artifactUrl", stringSchema("Released artifact public URL.")).
-		WithProperty("buildRecordId", stringSchema("Build record id used by this release.")).
+		WithProperty("buildRecordId", stringSchema("Build record UUID used by this release.")).
 		WithProperty("createdAt", dateTimeSchema("Release creation time.")).
 		WithProperty("createdBy", stringSchema("Release creator display name.")).
 		WithProperty("createdByUserId", stringSchema("Release creator user id.")).
 		WithProperty("description", stringSchema("Release description.")).
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("environmentName", stringSchema("Environment display name.")).
-		WithProperty("id", stringSchema("Release id.")).
+		WithProperty("id", stringSchema("Release UUID.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseType", enumStringSchema("Release type.", "full", "targeted")).
@@ -1456,7 +1456,7 @@ func releaseRouteSchema() *openapi3.Schema {
 		WithProperty("applicationName", stringSchema("Application display name.")).
 		WithProperty("artifactKey", stringSchema("Resolved artifact object key root.")).
 		WithProperty("artifactUrl", stringSchema("Resolved artifact public URL.")).
-		WithProperty("buildRecordId", stringSchema("Build record id used by this route.")).
+		WithProperty("buildRecordId", stringSchema("Build record UUID used by this route.")).
 		WithProperty("createdAt", dateTimeSchema("Route creation time.")).
 		WithProperty("createdBy", stringSchema("Route creator display name.")).
 		WithProperty("createdByUserId", stringSchema("Route creator user id.")).
@@ -1466,7 +1466,7 @@ func releaseRouteSchema() *openapi3.Schema {
 		WithProperty("identifier", stringSchema("Targeting identifier for identifier routes.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
-		WithProperty("releaseId", stringSchema("Release id.")).
+		WithProperty("releaseId", stringSchema("Release UUID.")).
 		WithProperty("routeType", enumStringSchema("Route type.", "default", "identifier")).
 		WithProperty("status", enumStringSchema("Release route status.", "active", "inactive")).
 		WithProperty("updatedAt", dateTimeSchema("Route update time."))

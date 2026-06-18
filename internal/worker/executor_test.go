@@ -154,25 +154,24 @@ func TestDockerImageTagNormalizesBuildID(t *testing.T) {
 	}
 }
 
-func TestArtifactKeyUsesNamesAndBuildTimestamp(t *testing.T) {
+func TestArtifactKeyUsesNamesAndBuildID(t *testing.T) {
 	executor := Executor{cfg: config.WorkerConfig{ArtifactPrefix: "rn-bundles"}}
 	got := executor.artifactKey(domain.BuildRecord{
-		ID:              "20260617130509",
+		ID:              "274c3210-bf60-4c5a-b2bd-6893538c991b",
 		ApplicationName: "seaooo",
 		ModuleName:      "test-bundle",
 		Environment:     "qa",
 		EnvironmentName: "QA",
 	})
-	want := "rn-bundles/seaooo/test-bundle/QA/20260617130509"
+	want := "rn-bundles/seaooo/test-bundle/QA/274c3210-bf60-4c5a-b2bd-6893538c991b"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
-func TestArtifactKeyFallsBackToCreatedAtForLegacyBuildID(t *testing.T) {
+func TestArtifactKeyFallsBackToCreatedAtForEmptyBuildID(t *testing.T) {
 	executor := Executor{cfg: config.WorkerConfig{ArtifactPrefix: "rn-bundles"}}
 	got := executor.artifactKey(domain.BuildRecord{
-		ID:              "build-2bf49b9b9d32b57e",
 		ApplicationName: "小米汽车",
 		ModuleName:      "测试模块-通用",
 		Environment:     "qa",

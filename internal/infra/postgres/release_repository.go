@@ -8,6 +8,7 @@ import (
 
 	"forge-server/internal/domain"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -61,6 +62,39 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
 	}
 
+	routeType := domain.ReleaseRouteTypeDefault
+	if input.ReleaseType == domain.ReleaseTypeTargeted {
+		routeType = domain.ReleaseRouteTypeIdentifier
+	}
+
+	existingReleaseID, existingRouteID, found, err := findActiveReleaseIDsForBuild(
+		ctx,
+		tx,
+		input.BuildRecordID,
+		moduleID,
+		environment,
+		routeType,
+		input.Identifier,
+	)
+	if err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
+	if found {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("commit existing release lookup: %w", err)
+		}
+
+		record, err := r.GetRelease(ctx, existingReleaseID)
+		if err != nil {
+			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+		}
+		route, err := r.GetReleaseRoute(ctx, existingRouteID)
+		if err != nil {
+			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+		}
+		return record, route, nil
+	}
+
 	releaseID := newReleaseID()
 	if _, err := tx.Exec(ctx, `
 		insert into release_records (
@@ -88,11 +122,6 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		)
 	`, releaseID, moduleID, environment, input.BuildRecordID, input.ReleaseType, artifactKey, artifactURL, input.Description, input.CreatedByUserID); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("insert release record: %w", err)
-	}
-
-	routeType := domain.ReleaseRouteTypeDefault
-	if input.ReleaseType == domain.ReleaseTypeTargeted {
-		routeType = domain.ReleaseRouteTypeIdentifier
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -155,6 +184,31 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 	}
 	return record, route, nil
+}
+
+func findActiveReleaseIDsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID string, moduleID string, environment string, routeType domain.ReleaseRouteType, identifier string) (string, string, bool, error) {
+	var releaseID string
+	var routeID string
+	err := tx.QueryRow(ctx, `
+		select rr.id, route.id
+		from release_routes route
+		join release_records rr on rr.id = route.release_id
+		where route.module_id = $1
+			and route.environment_code = $2
+			and route.route_type = $3
+			and route.identifier = $4
+			and route.status = 'active'
+			and rr.status = 'active'
+			and rr.build_record_id = $5
+		limit 1
+	`, moduleID, environment, routeType, identifier, buildRecordID).Scan(&releaseID, &routeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("query existing active release route: %w", err)
+	}
+	return releaseID, routeID, true, nil
 }
 
 func (r *ReleaseRepository) GetRelease(ctx context.Context, id string) (domain.ReleaseRecord, error) {
@@ -358,7 +412,7 @@ func scanReleaseRoute(row releaseRecordRow) (domain.ReleaseRoute, error) {
 }
 
 func newReleaseID() string {
-	return "rel-" + time.Now().Format("20060102150405-000000000")
+	return uuid.NewString()
 }
 
 func newReleaseRouteID() string {
