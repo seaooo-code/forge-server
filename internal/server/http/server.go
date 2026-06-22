@@ -23,18 +23,19 @@ import (
 const httpExchangeStartedAtKey = "http_exchange_started_at"
 
 type Dependencies struct {
-	ApplicationService   ApplicationService
-	ArtifactService      ArtifactService
-	BuildService         BuildService
-	CodeSourceService    CodeSourceService
-	EnvironmentService   EnvironmentService
-	FeishuAuthService    FeishuAuthService
-	FeishuContactService FeishuContactService
-	ModuleService        ModuleService
-	ReleaseService       ReleaseService
-	StorageService       StorageService
-	Postgres             *pgxpool.Pool
-	Redis                *redis.Client
+	ApplicationService         ApplicationService
+	ArtifactService            ArtifactService
+	ArtifactAccessTokenService ArtifactAccessTokenService
+	BuildService               BuildService
+	CodeSourceService          CodeSourceService
+	EnvironmentService         EnvironmentService
+	FeishuAuthService          FeishuAuthService
+	FeishuContactService       FeishuContactService
+	ModuleService              ModuleService
+	ReleaseService             ReleaseService
+	StorageService             StorageService
+	Postgres                   *pgxpool.Pool
+	Redis                      *redis.Client
 }
 
 type ApplicationService interface {
@@ -51,6 +52,15 @@ type ApplicationService interface {
 type ArtifactService interface {
 	DownloadArtifactFile(ctx context.Context, input domain.ArtifactDownloadInput) (domain.ArtifactObject, error)
 	GetApplicationManifest(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactApplicationManifest, error)
+}
+
+type ArtifactAccessTokenService interface {
+	CreateArtifactAccessToken(ctx context.Context, input domain.ArtifactAccessTokenCreateInput) (domain.ArtifactAccessTokenCreateResult, error)
+	DeleteArtifactAccessToken(ctx context.Context, id string) error
+	GenerateArtifactAccessToken(ctx context.Context) (domain.ArtifactAccessTokenGenerateResult, error)
+	ListArtifactAccessTokens(ctx context.Context) ([]domain.ArtifactAccessToken, error)
+	UpdateArtifactAccessToken(ctx context.Context, id string, input domain.ArtifactAccessTokenUpdateInput) (domain.ArtifactAccessToken, error)
+	ValidateArtifactAccessToken(ctx context.Context, token string) (domain.ArtifactAccessTokenValidationResult, error)
 }
 
 type BuildService interface {
@@ -140,13 +150,14 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 		})
 	})
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
-	registerArtifactRoutes(api, deps.ArtifactService, deps.FeishuAuthService, cfg.Artifact.AccessTokens)
+	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService, cfg.Artifact.AccessTokens)
 
 	protectedAPI := api.Group("")
 	if deps.FeishuAuthService != nil {
 		protectedAPI.Use(requireConsoleSession(deps.FeishuAuthService))
 	}
 	registerEnumRoutes(protectedAPI)
+	registerArtifactAccessTokenRoutes(protectedAPI, deps.ArtifactAccessTokenService)
 	registerApplicationRoutes(protectedAPI, deps.ApplicationService)
 	registerBuildRoutes(protectedAPI, deps.BuildService)
 	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)

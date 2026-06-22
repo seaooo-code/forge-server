@@ -162,6 +162,55 @@ func TestGetArtifactManifestRejectsMissingToken(t *testing.T) {
 	}
 }
 
+func TestGetArtifactManifestAcceptsManagedToken(t *testing.T) {
+	service := &fakeArtifactService{
+		manifest: domain.ArtifactApplicationManifest{
+			Application: domain.ArtifactApplication{ID: "app-seaooo", Name: "seaooo", Slug: "seaooo"},
+			Environment: domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
+		},
+	}
+	tokenService := &fakeArtifactAccessTokenService{
+		validation: domain.ArtifactAccessTokenValidationResult{Matched: true, Allowed: true},
+	}
+	e := New(config.Config{}, Dependencies{
+		ArtifactService:            service,
+		ArtifactAccessTokenService: tokenService,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest", nil)
+	req.Header.Set("Authorization", "Bearer managed-token-123456")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if tokenService.validatedToken != "managed-token-123456" {
+		t.Fatalf("expected managed token validation, got %q", tokenService.validatedToken)
+	}
+}
+
+func TestGetArtifactManifestRejectsDisabledManagedTokenBeforeEnvFallback(t *testing.T) {
+	tokenService := &fakeArtifactAccessTokenService{
+		validation: domain.ArtifactAccessTokenValidationResult{Matched: true, Allowed: false},
+	}
+	e := New(testArtifactConfig(), Dependencies{
+		ArtifactService:            &fakeArtifactService{},
+		ArtifactAccessTokenService: tokenService,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest", nil)
+	addTestArtifactBearer(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+}
+
 func TestDownloadArtifactFileAcceptsSession(t *testing.T) {
 	service := &fakeArtifactService{
 		object: domain.ArtifactObject{

@@ -75,6 +75,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	buildService := service.NewBuildServiceWithManifestReader(buildRepository, artifactManifestReader)
 	artifactRepository := postgres.NewArtifactRepository(postgresPool)
 	artifactService := service.NewArtifactService(artifactRepository, buildRepository, artifactManifestReader, artifactObjectReader)
+	artifactAccessTokenRepository := postgres.NewArtifactAccessTokenRepository(postgresPool)
+	artifactAccessTokenService := service.NewArtifactAccessTokenService(artifactAccessTokenRepository)
 	releaseRepository := postgres.NewReleaseRepository(postgresPool)
 	releaseService := service.NewReleaseService(releaseRepository)
 	storageRepository := postgres.NewStorageRepository(postgresPool)
@@ -85,18 +87,19 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	feishuContactService := service.NewFeishuContactService(feishuClient)
 
 	server := httpserver.New(cfg, httpserver.Dependencies{
-		ApplicationService:   applicationService,
-		ArtifactService:      artifactService,
-		BuildService:         buildService,
-		CodeSourceService:    codeSourceService,
-		EnvironmentService:   environmentService,
-		FeishuAuthService:    feishuAuthService,
-		FeishuContactService: feishuContactService,
-		ModuleService:        moduleService,
-		ReleaseService:       releaseService,
-		StorageService:       storageService,
-		Postgres:             postgresPool,
-		Redis:                redisClient,
+		ApplicationService:         applicationService,
+		ArtifactService:            artifactService,
+		ArtifactAccessTokenService: artifactAccessTokenService,
+		BuildService:               buildService,
+		CodeSourceService:          codeSourceService,
+		EnvironmentService:         environmentService,
+		FeishuAuthService:          feishuAuthService,
+		FeishuContactService:       feishuContactService,
+		ModuleService:              moduleService,
+		ReleaseService:             releaseService,
+		StorageService:             storageService,
+		Postgres:                   postgresPool,
+		Redis:                      redisClient,
 	})
 
 	return &App{

@@ -62,11 +62,11 @@ type artifactMissingModuleResponse struct {
 	Reason string `json:"reason"`
 }
 
-func registerArtifactRoutes(group *echo.Group, service ArtifactService, authService FeishuAuthService, accessTokens []string) {
+func registerArtifactRoutes(group *echo.Group, service ArtifactService, tokenService ArtifactAccessTokenService, authService FeishuAuthService, accessTokens []string) {
 	handler := artifactHandler{service: service}
 
-	group.GET("/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file", handler.downloadFile, requireArtifactAccess(authService, accessTokens))
-	group.GET("/artifacts/applications/:applicationSlug/environments/:environment/manifest", handler.manifest, requireArtifactToken(accessTokens))
+	group.GET("/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file", handler.downloadFile, requireArtifactAccess(authService, tokenService, accessTokens))
+	group.GET("/artifacts/applications/:applicationSlug/environments/:environment/manifest", handler.manifest, requireArtifactToken(tokenService, accessTokens))
 }
 
 func (h artifactHandler) downloadFile(c echo.Context) error {

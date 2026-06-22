@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"net/http"
@@ -30,13 +31,22 @@ func requireConsoleSession(service FeishuAuthService) echo.MiddlewareFunc {
 	}
 }
 
-func requireArtifactToken(tokens []string) echo.MiddlewareFunc {
+func requireArtifactToken(tokenService ArtifactAccessTokenService, tokens []string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if len(tokens) == 0 {
+			token := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization))
+			if token == "" {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			}
+
+			result, err := validateArtifactBearerToken(c.Request().Context(), tokenService, token, tokens)
+			if err != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			}
+			if !result.Configured {
 				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "artifact auth not configured"})
 			}
-			if !validArtifactBearerToken(c, tokens) {
+			if !result.Allowed {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			}
 			return next(c)
@@ -44,11 +54,17 @@ func requireArtifactToken(tokens []string) echo.MiddlewareFunc {
 	}
 }
 
-func requireArtifactAccess(service FeishuAuthService, tokens []string) echo.MiddlewareFunc {
+func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAccessTokenService, tokens []string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if validArtifactBearerToken(c, tokens) {
-				return next(c)
+			if token := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization)); token != "" {
+				result, err := validateArtifactBearerToken(c.Request().Context(), tokenService, token, tokens)
+				if err != nil {
+					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+				}
+				if result.Allowed {
+					return next(c)
+				}
 			}
 			if service != nil {
 				if session, err := resolveConsoleSession(c, service); err == nil {
@@ -94,8 +110,30 @@ func consoleSessionErrorResponse(c echo.Context, err error) error {
 	return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }
 
-func validArtifactBearerToken(c echo.Context, tokens []string) bool {
-	token := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization))
+type artifactBearerTokenResult struct {
+	Allowed    bool
+	Configured bool
+}
+
+func validateArtifactBearerToken(ctx context.Context, tokenService ArtifactAccessTokenService, token string, tokens []string) (artifactBearerTokenResult, error) {
+	result := artifactBearerTokenResult{Configured: tokenService != nil || len(tokens) > 0}
+	if tokenService != nil {
+		validation, err := tokenService.ValidateArtifactAccessToken(ctx, token)
+		if err != nil {
+			return artifactBearerTokenResult{}, err
+		}
+		if validation.Matched {
+			result.Allowed = validation.Allowed
+			return result, nil
+		}
+	}
+	if validStaticArtifactBearerToken(token, tokens) {
+		result.Allowed = true
+	}
+	return result, nil
+}
+
+func validStaticArtifactBearerToken(token string, tokens []string) bool {
 	if token == "" {
 		return false
 	}
