@@ -26,6 +26,7 @@ type FeishuUserRepository interface {
 	FindFeishuAuthSession(ctx context.Context, sessionTokenHash string) (domain.FeishuAuthSession, error)
 	UpdateFeishuAuthSessionToken(ctx context.Context, session domain.FeishuAuthSession) error
 	UpsertFeishuUser(ctx context.Context, user domain.FeishuUser) (domain.FeishuUser, error)
+	UpsertUser(ctx context.Context, user domain.UserInput) error
 }
 
 type FeishuAuthService struct {
@@ -57,6 +58,9 @@ func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code stri
 
 	savedUser, err := s.repository.UpsertFeishuUser(ctx, user)
 	if err != nil {
+		return domain.FeishuAuthResult{}, err
+	}
+	if err := s.syncConsoleUser(ctx, savedUser); err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
 
@@ -106,6 +110,9 @@ func (s *FeishuAuthService) GetSession(ctx context.Context, sessionToken string)
 		}
 		session = refreshedSession
 	}
+	if err := s.syncConsoleUser(ctx, session.User); err != nil {
+		return domain.FeishuAuthResult{}, err
+	}
 
 	return authResultFromSession(session, sessionToken, now), nil
 }
@@ -115,6 +122,23 @@ func (s *FeishuAuthService) Logout(ctx context.Context, sessionToken string) err
 		return nil
 	}
 	return s.repository.DeleteFeishuAuthSession(ctx, sessionTokenHash(sessionToken))
+}
+
+func (s *FeishuAuthService) syncConsoleUser(ctx context.Context, user domain.FeishuUser) error {
+	id := domain.ConsoleUserIDFromFeishu(user)
+	if id == "" {
+		return domain.ErrFeishuAuthorization
+	}
+	return s.repository.UpsertUser(ctx, domain.UserInput{
+		ID:            id,
+		Name:          firstNonEmpty(user.Name, user.EnName, id),
+		Email:         firstNonEmpty(user.EnterpriseEmail, user.Email),
+		AvatarURL:     firstNonEmpty(user.AvatarURL, user.AvatarMiddle, user.AvatarThumb, user.AvatarBig),
+		DepartmentIDs: []string{},
+		FeishuUnionID: user.UnionID,
+		FeishuOpenID:  user.OpenID,
+		FeishuUserID:  user.UserID,
+	})
 }
 
 func (s *FeishuAuthService) refreshSession(ctx context.Context, session domain.FeishuAuthSession, now time.Time) (domain.FeishuAuthSession, error) {

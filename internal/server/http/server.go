@@ -139,17 +139,22 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 			"status": "ok",
 		})
 	})
-	registerEnumRoutes(api)
-	registerApplicationRoutes(api, deps.ApplicationService)
-	registerArtifactRoutes(api, deps.ArtifactService)
-	registerBuildRoutes(api, deps.BuildService)
-	registerCodeSourceRoutes(api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)
-	registerEnvironmentRoutes(api, deps.EnvironmentService)
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
-	registerFeishuContactRoutes(api, deps.FeishuContactService, deps.FeishuAuthService)
-	registerModuleRoutes(api, deps.ModuleService)
-	registerReleaseRoutes(api, deps.ReleaseService)
-	registerStorageRoutes(api, deps.StorageService)
+	registerArtifactRoutes(api, deps.ArtifactService, deps.FeishuAuthService, cfg.Artifact.AccessTokens)
+
+	protectedAPI := api.Group("")
+	if deps.FeishuAuthService != nil {
+		protectedAPI.Use(requireConsoleSession(deps.FeishuAuthService))
+	}
+	registerEnumRoutes(protectedAPI)
+	registerApplicationRoutes(protectedAPI, deps.ApplicationService)
+	registerBuildRoutes(protectedAPI, deps.BuildService)
+	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)
+	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService)
+	registerFeishuContactRoutes(protectedAPI, deps.FeishuContactService, deps.FeishuAuthService)
+	registerModuleRoutes(protectedAPI, deps.ModuleService)
+	registerReleaseRoutes(protectedAPI, deps.ReleaseService)
+	registerStorageRoutes(protectedAPI, deps.StorageService)
 
 	return e
 }

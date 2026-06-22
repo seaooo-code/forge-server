@@ -79,6 +79,10 @@ func (r *FeishuUserRepository) UpsertFeishuUser(ctx context.Context, user domain
 	return user, nil
 }
 
+func (r *FeishuUserRepository) UpsertUser(ctx context.Context, user domain.UserInput) error {
+	return upsertUser(ctx, r.pool, user)
+}
+
 func (r *FeishuUserRepository) CreateFeishuAuthSession(ctx context.Context, session domain.FeishuAuthSession) error {
 	if _, err := r.pool.Exec(ctx, `
 		insert into feishu_auth_sessions (

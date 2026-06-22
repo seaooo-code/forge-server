@@ -14,6 +14,11 @@ type userExecutor interface {
 }
 
 func upsertUser(ctx context.Context, executor userExecutor, user domain.UserInput) error {
+	departmentIDs := user.DepartmentIDs
+	if departmentIDs == nil {
+		departmentIDs = []string{}
+	}
+
 	if _, err := executor.Exec(ctx, `
 		insert into users (
 			id,
@@ -41,7 +46,7 @@ func upsertUser(ctx context.Context, executor userExecutor, user domain.UserInpu
 		user.Name,
 		user.Email,
 		user.AvatarURL,
-		user.DepartmentIDs,
+		departmentIDs,
 		user.FeishuUnionID,
 		user.FeishuOpenID,
 		user.FeishuUserID,

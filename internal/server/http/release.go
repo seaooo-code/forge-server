@@ -14,11 +14,10 @@ type releaseHandler struct {
 }
 
 type releaseCreateRequest struct {
-	BuildRecordID   string `json:"buildRecordId"`
-	ReleaseType     string `json:"releaseType"`
-	Identifier      string `json:"identifier"`
-	Description     string `json:"description"`
-	CreatedByUserID string `json:"createdByUserId"`
+	BuildRecordID string `json:"buildRecordId"`
+	ReleaseType   string `json:"releaseType"`
+	Identifier    string `json:"identifier"`
+	Description   string `json:"description"`
 }
 
 type releaseDetailResponse struct {
@@ -109,12 +108,21 @@ func (h releaseHandler) create(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
 	}
 
+	session, ok := consoleSession(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	createdByUserID := domain.ConsoleUserIDFromFeishu(session.User)
+	if createdByUserID == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+
 	record, route, err := h.service.CreateRelease(c.Request().Context(), domain.ReleaseCreateInput{
 		BuildRecordID:   request.BuildRecordID,
 		ReleaseType:     domain.ReleaseType(request.ReleaseType),
 		Identifier:      request.Identifier,
 		Description:     request.Description,
-		CreatedByUserID: request.CreatedByUserID,
+		CreatedByUserID: createdByUserID,
 	})
 	if err != nil {
 		return releaseErrorResponse(c, err)

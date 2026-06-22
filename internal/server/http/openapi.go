@@ -301,10 +301,12 @@ func openAPIDocument() *openapi3.T {
 					op := operation("downloadArtifactFile", "Download a single build artifact file", []string{"Artifacts"}, responses(
 						responseNoBody(http.StatusOK, "Artifact file stream."),
 						response(http.StatusBadRequest, "Invalid artifact request.", schemaRef("ErrorResponse")),
+						response(http.StatusUnauthorized, "Console session or artifact token is required.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Artifact not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.Parameters = artifactDownloadParameters()
+					op.Security = artifactAccessSecurityRequirements()
 					return op
 				}(),
 			}),
@@ -313,10 +315,12 @@ func openAPIDocument() *openapi3.T {
 					op := operation("getApplicationArtifactManifest", "Get application module artifact manifest", []string{"Artifacts"}, responses(
 						response(http.StatusOK, "Application module artifact manifest.", schemaRef("ArtifactManifestResponse")),
 						response(http.StatusBadRequest, "Invalid artifact manifest request.", schemaRef("ErrorResponse")),
+						response(http.StatusUnauthorized, "Artifact token is required.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Application environment manifest not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.Parameters = artifactManifestParameters()
+					op.Security = artifactTokenSecurityRequirements()
 					return op
 				}(),
 			}),
@@ -589,6 +593,20 @@ func openAPIDocument() *openapi3.T {
 			}),
 		),
 		Components: &openapi3.Components{
+			SecuritySchemes: openapi3.SecuritySchemes{
+				"ConsoleSession": {Value: &openapi3.SecurityScheme{
+					Type:        "apiKey",
+					In:          "cookie",
+					Name:        feishuSessionCookieName,
+					Description: "Forge console session cookie.",
+				}},
+				"ArtifactBearer": {Value: &openapi3.SecurityScheme{
+					Type:         "http",
+					Scheme:       "bearer",
+					BearerFormat: "artifact-token",
+					Description:  "Artifact access token configured by FORGE_ARTIFACT_ACCESS_TOKENS.",
+				}},
+			},
 			Schemas: openapi3.Schemas{
 				"ErrorResponse":                      schemaValue(errorResponseSchema()),
 				"HealthResponse":                     schemaValue(healthResponseSchema()),
@@ -677,6 +695,21 @@ func operation(id string, summary string, tags []string, responses *openapi3.Res
 		Tags:        tags,
 		Responses:   responses,
 	}
+}
+
+func artifactAccessSecurityRequirements() *openapi3.SecurityRequirements {
+	requirements := openapi3.SecurityRequirements{
+		openapi3.SecurityRequirement{"ConsoleSession": []string{}},
+		openapi3.SecurityRequirement{"ArtifactBearer": []string{}},
+	}
+	return &requirements
+}
+
+func artifactTokenSecurityRequirements() *openapi3.SecurityRequirements {
+	requirements := openapi3.SecurityRequirements{
+		openapi3.SecurityRequirement{"ArtifactBearer": []string{}},
+	}
+	return &requirements
 }
 
 func responses(items ...openapi3.NewResponsesOption) *openapi3.Responses {
@@ -1518,12 +1551,11 @@ func artifactMissingModuleSchema() *openapi3.Schema {
 }
 
 func releaseCreateRequestSchema() *openapi3.Schema {
-	return objectSchema("buildRecordId", "releaseType", "createdByUserId").
+	return objectSchema("buildRecordId", "releaseType").
 		WithProperty("buildRecordId", stringSchema("Succeeded build record UUID to release.")).
 		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, targeted updates an identifier route.", "full", "targeted")).
 		WithProperty("identifier", stringSchema("Targeting identifier. Required for targeted releases and forbidden for full releases.")).
-		WithProperty("description", stringSchema("Release description.")).
-		WithProperty("createdByUserId", stringSchema("User id that creates the release."))
+		WithProperty("description", stringSchema("Release description."))
 }
 
 func releaseDetailResponseSchema() *openapi3.Schema {
@@ -1761,7 +1793,8 @@ func feishuAuthResponseSchema() *openapi3.Schema {
 }
 
 func feishuUserSchema() *openapi3.Schema {
-	return objectSchema("unionId").
+	return objectSchema("id", "unionId").
+		WithProperty("id", stringSchema("Console user id derived from open_id, user_id, or union_id.")).
 		WithProperty("unionId", stringSchema("Feishu union_id.")).
 		WithProperty("openId", stringSchema("Feishu open_id.")).
 		WithProperty("userId", stringSchema("Feishu user_id.")).

@@ -46,8 +46,8 @@ http://localhost:8080/openapi.json
 - `GET /api/v1/builds`：查询 RN JS bundle 构建记录列表。
 - `GET /api/v1/builds/:id`：查询 RN JS bundle 构建记录详情和产物树。
 - `POST /api/v1/builds`：传入模块 id、环境和可选分支，创建 RN JS bundle 构建记录。
-- `GET /api/v1/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file?path=...`：下载指定构建产物中的单个文件。
-- `GET /api/v1/artifacts/applications/:applicationSlug/environments/:environment/manifest`：查询应用在指定环境下的模块 manifest 配置，可传 `identifier` 优先解析标识发布。
+- `GET /api/v1/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file?path=...`：下载指定构建产物中的单个文件，支持控制台 session 或 `Authorization: Bearer <token>`。
+- `GET /api/v1/artifacts/applications/:applicationSlug/environments/:environment/manifest`：查询应用在指定环境下的模块 manifest 配置，可传 `identifier` 优先解析标识发布；客户端需携带 `Authorization: Bearer <token>`，token 来自 `FORGE_ARTIFACT_ACCESS_TOKENS`。
 - `GET /api/v1/storage/configurations`：存储配置列表。
 - `GET /api/v1/storage/configurations/:id`：存储配置详情。
 - `POST /api/v1/storage/configurations/test`：测试存储配置连通性。

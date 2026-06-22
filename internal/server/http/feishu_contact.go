@@ -57,25 +57,29 @@ func (h feishuContactHandler) searchUsers(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
 	}
 
-	sessionToken, ok := feishuSessionToken(c)
+	session, ok := consoleSession(c)
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-	}
-	session, err := h.authService.GetSession(c.Request().Context(), sessionToken)
-	if err != nil {
-		if errors.Is(err, domain.ErrFeishuSessionNotFound) || errors.Is(err, domain.ErrFeishuSessionExpired) {
-			clearFeishuSessionCookie(c)
+		sessionToken, hasSessionToken := feishuSessionToken(c)
+		if !hasSessionToken {
 			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		}
-		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
-			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
+		var err error
+		session, err = h.authService.GetSession(c.Request().Context(), sessionToken)
+		if err != nil {
+			if errors.Is(err, domain.ErrFeishuSessionNotFound) || errors.Is(err, domain.ErrFeishuSessionExpired) {
+				clearFeishuSessionCookie(c)
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			}
+			if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
+				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
+			}
+			if errors.Is(err, domain.ErrFeishuAuthorization) {
+				return c.JSON(http.StatusBadGateway, newFeishuErrorResponse(err))
+			}
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		}
-		if errors.Is(err, domain.ErrFeishuAuthorization) {
-			return c.JSON(http.StatusBadGateway, newFeishuErrorResponse(err))
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		setFeishuSessionCookie(c, session)
 	}
-	setFeishuSessionCookie(c, session)
 
 	pageSize := 20
 	if rawPageSize := c.QueryParam("page_size"); rawPageSize != "" {

@@ -29,6 +29,7 @@ type feishuAuthResponse struct {
 }
 
 type feishuUserResponse struct {
+	ID              string `json:"id"`
 	UnionID         string `json:"unionId"`
 	OpenID          string `json:"openId"`
 	UserID          string `json:"userId"`
@@ -165,6 +166,7 @@ func (h feishuAuthHandler) logout(c echo.Context) error {
 func newFeishuAuthResponse(result domain.FeishuAuthResult) feishuAuthResponse {
 	return feishuAuthResponse{
 		User: feishuUserResponse{
+			ID:              domain.ConsoleUserIDFromFeishu(result.User),
 			UnionID:         result.User.UnionID,
 			OpenID:          result.User.OpenID,
 			UserID:          result.User.UserID,

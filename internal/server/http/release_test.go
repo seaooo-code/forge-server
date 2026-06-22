@@ -18,16 +18,17 @@ func TestCreateRelease(t *testing.T) {
 		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault, ""),
 	}
 	e := New(config.Config{}, Dependencies{
-		ReleaseService: service,
+		FeishuAuthService: testReleaseAuthService(),
+		ReleaseService:    service,
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/releases", jsonBody(releaseCreateRequest{
-		BuildRecordID:   "build-1",
-		ReleaseType:     "full",
-		Description:     "QA 全量",
-		CreatedByUserID: "user-1",
+		BuildRecordID: "build-1",
+		ReleaseType:   "full",
+		Description:   "QA 全量",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -48,7 +49,7 @@ func TestCreateRelease(t *testing.T) {
 	}
 	if service.lastCreateInput.BuildRecordID != "build-1" ||
 		service.lastCreateInput.ReleaseType != domain.ReleaseTypeFull ||
-		service.lastCreateInput.CreatedByUserID != "user-1" {
+		service.lastCreateInput.CreatedByUserID != "ou-user-1" {
 		t.Fatalf("unexpected service input: %+v", service.lastCreateInput)
 	}
 }
@@ -59,16 +60,17 @@ func TestCreateTargetedRelease(t *testing.T) {
 		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1"),
 	}
 	e := New(config.Config{}, Dependencies{
-		ReleaseService: service,
+		FeishuAuthService: testReleaseAuthService(),
+		ReleaseService:    service,
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/releases", jsonBody(releaseCreateRequest{
-		BuildRecordID:   "build-1",
-		ReleaseType:     "targeted",
-		Identifier:      "staff-1",
-		CreatedByUserID: "user-1",
+		BuildRecordID: "build-1",
+		ReleaseType:   "targeted",
+		Identifier:    "staff-1",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -98,10 +100,12 @@ func TestListReleases(t *testing.T) {
 		records: []domain.ReleaseRecord{testHTTPReleaseRecord(domain.ReleaseTypeTargeted)},
 	}
 	e := New(config.Config{}, Dependencies{
-		ReleaseService: service,
+		FeishuAuthService: testReleaseAuthService(),
+		ReleaseService:    service,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?moduleId=module-profile&environment=qa", nil)
+	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -127,10 +131,12 @@ func TestResolveReleaseRoute(t *testing.T) {
 		route: testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1"),
 	}
 	e := New(config.Config{}, Dependencies{
-		ReleaseService: service,
+		FeishuAuthService: testReleaseAuthService(),
+		ReleaseService:    service,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases/resolve?moduleId=module-profile&environment=qa&identifier=staff-1", nil)
+	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -155,18 +161,19 @@ func TestResolveReleaseRoute(t *testing.T) {
 
 func TestCreateReleaseRejectsInvalidRequest(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
+		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService: &fakeReleaseService{
 			err: domain.ErrInvalidReleaseInput,
 		},
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/releases", jsonBody(releaseCreateRequest{
-		BuildRecordID:   "build-1",
-		ReleaseType:     "full",
-		Identifier:      "staff-1",
-		CreatedByUserID: "user-1",
+		BuildRecordID: "build-1",
+		ReleaseType:   "full",
+		Identifier:    "staff-1",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -174,6 +181,22 @@ func TestCreateReleaseRejectsInvalidRequest(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
+}
+
+func testReleaseAuthService() *fakeFeishuAuthService {
+	return &fakeFeishuAuthService{result: domain.FeishuAuthResult{
+		SessionExpiresAt: time.Now().Add(time.Hour),
+		SessionToken:     "session-token",
+		User: domain.FeishuUser{
+			UnionID: "on-user-1",
+			OpenID:  "ou-user-1",
+			Name:    "海鸥",
+		},
+	}}
+}
+
+func addTestReleaseSession(req *http.Request) {
+	req.AddCookie(&http.Cookie{Name: feishuSessionCookieName, Value: "session-token"})
 }
 
 type fakeReleaseService struct {

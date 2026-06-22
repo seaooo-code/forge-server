@@ -63,7 +63,7 @@ type codeSourceRepositoryResponse struct {
 	UpdatedAt      string `json:"updatedAt"`
 }
 
-func registerCodeSourceRoutes(group *echo.Group, service CodeSourceService, authService FeishuAuthService, installRedirectURL string) {
+func registerCodeSourceRoutes(group *echo.Group, publicGroup *echo.Group, service CodeSourceService, authService FeishuAuthService, installRedirectURL string) {
 	handler := codeSourceHandler{
 		authService:        authService,
 		installRedirectURL: installRedirectURL,
@@ -72,7 +72,7 @@ func registerCodeSourceRoutes(group *echo.Group, service CodeSourceService, auth
 
 	group.GET("/code-sources", handler.list)
 	group.GET("/code-sources/:provider/manifest", handler.manifest)
-	group.GET("/code-sources/:provider/manifest/callback", handler.completeManifest)
+	publicGroup.GET("/code-sources/:provider/manifest/callback", handler.completeManifest)
 	group.GET("/code-sources/:provider/install-url", handler.installURL)
 	group.GET("/code-sources/:provider/install/callback", handler.completeInstallation)
 	group.DELETE("/code-sources/:provider/installations", handler.deleteInstallations)
@@ -243,6 +243,9 @@ func codeSourceRepositoryPageSize(c echo.Context) (int, bool) {
 }
 
 func (h codeSourceHandler) currentSession(c echo.Context) (domain.FeishuAuthResult, bool, error) {
+	if session, ok := consoleSession(c); ok {
+		return session, true, nil
+	}
 	if h.authService == nil {
 		return domain.FeishuAuthResult{}, false, c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -95,6 +96,26 @@ func TestLoadReadsFeishuSearchDebugFlag(t *testing.T) {
 
 	if !cfg.Feishu.DebugLogSearchResponse {
 		t.Fatal("expected feishu search debug log flag to be enabled")
+	}
+}
+
+func TestLoadReadsArtifactAccessTokens(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte("FORGE_ARTIFACT_ACCESS_TOKENS=token-a, token-b,,token-c\n"), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	unsetEnv(t, "FORGE_ARTIFACT_ACCESS_TOKENS")
+	t.Setenv("ENV_FILE", envPath)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	expected := []string{"token-a", "token-b", "token-c"}
+	if !reflect.DeepEqual(cfg.Artifact.AccessTokens, expected) {
+		t.Fatalf("expected artifact tokens %#v, got %#v", expected, cfg.Artifact.AccessTokens)
 	}
 }
 

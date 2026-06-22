@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
@@ -23,9 +24,10 @@ func TestDownloadArtifactFile(t *testing.T) {
 			Name:          "icon.png",
 		},
 	}
-	e := New(config.Config{}, Dependencies{ArtifactService: service})
+	e := New(testArtifactConfig(), Dependencies{ArtifactService: service})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=assets/icon.png", nil)
+	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -54,11 +56,12 @@ func TestDownloadArtifactFile(t *testing.T) {
 }
 
 func TestDownloadArtifactFileRejectsInvalidRequest(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := New(testArtifactConfig(), Dependencies{
 		ArtifactService: &fakeArtifactService{err: domain.ErrInvalidArtifactInput},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=../secret", nil)
+	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -69,11 +72,12 @@ func TestDownloadArtifactFileRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestDownloadArtifactFileNotFound(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := New(testArtifactConfig(), Dependencies{
 		ArtifactService: &fakeArtifactService{err: domain.ErrArtifactNotFound},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=assets/icon.png", nil)
+	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -116,9 +120,10 @@ func TestGetArtifactManifest(t *testing.T) {
 			},
 		},
 	}
-	e := New(config.Config{}, Dependencies{ArtifactService: service})
+	e := New(testArtifactConfig(), Dependencies{ArtifactService: service})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?identifier=staff-1", nil)
+	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -141,6 +146,60 @@ func TestGetArtifactManifest(t *testing.T) {
 	}
 	if service.lastManifestInput.Identifier != "staff-1" {
 		t.Fatalf("expected identifier to be passed to service, got %+v", service.lastManifestInput)
+	}
+}
+
+func TestGetArtifactManifestRejectsMissingToken(t *testing.T) {
+	e := New(testArtifactConfig(), Dependencies{ArtifactService: &fakeArtifactService{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+}
+
+func TestDownloadArtifactFileAcceptsSession(t *testing.T) {
+	service := &fakeArtifactService{
+		object: domain.ArtifactObject{
+			Body:        io.NopCloser(strings.NewReader("bundle-body")),
+			ContentType: "application/javascript",
+			Name:        "index.bundle",
+		},
+	}
+	e := New(config.Config{}, Dependencies{
+		ArtifactService: service,
+		FeishuAuthService: &fakeFeishuAuthService{result: domain.FeishuAuthResult{
+			SessionExpiresAt: time.Now().Add(time.Hour),
+			SessionToken:     "session-token",
+			User:             domain.FeishuUser{UnionID: "on-user-1"},
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=index.bundle", nil)
+	req.AddCookie(&http.Cookie{Name: feishuSessionCookieName, Value: "session-token"})
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+}
+
+func TestDownloadArtifactFileRejectsMissingAuth(t *testing.T) {
+	e := New(testArtifactConfig(), Dependencies{ArtifactService: &fakeArtifactService{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=index.bundle", nil)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, rec.Code, rec.Body.String())
 	}
 }
 
@@ -169,3 +228,11 @@ func (s *fakeArtifactService) GetApplicationManifest(_ context.Context, input do
 }
 
 const echoHeaderContentType = "Content-Type"
+
+func testArtifactConfig() config.Config {
+	return config.Config{Artifact: config.ArtifactConfig{AccessTokens: []string{"artifact-token"}}}
+}
+
+func addTestArtifactBearer(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer artifact-token")
+}

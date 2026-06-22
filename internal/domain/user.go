@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type User struct {
 	ID            string
@@ -24,4 +27,13 @@ type UserInput struct {
 	FeishuUnionID string
 	FeishuOpenID  string
 	FeishuUserID  string
+}
+
+func ConsoleUserIDFromFeishu(user FeishuUser) string {
+	for _, value := range []string{user.OpenID, user.UserID, user.UnionID} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

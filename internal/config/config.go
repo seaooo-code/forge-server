@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	App       AppConfig
+	Artifact  ArtifactConfig
 	Feishu    FeishuConfig
 	GitHub    GitHubConfig
 	HTTP      HTTPConfig
@@ -25,6 +26,10 @@ type Config struct {
 type AppConfig struct {
 	Env             string
 	ShutdownTimeout time.Duration
+}
+
+type ArtifactConfig struct {
+	AccessTokens []string
 }
 
 type HTTPConfig struct {
@@ -174,6 +179,9 @@ func Load() (Config, error) {
 		App: AppConfig{
 			Env:             appEnv,
 			ShutdownTimeout: shutdownTimeout,
+		},
+		Artifact: ArtifactConfig{
+			AccessTokens: stringListEnv("FORGE_ARTIFACT_ACCESS_TOKENS", nil),
 		},
 		HTTP: HTTPConfig{
 			Addr: stringEnv("HTTP_ADDR", ":8080"),
