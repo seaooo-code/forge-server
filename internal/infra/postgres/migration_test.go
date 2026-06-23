@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"testing/fstest"
@@ -20,5 +21,17 @@ func TestMigrationFiles(t *testing.T) {
 	expected := []string{"000001_first.sql", "000002_second.sql"}
 	if !reflect.DeepEqual(files, expected) {
 		t.Fatalf("expected %v, got %v", expected, files)
+	}
+}
+
+func TestProjectUsesSingleCanonicalMigration(t *testing.T) {
+	files, err := migrationFiles(os.DirFS("../../../migrations"))
+	if err != nil {
+		t.Fatalf("migration files: %v", err)
+	}
+
+	expected := []string{"000001_init_schema.sql"}
+	if !reflect.DeepEqual(files, expected) {
+		t.Fatalf("expected only canonical migration %v, got %v", expected, files)
 	}
 }

@@ -40,6 +40,12 @@ type Executor struct {
 	logger               *slog.Logger
 }
 
+type buildWorkspace struct {
+	outputDir string
+	repoDir   string
+	rootDir   string
+}
+
 func NewExecutor(cfg config.WorkerConfig, codeSourceStore CodeSourceConfigStore, githubClient GitHubInstallationTokenClient, fallbackGitHubConfig domain.CodeSourceAppConfig, logger *slog.Logger) *Executor {
 	return &Executor{
 		cfg:                  cfg,
@@ -51,71 +57,107 @@ func NewExecutor(cfg config.WorkerConfig, codeSourceStore CodeSourceConfigStore,
 }
 
 func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (domain.BuildRecordCompletion, error) {
-	if record.RepositoryProvider != domain.CodeSourceProviderGitHub {
-		return domain.BuildRecordCompletion{}, domain.ErrInvalidBuildInput
-	}
-	if e.codeSourceStore == nil || e.githubClient == nil {
-		return domain.BuildRecordCompletion{}, domain.ErrCodeSourceAuthNotConfigured
+	// 构建执行保持单 worker 串行编排，但每一步保留独立函数边界，后续流水线任务可按这些边界配置和复用。
+	if err := e.validateBuildTask(record); err != nil {
+		return domain.BuildRecordCompletion{}, err
 	}
 
-	appConfig, err := e.codeSourceAppConfig(ctx, record.RepositoryProvider)
+	token, err := e.resolveRepositoryToken(ctx, record)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
 
-	token, err := e.githubClient.InstallationAccessToken(ctx, appConfig, record.RepositoryInstallationID)
+	workspace, cleanup, err := e.prepareBuildWorkspace(record)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
+	defer cleanup()
 
-	baseWorkDir := e.workDir()
-	if err := os.MkdirAll(baseWorkDir, 0o755); err != nil {
-		return domain.BuildRecordCompletion{}, fmt.Errorf("create worker base dir: %w", err)
-	}
-
-	workDir, err := os.MkdirTemp(baseWorkDir, record.ID+"-*")
+	artifactRoot, err := e.buildArtifact(ctx, record, token, workspace)
 	if err != nil {
-		return domain.BuildRecordCompletion{}, fmt.Errorf("create build work dir: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(workDir); err != nil && e.logger != nil {
-			e.logger.Warn("remove build work dir failed", "build", record.ID, "path", workDir, "error", err)
-		}
-	}()
-
-	repoDir := filepath.Join(workDir, "repo")
-	outputDir := filepath.Join(workDir, "output")
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return domain.BuildRecordCompletion{}, fmt.Errorf("create build output dir: %w", err)
-	}
-
-	if err := e.cloneRepository(ctx, record, token, repoDir); err != nil {
-		return domain.BuildRecordCompletion{}, err
-	}
-	if err := e.buildDockerOutput(ctx, record.ID+"-"+filepath.Base(workDir), repoDir, outputDir); err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
 
 	artifactKey := e.artifactKey(record)
-	artifactRoot, err := buildArtifactRoot(outputDir)
+	manifest, err := generateArtifactManifest(artifactRoot, artifactKey)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
-	manifest, err := e.uploadOutput(ctx, record, artifactRoot, artifactKey)
-	if err != nil {
+	if err := e.uploadArtifact(ctx, record, artifactRoot, manifest); err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
 
-	return domain.BuildRecordCompletion{
-		ArtifactKey:    artifactKey,
-		ArtifactURL:    artifactURL(record.StoragePublicBaseURL, artifactKey),
-		ManifestKey:    artifactManifestKey(artifactKey),
-		FileCount:      manifest.FileCount,
-		TotalSizeBytes: manifest.TotalSizeBytes,
-	}, nil
+	return buildRecordCompletion(record, manifest), nil
 }
 
-func (e *Executor) cloneRepository(ctx context.Context, record domain.BuildRecord, token string, repoDir string) error {
+func (e *Executor) validateBuildTask(record domain.BuildRecord) error {
+	if record.RepositoryProvider != domain.CodeSourceProviderGitHub {
+		return domain.ErrInvalidBuildInput
+	}
+	if e.codeSourceStore == nil || e.githubClient == nil {
+		return domain.ErrCodeSourceAuthNotConfigured
+	}
+	return nil
+}
+
+func (e *Executor) resolveRepositoryToken(ctx context.Context, record domain.BuildRecord) (string, error) {
+	appConfig, err := e.codeSourceAppConfig(ctx, record.RepositoryProvider)
+	if err != nil {
+		return "", err
+	}
+	return e.githubClient.InstallationAccessToken(ctx, appConfig, record.RepositoryInstallationID)
+}
+
+func (e *Executor) prepareBuildWorkspace(record domain.BuildRecord) (buildWorkspace, func(), error) {
+	baseWorkDir := e.workDir()
+	if err := os.MkdirAll(baseWorkDir, 0o755); err != nil {
+		return buildWorkspace{}, nil, fmt.Errorf("create worker base dir: %w", err)
+	}
+
+	workDir, err := os.MkdirTemp(baseWorkDir, record.ID+"-*")
+	if err != nil {
+		return buildWorkspace{}, nil, fmt.Errorf("create build work dir: %w", err)
+	}
+	cleanup := func() {
+		if err := os.RemoveAll(workDir); err != nil && e.logger != nil {
+			e.logger.Warn("remove build work dir failed", "build", record.ID, "path", workDir, "error", err)
+		}
+	}
+
+	workspace := buildWorkspace{
+		outputDir: filepath.Join(workDir, "output"),
+		repoDir:   filepath.Join(workDir, "repo"),
+		rootDir:   workDir,
+	}
+	if err := os.MkdirAll(workspace.outputDir, 0o755); err != nil {
+		cleanup()
+		return buildWorkspace{}, nil, fmt.Errorf("create build output dir: %w", err)
+	}
+	return workspace, cleanup, nil
+}
+
+func (e *Executor) buildArtifact(ctx context.Context, record domain.BuildRecord, token string, workspace buildWorkspace) (string, error) {
+	// 本地构建阶段只负责检出代码和导出产物目录，不处理 manifest 或上传，便于后续拆成独立流水线任务。
+	if err := e.checkoutRepository(ctx, record, token, workspace.repoDir); err != nil {
+		return "", err
+	}
+	if err := e.exportDockerArtifact(ctx, record.ID+"-"+filepath.Base(workspace.rootDir), workspace.repoDir, workspace.outputDir); err != nil {
+		return "", err
+	}
+	return buildArtifactRoot(workspace.outputDir)
+}
+
+func buildRecordCompletion(record domain.BuildRecord, manifest domain.ArtifactManifest) domain.BuildRecordCompletion {
+	return domain.BuildRecordCompletion{
+		ArtifactKey:    manifest.ArtifactKey,
+		ArtifactURL:    artifactURL(record.StoragePublicBaseURL, manifest.ArtifactKey),
+		ManifestKey:    artifactManifestKey(manifest.ArtifactKey),
+		FileCount:      manifest.FileCount,
+		TotalSizeBytes: manifest.TotalSizeBytes,
+	}
+}
+
+func (e *Executor) checkoutRepository(ctx context.Context, record domain.BuildRecord, token string, repoDir string) error {
 	cloneURL := strings.TrimSpace(record.RepositoryCloneURL)
 	if cloneURL == "" {
 		return domain.ErrInvalidBuildInput
@@ -142,7 +184,7 @@ func gitCloneArgs(branch string, cloneURL string, repoDir string) []string {
 	return append(args, cloneURL, repoDir)
 }
 
-func (e *Executor) buildDockerOutput(ctx context.Context, buildID string, repoDir string, outputDir string) error {
+func (e *Executor) exportDockerArtifact(ctx context.Context, buildID string, repoDir string, outputDir string) error {
 	dockerfile := strings.TrimSpace(e.cfg.Dockerfile)
 	if dockerfile == "" {
 		dockerfile = "Dockerfile"
@@ -383,18 +425,8 @@ func (e *Executor) cleanupDockerImage(imageTag string) {
 	}
 }
 
-func (e *Executor) uploadOutput(ctx context.Context, record domain.BuildRecord, artifactRoot string, artifactKey string) (domain.ArtifactManifest, error) {
-	client, err := s3infra.NewClient(s3infra.Options{
-		Region:          record.StorageRegion,
-		Bucket:          record.StorageBucket,
-		Endpoint:        record.StorageEndpoint,
-		AccessKeyID:     record.StorageAccessKeyID,
-		SecretAccessKey: record.StorageSecretAccessKey,
-	})
-	if err != nil {
-		return domain.ArtifactManifest{}, err
-	}
-
+func generateArtifactManifest(artifactRoot string, artifactKey string) (domain.ArtifactManifest, error) {
+	// manifest 是产物上传和客户端下载的共同索引，这里只扫描本地文件并生成稳定元数据，不访问远端存储。
 	files, err := artifactFiles(artifactRoot)
 	if err != nil {
 		return domain.ArtifactManifest{}, fmt.Errorf("list build artifacts: %w", err)
@@ -410,31 +442,63 @@ func (e *Executor) uploadOutput(ctx context.Context, record domain.BuildRecord, 
 		if err != nil {
 			return domain.ArtifactManifest{}, err
 		}
-
-		file, err := os.Open(artifact.path)
-		if err != nil {
-			return domain.ArtifactManifest{}, err
-		}
-		if err := client.PutObject(ctx, objectKey, file, manifestFile.ContentType); err != nil {
-			_ = file.Close()
-			return domain.ArtifactManifest{}, err
-		}
-		if err := file.Close(); err != nil {
-			return domain.ArtifactManifest{}, err
-		}
-
 		manifest.Files = append(manifest.Files, manifestFile)
 		manifest.FileCount++
 		manifest.TotalSizeBytes += manifestFile.SizeBytes
 	}
+	return manifest, nil
+}
+
+func (e *Executor) uploadArtifact(ctx context.Context, record domain.BuildRecord, artifactRoot string, manifest domain.ArtifactManifest) error {
+	// 上传阶段完全以 manifest 为准，保证对象存储中的文件、manifest.json 和构建记录摘要使用同一份产物索引。
+	client, err := s3infra.NewClient(s3infra.Options{
+		Region:          record.StorageRegion,
+		Bucket:          record.StorageBucket,
+		Endpoint:        record.StorageEndpoint,
+		AccessKeyID:     record.StorageAccessKeyID,
+		SecretAccessKey: record.StorageSecretAccessKey,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, manifestFile := range manifest.Files {
+		if err := uploadArtifactFile(ctx, client, artifactRoot, manifestFile); err != nil {
+			return err
+		}
+	}
+	return uploadArtifactManifest(ctx, client, manifest)
+}
+
+func uploadArtifactFile(ctx context.Context, client *s3infra.Client, artifactRoot string, manifestFile domain.ArtifactManifestFile) error {
+	artifactPath, err := artifactLocalPath(artifactRoot, manifestFile.Path)
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(artifactPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return client.PutObject(ctx, manifestFile.ObjectKey, file, manifestFile.ContentType)
+}
+
+func uploadArtifactManifest(ctx context.Context, client *s3infra.Client, manifest domain.ArtifactManifest) error {
 	manifestPayload, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return domain.ArtifactManifest{}, fmt.Errorf("encode artifact manifest: %w", err)
+		return fmt.Errorf("encode artifact manifest: %w", err)
 	}
-	if err := client.PutObject(ctx, artifactManifestKey(artifactKey), strings.NewReader(string(manifestPayload)), "application/json"); err != nil {
-		return domain.ArtifactManifest{}, err
+	return client.PutObject(ctx, artifactManifestKey(manifest.ArtifactKey), strings.NewReader(string(manifestPayload)), "application/json")
+}
+
+func artifactLocalPath(artifactRoot string, artifactPath string) (string, error) {
+	// manifest 路径未来可能来自独立任务产物，上传前必须阻止越界路径访问 worker 本地文件。
+	cleaned := path.Clean(strings.TrimSpace(artifactPath))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") || strings.Contains(cleaned, "\\") {
+		return "", errors.New("artifact manifest contains invalid file path")
 	}
-	return manifest, nil
+	return filepath.Join(artifactRoot, filepath.FromSlash(cleaned)), nil
 }
 
 func newArtifactManifest(artifactKey string) domain.ArtifactManifest {

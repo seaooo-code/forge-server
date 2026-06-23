@@ -257,6 +257,47 @@ func TestArtifactManifestFileIncludesNestedMetadata(t *testing.T) {
 	}
 }
 
+func TestGenerateArtifactManifestScansArtifacts(t *testing.T) {
+	artifactRoot := t.TempDir()
+	bundle := []byte("bundle")
+	if err := os.WriteFile(filepath.Join(artifactRoot, "index.bundle"), bundle, 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(artifactRoot, "assets"), 0o755); err != nil {
+		t.Fatalf("create assets dir: %v", err)
+	}
+	image := []byte("image")
+	if err := os.WriteFile(filepath.Join(artifactRoot, "assets", "home.png"), image, 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	manifest, err := generateArtifactManifest(artifactRoot, "rn-bundles/app/module/qa/build-1")
+	if err != nil {
+		t.Fatalf("generate artifact manifest: %v", err)
+	}
+
+	if manifest.ArtifactKey != "rn-bundles/app/module/qa/build-1" ||
+		manifest.FileCount != 2 ||
+		manifest.TotalSizeBytes != int64(len(bundle)+len(image)) {
+		t.Fatalf("unexpected manifest summary: %+v", manifest)
+	}
+
+	files := map[string]domain.ArtifactManifestFile{}
+	for _, file := range manifest.Files {
+		files[file.Path] = file
+	}
+	if files["index.bundle"].ObjectKey != "rn-bundles/app/module/qa/build-1/index.bundle" ||
+		files["assets/home.png"].ObjectKey != "rn-bundles/app/module/qa/build-1/assets/home.png" {
+		t.Fatalf("unexpected manifest files: %+v", manifest.Files)
+	}
+}
+
+func TestArtifactLocalPathRejectsTraversal(t *testing.T) {
+	if _, err := artifactLocalPath(t.TempDir(), "../secret"); err == nil {
+		t.Fatal("expected traversal path to be rejected")
+	}
+}
+
 func TestNewArtifactManifestAndManifestKey(t *testing.T) {
 	manifest := newArtifactManifest("rn-bundles/app/module/qa/build-1")
 	if manifest.Version != 1 || manifest.ArtifactKey != "rn-bundles/app/module/qa/build-1" || len(manifest.Files) != 0 {
