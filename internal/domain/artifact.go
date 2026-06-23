@@ -22,6 +22,7 @@ type ArtifactManifestInput struct {
 	ApplicationSlug string
 	Environment     string
 	Identifier      string
+	UserID          string
 }
 
 type ArtifactApplication struct {
@@ -42,13 +43,15 @@ type ArtifactManifestSource struct {
 }
 
 type ArtifactModuleReleaseSource struct {
-	ID            string
-	Name          string
-	Kind          ModuleKind
-	ReleaseID     string
-	ReleaseType   ReleaseType
-	Identifier    string
-	BuildRecordID string
+	ID             string
+	Name           string
+	Kind           ModuleKind
+	ReleaseID      string
+	ReleaseType    ReleaseType
+	GrayStrategy   ReleaseGrayStrategy
+	GrayPercentage int
+	Identifier     string
+	BuildRecordID  string
 }
 
 type ArtifactApplicationManifest struct {
@@ -60,16 +63,18 @@ type ArtifactApplicationManifest struct {
 }
 
 type ArtifactModuleManifest struct {
-	ID            string
-	Name          string
-	Kind          ModuleKind
-	ReleaseID     string
-	ReleaseType   ReleaseType
-	Identifier    string
-	BuildRecordID string
-	ArtifactKey   string
-	ManifestKey   string
-	Files         []ArtifactManifestResolvedFile
+	ID             string
+	Name           string
+	Kind           ModuleKind
+	ReleaseID      string
+	ReleaseType    ReleaseType
+	GrayStrategy   ReleaseGrayStrategy
+	GrayPercentage int
+	Identifier     string
+	BuildRecordID  string
+	ArtifactKey    string
+	ManifestKey    string
+	Files          []ArtifactManifestResolvedFile
 }
 
 type ArtifactManifestResolvedFile struct {

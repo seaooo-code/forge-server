@@ -89,13 +89,15 @@ func TestArtifactServiceManifestResolvesURLsAndMissingModules(t *testing.T) {
 			Environment: domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
 			Modules: []domain.ArtifactModuleReleaseSource{
 				{
-					ID:            "module-profile",
-					Name:          "profile",
-					Kind:          domain.ModuleKindFeature,
-					ReleaseID:     "018f4d7a-0a6c-789b-9c12-36a4dfd9d001",
-					ReleaseType:   domain.ReleaseTypeTargeted,
-					Identifier:    "staff-1",
-					BuildRecordID: firstRecord.ID,
+					ID:             "module-profile",
+					Name:           "profile",
+					Kind:           domain.ModuleKindFeature,
+					ReleaseID:      "018f4d7a-0a6c-789b-9c12-36a4dfd9d001",
+					ReleaseType:    domain.ReleaseTypeGray,
+					GrayStrategy:   domain.ReleaseGrayStrategyTargeted,
+					GrayPercentage: 0,
+					Identifier:     "staff-1",
+					BuildRecordID:  firstRecord.ID,
 				},
 				{
 					ID:            "module-home",

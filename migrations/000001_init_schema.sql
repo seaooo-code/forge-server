@@ -321,14 +321,22 @@ create table release_records (
     module_id text not null references modules(id) on delete restrict,
     environment_code text not null references environments(code) on delete restrict,
     build_record_id uuid not null references build_records(id) on delete restrict,
-    release_type text not null check (release_type in ('full', 'targeted')),
-    status text not null check (status in ('active', 'inactive', 'revoked')),
+    release_type text not null check (release_type in ('full', 'gray')),
+    gray_strategy text not null default '',
+    gray_percentage integer not null default 0,
+    expires_at timestamptz,
+    status text not null check (status in ('active', 'inactive')),
     artifact_key text not null,
     artifact_url text not null default '',
     description text not null default '',
     created_by_user_id text not null references users(id) on delete restrict,
     created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now()
+    updated_at timestamptz not null default now(),
+    check (
+        (release_type = 'full' and gray_strategy = '' and gray_percentage = 0 and expires_at is null)
+        or (release_type = 'gray' and gray_strategy = 'targeted' and gray_percentage = 0 and expires_at is not null)
+        or (release_type = 'gray' and gray_strategy = 'percentage' and gray_percentage between 0 and 99 and expires_at is null)
+    )
 );
 
 create index idx_release_records_module_environment
@@ -340,12 +348,16 @@ create index idx_release_records_build
 create index idx_release_records_created_by
     on release_records(created_by_user_id);
 
+create index idx_release_records_targeted_expiry
+    on release_records(expires_at)
+    where release_type = 'gray' and gray_strategy = 'targeted' and status = 'active';
+
 create table release_routes (
     id text primary key,
     module_id text not null references modules(id) on delete restrict,
     environment_code text not null references environments(code) on delete restrict,
     release_id uuid not null references release_records(id) on delete restrict,
-    route_type text not null check (route_type in ('default', 'identifier')),
+    route_type text not null check (route_type in ('default', 'identifier', 'percentage')),
     identifier text not null default '',
     status text not null check (status in ('active', 'inactive')),
     created_by_user_id text not null references users(id) on delete restrict,
@@ -354,6 +366,7 @@ create table release_routes (
     check (
         (route_type = 'default' and identifier = '')
         or (route_type = 'identifier' and identifier <> '')
+        or (route_type = 'percentage' and identifier = '')
     )
 );
 
@@ -364,6 +377,10 @@ create unique index idx_release_routes_default_active
 create unique index idx_release_routes_identifier_active
     on release_routes(module_id, environment_code, identifier)
     where route_type = 'identifier' and status = 'active';
+
+create unique index idx_release_routes_percentage_active
+    on release_routes(module_id, environment_code)
+    where route_type = 'percentage' and status = 'active';
 
 create index idx_release_routes_release
     on release_routes(release_id);

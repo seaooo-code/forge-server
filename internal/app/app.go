@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
@@ -24,13 +25,16 @@ import (
 )
 
 type App struct {
-	cfg      config.Config
-	logger   *slog.Logger
-	server   *echo.Echo
-	postgres *pgxpool.Pool
-	redis    *redis.Client
-	otel     otelinfra.ShutdownFunc
+	cfg            config.Config
+	logger         *slog.Logger
+	releaseService *service.ReleaseService
+	server         *echo.Echo
+	postgres       *pgxpool.Pool
+	redis          *redis.Client
+	otel           otelinfra.ShutdownFunc
 }
+
+const releaseExpirationInterval = time.Minute
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
 	otelShutdown, err := otelinfra.NewTracerProvider(ctx, cfg.Telemetry)
@@ -103,12 +107,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 
 	return &App{
-		cfg:      cfg,
-		logger:   logger,
-		server:   server,
-		postgres: postgresPool,
-		redis:    redisClient,
-		otel:     otelShutdown,
+		cfg:            cfg,
+		logger:         logger,
+		releaseService: releaseService,
+		server:         server,
+		postgres:       postgresPool,
+		redis:          redisClient,
+		otel:           otelShutdown,
 	}, nil
 }
 
@@ -124,6 +129,10 @@ func domainCodeSourceAppConfig(cfg config.GitHubConfig) domain.CodeSourceAppConf
 func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
+	if a.releaseService != nil {
+		go a.runReleaseExpirationLoop(ctx)
+	}
+
 	go func() {
 		a.logger.Info("http server starting", "addr", a.cfg.HTTP.Addr)
 		errCh <- a.server.Start(a.cfg.HTTP.Addr)
@@ -137,6 +146,36 @@ func (a *App) Run(ctx context.Context) error {
 			return nil
 		}
 		return err
+	}
+}
+
+func (a *App) runReleaseExpirationLoop(ctx context.Context) {
+	a.expireTargetedGrayReleases(ctx)
+
+	ticker := time.NewTicker(releaseExpirationInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.expireTargetedGrayReleases(ctx)
+		}
+	}
+}
+
+func (a *App) expireTargetedGrayReleases(ctx context.Context) {
+	expireCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	expired, err := a.releaseService.ExpireTargetedGrayReleases(expireCtx)
+	if err != nil {
+		a.logger.Error("expire targeted gray releases failed", "error", err)
+		return
+	}
+	if expired > 0 {
+		a.logger.Info("targeted gray releases expired", "count", expired)
 	}
 }
 

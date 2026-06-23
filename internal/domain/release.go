@@ -7,29 +7,36 @@ import (
 
 var (
 	ErrInvalidReleaseInput  = errors.New("invalid release request")
+	ErrReleaseAlreadyActive = errors.New("release already active")
 	ErrReleaseNotFound      = errors.New("release not found")
 	ErrReleaseRouteNotFound = errors.New("release route not found")
 )
 
 type ReleaseType string
+type ReleaseGrayStrategy string
 type ReleaseStatus string
 type ReleaseRouteType string
 type ReleaseRouteStatus string
 
 const (
-	ReleaseTypeFull     ReleaseType = "full"
-	ReleaseTypeTargeted ReleaseType = "targeted"
+	ReleaseTypeFull ReleaseType = "full"
+	ReleaseTypeGray ReleaseType = "gray"
+)
+
+const (
+	ReleaseGrayStrategyTargeted   ReleaseGrayStrategy = "targeted"
+	ReleaseGrayStrategyPercentage ReleaseGrayStrategy = "percentage"
 )
 
 const (
 	ReleaseStatusActive   ReleaseStatus = "active"
 	ReleaseStatusInactive ReleaseStatus = "inactive"
-	ReleaseStatusRevoked  ReleaseStatus = "revoked"
 )
 
 const (
 	ReleaseRouteTypeDefault    ReleaseRouteType = "default"
 	ReleaseRouteTypeIdentifier ReleaseRouteType = "identifier"
+	ReleaseRouteTypePercentage ReleaseRouteType = "percentage"
 )
 
 const (
@@ -47,6 +54,9 @@ type ReleaseRecord struct {
 	BuildRecordID   string
 	Identifier      string
 	ReleaseType     ReleaseType
+	GrayStrategy    ReleaseGrayStrategy
+	GrayPercentage  int
+	ExpiresAt       *time.Time
 	Status          ReleaseStatus
 	ArtifactKey     string
 	ArtifactURL     string
@@ -68,6 +78,8 @@ type ReleaseRoute struct {
 	BuildRecordID   string
 	RouteType       ReleaseRouteType
 	Identifier      string
+	GrayStrategy    ReleaseGrayStrategy
+	GrayPercentage  int
 	Status          ReleaseRouteStatus
 	ArtifactKey     string
 	ArtifactURL     string
@@ -80,17 +92,36 @@ type ReleaseRoute struct {
 type ReleaseCreateInput struct {
 	BuildRecordID   string
 	ReleaseType     ReleaseType
+	GrayStrategy    ReleaseGrayStrategy
+	GrayPercentage  int
+	ExpiresAt       *time.Time
 	Identifier      string
 	Description     string
 	CreatedByUserID string
+}
+
+type ReleaseGrayPercentageUpdateInput struct {
+	ID              string
+	GrayPercentage  int
+	UpdatedByUserID string
+}
+
+type ReleaseInactivateInput struct {
+	ID              string
+	UpdatedByUserID string
 }
 
 type ReleaseResolveInput struct {
 	ModuleID    string
 	Environment string
 	Identifier  string
+	UserID      string
 }
 
 func IsValidReleaseType(releaseType ReleaseType) bool {
-	return releaseType == ReleaseTypeFull || releaseType == ReleaseTypeTargeted
+	return releaseType == ReleaseTypeFull || releaseType == ReleaseTypeGray
+}
+
+func IsValidReleaseGrayStrategy(strategy ReleaseGrayStrategy) bool {
+	return strategy == ReleaseGrayStrategyTargeted || strategy == ReleaseGrayStrategyPercentage
 }

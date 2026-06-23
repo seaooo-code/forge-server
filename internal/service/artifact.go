@@ -131,16 +131,18 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 		}
 
 		result.Modules = append(result.Modules, domain.ArtifactModuleManifest{
-			ID:            module.ID,
-			Name:          module.Name,
-			Kind:          module.Kind,
-			ReleaseID:     module.ReleaseID,
-			ReleaseType:   module.ReleaseType,
-			Identifier:    module.Identifier,
-			BuildRecordID: record.ID,
-			ArtifactKey:   record.ArtifactKey,
-			ManifestKey:   record.ManifestKey,
-			Files:         resolvedArtifactManifestFiles(normalized, record, manifest),
+			ID:             module.ID,
+			Name:           module.Name,
+			Kind:           module.Kind,
+			ReleaseID:      module.ReleaseID,
+			ReleaseType:    module.ReleaseType,
+			GrayStrategy:   module.GrayStrategy,
+			GrayPercentage: module.GrayPercentage,
+			Identifier:     module.Identifier,
+			BuildRecordID:  record.ID,
+			ArtifactKey:    record.ArtifactKey,
+			ManifestKey:    record.ManifestKey,
+			Files:          resolvedArtifactManifestFiles(normalized, record, manifest),
 		})
 	}
 	return result, nil
@@ -174,6 +176,7 @@ func normalizeArtifactManifestInput(input domain.ArtifactManifestInput) (domain.
 		ApplicationSlug: strings.TrimSpace(input.ApplicationSlug),
 		Environment:     strings.TrimSpace(input.Environment),
 		Identifier:      strings.TrimSpace(input.Identifier),
+		UserID:          strings.TrimSpace(input.UserID),
 	}
 	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) || normalized.Environment == "" {
 		return domain.ArtifactManifestInput{}, domain.ErrInvalidArtifactInput

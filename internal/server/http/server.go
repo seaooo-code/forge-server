@@ -71,8 +71,10 @@ type BuildService interface {
 
 type ReleaseService interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
+	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 }
 
 type EnvironmentService interface {
@@ -150,7 +152,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 		})
 	})
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
-	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService, cfg.Artifact.AccessTokens)
+	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService)
 
 	protectedAPI := api.Group("")
 	if deps.FeishuAuthService != nil {

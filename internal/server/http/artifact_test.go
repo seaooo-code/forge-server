@@ -24,7 +24,7 @@ func TestDownloadArtifactFile(t *testing.T) {
 			Name:          "icon.png",
 		},
 	}
-	e := New(testArtifactConfig(), Dependencies{ArtifactService: service})
+	e := New(config.Config{}, testArtifactDependencies(service))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=assets/icon.png", nil)
 	addTestArtifactBearer(req)
@@ -56,9 +56,7 @@ func TestDownloadArtifactFile(t *testing.T) {
 }
 
 func TestDownloadArtifactFileRejectsInvalidRequest(t *testing.T) {
-	e := New(testArtifactConfig(), Dependencies{
-		ArtifactService: &fakeArtifactService{err: domain.ErrInvalidArtifactInput},
-	})
+	e := New(config.Config{}, testArtifactDependencies(&fakeArtifactService{err: domain.ErrInvalidArtifactInput}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=../secret", nil)
 	addTestArtifactBearer(req)
@@ -72,9 +70,7 @@ func TestDownloadArtifactFileRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestDownloadArtifactFileNotFound(t *testing.T) {
-	e := New(testArtifactConfig(), Dependencies{
-		ArtifactService: &fakeArtifactService{err: domain.ErrArtifactNotFound},
-	})
+	e := New(config.Config{}, testArtifactDependencies(&fakeArtifactService{err: domain.ErrArtifactNotFound}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=assets/icon.png", nil)
 	addTestArtifactBearer(req)
@@ -95,15 +91,17 @@ func TestGetArtifactManifest(t *testing.T) {
 			Identifier:  "staff-1",
 			Modules: []domain.ArtifactModuleManifest{
 				{
-					ID:            "module-profile",
-					Name:          "profile",
-					Kind:          domain.ModuleKindFeature,
-					ReleaseID:     "018f4d7a-0a6c-789b-9c12-36a4dfd9d001",
-					ReleaseType:   domain.ReleaseTypeTargeted,
-					Identifier:    "staff-1",
-					BuildRecordID: "018f4d7a-0a6c-789b-9c12-36a4dfd9c001",
-					ArtifactKey:   "rn-bundles/seaooo/profile/QA/build-1",
-					ManifestKey:   "rn-bundles/seaooo/profile/QA/build-1/manifest.json",
+					ID:             "module-profile",
+					Name:           "profile",
+					Kind:           domain.ModuleKindFeature,
+					ReleaseID:      "018f4d7a-0a6c-789b-9c12-36a4dfd9d001",
+					ReleaseType:    domain.ReleaseTypeGray,
+					GrayStrategy:   domain.ReleaseGrayStrategyTargeted,
+					GrayPercentage: 0,
+					Identifier:     "staff-1",
+					BuildRecordID:  "018f4d7a-0a6c-789b-9c12-36a4dfd9c001",
+					ArtifactKey:    "rn-bundles/seaooo/profile/QA/build-1",
+					ManifestKey:    "rn-bundles/seaooo/profile/QA/build-1/manifest.json",
 					Files: []domain.ArtifactManifestResolvedFile{
 						{
 							Path:        "assets/icon.png",
@@ -120,7 +118,7 @@ func TestGetArtifactManifest(t *testing.T) {
 			},
 		},
 	}
-	e := New(testArtifactConfig(), Dependencies{ArtifactService: service})
+	e := New(config.Config{}, testArtifactDependencies(service))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?identifier=staff-1", nil)
 	addTestArtifactBearer(req)
@@ -150,7 +148,7 @@ func TestGetArtifactManifest(t *testing.T) {
 }
 
 func TestGetArtifactManifestRejectsMissingToken(t *testing.T) {
-	e := New(testArtifactConfig(), Dependencies{ArtifactService: &fakeArtifactService{}})
+	e := New(config.Config{}, Dependencies{ArtifactService: &fakeArtifactService{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest", nil)
 	rec := httptest.NewRecorder()
@@ -191,11 +189,11 @@ func TestGetArtifactManifestAcceptsManagedToken(t *testing.T) {
 	}
 }
 
-func TestGetArtifactManifestRejectsDisabledManagedTokenBeforeEnvFallback(t *testing.T) {
+func TestGetArtifactManifestRejectsDisabledManagedToken(t *testing.T) {
 	tokenService := &fakeArtifactAccessTokenService{
 		validation: domain.ArtifactAccessTokenValidationResult{Matched: true, Allowed: false},
 	}
-	e := New(testArtifactConfig(), Dependencies{
+	e := New(config.Config{}, Dependencies{
 		ArtifactService:            &fakeArtifactService{},
 		ArtifactAccessTokenService: tokenService,
 	})
@@ -240,7 +238,7 @@ func TestDownloadArtifactFileAcceptsSession(t *testing.T) {
 }
 
 func TestDownloadArtifactFileRejectsMissingAuth(t *testing.T) {
-	e := New(testArtifactConfig(), Dependencies{ArtifactService: &fakeArtifactService{}})
+	e := New(config.Config{}, Dependencies{ArtifactService: &fakeArtifactService{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=index.bundle", nil)
 	rec := httptest.NewRecorder()
@@ -278,10 +276,15 @@ func (s *fakeArtifactService) GetApplicationManifest(_ context.Context, input do
 
 const echoHeaderContentType = "Content-Type"
 
-func testArtifactConfig() config.Config {
-	return config.Config{Artifact: config.ArtifactConfig{AccessTokens: []string{"artifact-token"}}}
+func testArtifactDependencies(service ArtifactService) Dependencies {
+	return Dependencies{
+		ArtifactService: service,
+		ArtifactAccessTokenService: &fakeArtifactAccessTokenService{
+			validation: domain.ArtifactAccessTokenValidationResult{Matched: true, Allowed: true},
+		},
+	}
 }
 
 func addTestArtifactBearer(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer artifact-token")
+	req.Header.Set("Authorization", "Bearer managed-token-123456")
 }

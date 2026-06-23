@@ -35,16 +35,18 @@ type artifactEnvironmentResponse struct {
 }
 
 type artifactModuleManifestResponse struct {
-	ID            string                         `json:"id"`
-	Name          string                         `json:"name"`
-	Kind          string                         `json:"kind"`
-	ReleaseID     string                         `json:"releaseId"`
-	ReleaseType   string                         `json:"releaseType"`
-	Identifier    string                         `json:"identifier"`
-	BuildRecordID string                         `json:"buildRecordId"`
-	ArtifactKey   string                         `json:"artifactKey"`
-	ManifestKey   string                         `json:"manifestKey"`
-	Files         []artifactManifestFileResponse `json:"files"`
+	ID             string                         `json:"id"`
+	Name           string                         `json:"name"`
+	Kind           string                         `json:"kind"`
+	ReleaseID      string                         `json:"releaseId"`
+	ReleaseType    string                         `json:"releaseType"`
+	GrayStrategy   string                         `json:"grayStrategy"`
+	GrayPercentage int                            `json:"grayPercentage"`
+	Identifier     string                         `json:"identifier"`
+	BuildRecordID  string                         `json:"buildRecordId"`
+	ArtifactKey    string                         `json:"artifactKey"`
+	ManifestKey    string                         `json:"manifestKey"`
+	Files          []artifactManifestFileResponse `json:"files"`
 }
 
 type artifactManifestFileResponse struct {
@@ -62,11 +64,11 @@ type artifactMissingModuleResponse struct {
 	Reason string `json:"reason"`
 }
 
-func registerArtifactRoutes(group *echo.Group, service ArtifactService, tokenService ArtifactAccessTokenService, authService FeishuAuthService, accessTokens []string) {
+func registerArtifactRoutes(group *echo.Group, service ArtifactService, tokenService ArtifactAccessTokenService, authService FeishuAuthService) {
 	handler := artifactHandler{service: service}
 
-	group.GET("/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file", handler.downloadFile, requireArtifactAccess(authService, tokenService, accessTokens))
-	group.GET("/artifacts/applications/:applicationSlug/environments/:environment/manifest", handler.manifest, requireArtifactToken(tokenService, accessTokens))
+	group.GET("/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file", handler.downloadFile, requireArtifactAccess(authService, tokenService))
+	group.GET("/artifacts/applications/:applicationSlug/environments/:environment/manifest", handler.manifest, requireArtifactToken(tokenService))
 }
 
 func (h artifactHandler) downloadFile(c echo.Context) error {
@@ -113,6 +115,7 @@ func (h artifactHandler) manifest(c echo.Context) error {
 		ApplicationSlug: c.Param("applicationSlug"),
 		Environment:     c.Param("environment"),
 		Identifier:      c.QueryParam("identifier"),
+		UserID:          c.QueryParam("userId"),
 	})
 	if err != nil {
 		return artifactErrorResponse(c, err)
@@ -155,16 +158,18 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 	responses := make([]artifactModuleManifestResponse, 0, len(modules))
 	for _, module := range modules {
 		responses = append(responses, artifactModuleManifestResponse{
-			ID:            module.ID,
-			Name:          module.Name,
-			Kind:          string(module.Kind),
-			ReleaseID:     module.ReleaseID,
-			ReleaseType:   string(module.ReleaseType),
-			Identifier:    module.Identifier,
-			BuildRecordID: module.BuildRecordID,
-			ArtifactKey:   module.ArtifactKey,
-			ManifestKey:   module.ManifestKey,
-			Files:         newArtifactManifestFileResponses(module.Files),
+			ID:             module.ID,
+			Name:           module.Name,
+			Kind:           string(module.Kind),
+			ReleaseID:      module.ReleaseID,
+			ReleaseType:    string(module.ReleaseType),
+			GrayStrategy:   string(module.GrayStrategy),
+			GrayPercentage: module.GrayPercentage,
+			Identifier:     module.Identifier,
+			BuildRecordID:  module.BuildRecordID,
+			ArtifactKey:    module.ArtifactKey,
+			ManifestKey:    module.ManifestKey,
+			Files:          newArtifactManifestFileResponses(module.Files),
 		})
 	}
 	return responses

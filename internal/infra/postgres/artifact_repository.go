@@ -56,6 +56,8 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			m.kind,
 			coalesce(selected.release_id::text, ''),
 			coalesce(selected.release_type, ''),
+			coalesce(selected.gray_strategy, ''),
+			coalesce(selected.gray_percentage, 0),
 			coalesce(selected.identifier, ''),
 			coalesce(selected.build_record_id::text, '')
 		from modules m
@@ -63,6 +65,8 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			select
 				rr.id as release_id,
 				rr.release_type,
+				rr.gray_strategy,
+				rr.gray_percentage,
 				route.identifier,
 				rr.build_record_id
 			from release_routes route
@@ -72,17 +76,36 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 				and route.status = 'active'
 				and rr.status = 'active'
 				and (
-					($3 <> '' and route.route_type = 'identifier' and route.identifier = $3)
+					(
+						$3 <> ''
+						and route.route_type = 'identifier'
+						and route.identifier = $3
+						and rr.release_type = 'gray'
+						and rr.gray_strategy = 'targeted'
+						and rr.expires_at > now()
+					)
+					or (
+						$4 <> ''
+						and route.route_type = 'percentage'
+						and rr.release_type = 'gray'
+						and rr.gray_strategy = 'percentage'
+						and rr.gray_percentage > 0
+						and (('x' || substr(md5($4 || ':' || rr.id::text), 1, 7))::bit(28)::int % 100) < rr.gray_percentage
+					)
 					or route.route_type = 'default'
 				)
 			order by
-				case when $3 <> '' and route.route_type = 'identifier' and route.identifier = $3 then 0 else 1 end,
+				case
+					when $3 <> '' and route.route_type = 'identifier' and route.identifier = $3 then 0
+					when $4 <> '' and route.route_type = 'percentage' then 1
+					else 2
+				end,
 				route.created_at desc
 			limit 1
 		) selected on true
 		where m.application_id = $1
 		order by m.sort_order asc, m.created_at asc
-	`, source.Application.ID, input.Environment, input.Identifier)
+	`, source.Application.ID, input.Environment, input.Identifier, input.UserID)
 	if err != nil {
 		return domain.ArtifactManifestSource{}, fmt.Errorf("query artifact manifest modules: %w", err)
 	}
@@ -92,18 +115,22 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 	for rows.Next() {
 		var module domain.ArtifactModuleReleaseSource
 		var releaseType string
+		var grayStrategy string
 		if err := rows.Scan(
 			&module.ID,
 			&module.Name,
 			&module.Kind,
 			&module.ReleaseID,
 			&releaseType,
+			&grayStrategy,
+			&module.GrayPercentage,
 			&module.Identifier,
 			&module.BuildRecordID,
 		); err != nil {
 			return domain.ArtifactManifestSource{}, fmt.Errorf("scan artifact manifest module: %w", err)
 		}
 		module.ReleaseType = domain.ReleaseType(releaseType)
+		module.GrayStrategy = domain.ReleaseGrayStrategy(grayStrategy)
 		source.Modules = append(source.Modules, module)
 	}
 	if err := rows.Err(); err != nil {

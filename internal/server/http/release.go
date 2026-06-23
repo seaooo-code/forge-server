@@ -14,10 +14,17 @@ type releaseHandler struct {
 }
 
 type releaseCreateRequest struct {
-	BuildRecordID string `json:"buildRecordId"`
-	ReleaseType   string `json:"releaseType"`
-	Identifier    string `json:"identifier"`
-	Description   string `json:"description"`
+	BuildRecordID  string `json:"buildRecordId"`
+	ReleaseType    string `json:"releaseType"`
+	GrayStrategy   string `json:"grayStrategy"`
+	GrayPercentage int    `json:"grayPercentage"`
+	ExpiresAt      string `json:"expiresAt"`
+	Identifier     string `json:"identifier"`
+	Description    string `json:"description"`
+}
+
+type releaseGrayPercentageUpdateRequest struct {
+	GrayPercentage int `json:"grayPercentage"`
 }
 
 type releaseDetailResponse struct {
@@ -49,6 +56,9 @@ type releaseRecordResponse struct {
 	ModuleID        string `json:"moduleId"`
 	ModuleName      string `json:"moduleName"`
 	ReleaseType     string `json:"releaseType"`
+	GrayStrategy    string `json:"grayStrategy"`
+	GrayPercentage  int    `json:"grayPercentage"`
+	ExpiresAt       string `json:"expiresAt"`
 	Status          string `json:"status"`
 	UpdatedAt       string `json:"updatedAt"`
 }
@@ -69,6 +79,8 @@ type releaseRouteResponse struct {
 	ModuleName      string `json:"moduleName"`
 	ReleaseID       string `json:"releaseId"`
 	RouteType       string `json:"routeType"`
+	GrayStrategy    string `json:"grayStrategy"`
+	GrayPercentage  int    `json:"grayPercentage"`
 	Status          string `json:"status"`
 	UpdatedAt       string `json:"updatedAt"`
 }
@@ -78,6 +90,8 @@ func registerReleaseRoutes(group *echo.Group, service ReleaseService) {
 
 	group.GET("/releases", handler.list)
 	group.POST("/releases", handler.create)
+	group.PATCH("/releases/:id/gray-percentage", handler.updateGrayPercentage)
+	group.PATCH("/releases/:id/inactivate", handler.inactivate)
 	group.GET("/releases/resolve", handler.resolve)
 }
 
@@ -117,9 +131,16 @@ func (h releaseHandler) create(c echo.Context) error {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
 
+	expiresAt, ok := parseOptionalRFC3339(request.ExpiresAt)
+	if !ok {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
+	}
 	record, route, err := h.service.CreateRelease(c.Request().Context(), domain.ReleaseCreateInput{
 		BuildRecordID:   request.BuildRecordID,
 		ReleaseType:     domain.ReleaseType(request.ReleaseType),
+		GrayStrategy:    domain.ReleaseGrayStrategy(request.GrayStrategy),
+		GrayPercentage:  request.GrayPercentage,
+		ExpiresAt:       expiresAt,
 		Identifier:      request.Identifier,
 		Description:     request.Description,
 		CreatedByUserID: createdByUserID,
@@ -134,6 +155,68 @@ func (h releaseHandler) create(c echo.Context) error {
 	})
 }
 
+func (h releaseHandler) updateGrayPercentage(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
+	}
+
+	var request releaseGrayPercentageUpdateRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
+	}
+
+	session, ok := consoleSession(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	updatedByUserID := domain.ConsoleUserIDFromFeishu(session.User)
+	if updatedByUserID == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+
+	record, route, err := h.service.UpdateReleaseGrayPercentage(c.Request().Context(), domain.ReleaseGrayPercentageUpdateInput{
+		ID:              c.Param("id"),
+		GrayPercentage:  request.GrayPercentage,
+		UpdatedByUserID: updatedByUserID,
+	})
+	if err != nil {
+		return releaseErrorResponse(c, err)
+	}
+
+	return c.JSON(http.StatusOK, releaseDetailResponse{
+		Release: newReleaseRecordResponse(record),
+		Route:   newReleaseRouteResponse(route),
+	})
+}
+
+func (h releaseHandler) inactivate(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
+	}
+
+	session, ok := consoleSession(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	updatedByUserID := domain.ConsoleUserIDFromFeishu(session.User)
+	if updatedByUserID == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+
+	record, route, err := h.service.InactivateTargetedGrayRelease(c.Request().Context(), domain.ReleaseInactivateInput{
+		ID:              c.Param("id"),
+		UpdatedByUserID: updatedByUserID,
+	})
+	if err != nil {
+		return releaseErrorResponse(c, err)
+	}
+
+	return c.JSON(http.StatusOK, releaseDetailResponse{
+		Release: newReleaseRecordResponse(record),
+		Route:   newReleaseRouteResponse(route),
+	})
+}
+
 func (h releaseHandler) resolve(c echo.Context) error {
 	if h.service == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
@@ -143,6 +226,7 @@ func (h releaseHandler) resolve(c echo.Context) error {
 		ModuleID:    c.QueryParam("moduleId"),
 		Environment: c.QueryParam("environment"),
 		Identifier:  c.QueryParam("identifier"),
+		UserID:      c.QueryParam("userId"),
 	})
 	if err != nil {
 		return releaseErrorResponse(c, err)
@@ -153,6 +237,8 @@ func (h releaseHandler) resolve(c echo.Context) error {
 
 func releaseErrorResponse(c echo.Context, err error) error {
 	switch {
+	case errors.Is(err, domain.ErrReleaseAlreadyActive):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "release already active"})
 	case errors.Is(err, domain.ErrInvalidReleaseInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
 	case errors.Is(err, domain.ErrBuildRecordNotFound):
@@ -195,6 +281,9 @@ func newReleaseRecordResponse(record domain.ReleaseRecord) releaseRecordResponse
 		ModuleID:        record.ModuleID,
 		ModuleName:      record.ModuleName,
 		ReleaseType:     string(record.ReleaseType),
+		GrayStrategy:    string(record.GrayStrategy),
+		GrayPercentage:  record.GrayPercentage,
+		ExpiresAt:       formatOptionalTime(record.ExpiresAt),
 		Status:          string(record.Status),
 		UpdatedAt:       formatTime(record.UpdatedAt),
 	}
@@ -217,6 +306,8 @@ func newReleaseRouteResponse(route domain.ReleaseRoute) releaseRouteResponse {
 		ModuleName:      route.ModuleName,
 		ReleaseID:       route.ReleaseID,
 		RouteType:       string(route.RouteType),
+		GrayStrategy:    string(route.GrayStrategy),
+		GrayPercentage:  route.GrayPercentage,
 		Status:          string(route.Status),
 		UpdatedAt:       formatTime(route.UpdatedAt),
 	}

@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
@@ -31,7 +30,7 @@ func requireConsoleSession(service FeishuAuthService) echo.MiddlewareFunc {
 	}
 }
 
-func requireArtifactToken(tokenService ArtifactAccessTokenService, tokens []string) echo.MiddlewareFunc {
+func requireArtifactToken(tokenService ArtifactAccessTokenService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			token := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization))
@@ -39,7 +38,7 @@ func requireArtifactToken(tokenService ArtifactAccessTokenService, tokens []stri
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			}
 
-			result, err := validateArtifactBearerToken(c.Request().Context(), tokenService, token, tokens)
+			result, err := validateArtifactBearerToken(c.Request().Context(), tokenService, token)
 			if err != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			}
@@ -54,11 +53,11 @@ func requireArtifactToken(tokenService ArtifactAccessTokenService, tokens []stri
 	}
 }
 
-func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAccessTokenService, tokens []string) echo.MiddlewareFunc {
+func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAccessTokenService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if token := bearerToken(c.Request().Header.Get(echo.HeaderAuthorization)); token != "" {
-				result, err := validateArtifactBearerToken(c.Request().Context(), tokenService, token, tokens)
+				result, err := validateArtifactBearerToken(c.Request().Context(), tokenService, token)
 				if err != nil {
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 				}
@@ -115,8 +114,8 @@ type artifactBearerTokenResult struct {
 	Configured bool
 }
 
-func validateArtifactBearerToken(ctx context.Context, tokenService ArtifactAccessTokenService, token string, tokens []string) (artifactBearerTokenResult, error) {
-	result := artifactBearerTokenResult{Configured: tokenService != nil || len(tokens) > 0}
+func validateArtifactBearerToken(ctx context.Context, tokenService ArtifactAccessTokenService, token string) (artifactBearerTokenResult, error) {
+	result := artifactBearerTokenResult{Configured: tokenService != nil}
 	if tokenService != nil {
 		validation, err := tokenService.ValidateArtifactAccessToken(ctx, token)
 		if err != nil {
@@ -127,26 +126,7 @@ func validateArtifactBearerToken(ctx context.Context, tokenService ArtifactAcces
 			return result, nil
 		}
 	}
-	if validStaticArtifactBearerToken(token, tokens) {
-		result.Allowed = true
-	}
 	return result, nil
-}
-
-func validStaticArtifactBearerToken(token string, tokens []string) bool {
-	if token == "" {
-		return false
-	}
-	for _, configuredToken := range tokens {
-		candidate := strings.TrimSpace(configuredToken)
-		if candidate == "" || len(candidate) != len(token) {
-			continue
-		}
-		if subtle.ConstantTimeCompare([]byte(candidate), []byte(token)) == 1 {
-			return true
-		}
-	}
-	return false
 }
 
 func bearerToken(header string) string {

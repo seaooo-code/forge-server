@@ -342,10 +342,50 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createRelease", "Create RN JS bundle release", []string{"Releases"}, responses(
 						response(http.StatusCreated, "Release created and route activated.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "Release target is already active for the same build.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.RequestBody = requestBody("Release creation payload.", schemaRef("ReleaseCreateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/releases/{id}/gray-percentage", &openapi3.PathItem{
+				Patch: func() *openapi3.Operation {
+					op := operation("updateReleaseGrayPercentage", "Update percentage gray release", []string{"Releases"}, responses(
+						response(http.StatusOK, "Release gray percentage updated.", schemaRef("ReleaseDetailResponse")),
+						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Release not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = openapi3.Parameters{
+						{
+							Value: openapi3.NewPathParameter("id").
+								WithDescription("Release UUID.").
+								WithRequired(true).
+								WithSchema(stringSchema("Release UUID.")),
+						},
+					}
+					op.RequestBody = requestBody("Gray percentage update payload.", schemaRef("ReleaseGrayPercentageUpdateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/releases/{id}/inactivate", &openapi3.PathItem{
+				Patch: func() *openapi3.Operation {
+					op := operation("inactivateTargetedGrayRelease", "Inactivate targeted gray release", []string{"Releases"}, responses(
+						response(http.StatusOK, "Targeted gray release inactivated.", schemaRef("ReleaseDetailResponse")),
+						response(http.StatusBadRequest, "Release is not an active targeted gray release.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Release not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = openapi3.Parameters{
+						{
+							Value: openapi3.NewPathParameter("id").
+								WithDescription("Release UUID.").
+								WithRequired(true).
+								WithSchema(stringSchema("Release UUID.")),
+						},
+					}
 					return op
 				}(),
 			}),
@@ -657,7 +697,7 @@ func openAPIDocument() *openapi3.T {
 					Type:         "http",
 					Scheme:       "bearer",
 					BearerFormat: "artifact-token",
-					Description:  "Artifact access token managed by the platform or configured by FORGE_ARTIFACT_ACCESS_TOKENS.",
+					Description:  "Artifact access token managed by the platform.",
 				}},
 			},
 			Schemas: openapi3.Schemas{
@@ -714,6 +754,7 @@ func openAPIDocument() *openapi3.T {
 				"ReleaseRecord":                       schemaValue(releaseRecordSchema()),
 				"ReleaseRoute":                        schemaValue(releaseRouteSchema()),
 				"ReleaseCreateRequest":                schemaValue(releaseCreateRequestSchema()),
+				"ReleaseGrayPercentageUpdateRequest":  schemaValue(releaseGrayPercentageUpdateRequestSchema()),
 				"ReleaseDetailResponse":               schemaValue(releaseDetailResponseSchema()),
 				"ReleaseResolveResponse":              schemaValue(releaseResolveResponseSchema()),
 				"ReleasesResponse":                    schemaValue(releasesResponseSchema()),
@@ -996,8 +1037,13 @@ func artifactManifestParameters() openapi3.Parameters {
 		},
 		{
 			Value: openapi3.NewQueryParameter("identifier").
-				WithDescription("Optional targeting identifier. Identifier release wins when present, otherwise default release is used.").
+				WithDescription("Optional targeting identifier. Targeted gray wins when present, percentage gray may use userId, otherwise default release is used.").
 				WithSchema(stringSchema("Targeting identifier.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("userId").
+				WithDescription("Optional user id for percentage gray bucketing.").
+				WithSchema(stringSchema("User id for percentage gray bucketing.")),
 		},
 	}
 }
@@ -1143,6 +1189,11 @@ func releaseResolveParameters() openapi3.Parameters {
 			Value: openapi3.NewQueryParameter("identifier").
 				WithDescription("Optional targeting identifier. Falls back to the default route when no identifier route exists.").
 				WithSchema(stringSchema("Targeting identifier.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("userId").
+				WithDescription("Optional user id for percentage gray bucketing.").
+				WithSchema(stringSchema("User id for percentage gray bucketing.")),
 		},
 	}
 }
@@ -1594,8 +1645,10 @@ func artifactManifestModuleSchema() *openapi3.Schema {
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
 		WithProperty("releaseId", stringSchema("Matched release UUID.")).
-		WithProperty("releaseType", enumStringSchema("Matched release type.", "full", "targeted")).
-		WithProperty("identifier", stringSchema("Matched targeting identifier for targeted releases.")).
+		WithProperty("releaseType", enumStringSchema("Matched release type.", "full", "gray")).
+		WithProperty("grayStrategy", enumStringSchema("Matched gray strategy.", "", "targeted", "percentage")).
+		WithProperty("grayPercentage", int32Schema("Matched percentage gray value.")).
+		WithProperty("identifier", stringSchema("Matched targeting identifier for targeted gray releases.")).
 		WithProperty("buildRecordId", stringSchema("Matched build record UUID.")).
 		WithProperty("artifactKey", stringSchema("Artifact object key root.")).
 		WithProperty("manifestKey", stringSchema("Artifact manifest object key.")).
@@ -1622,9 +1675,17 @@ func artifactMissingModuleSchema() *openapi3.Schema {
 func releaseCreateRequestSchema() *openapi3.Schema {
 	return objectSchema("buildRecordId", "releaseType").
 		WithProperty("buildRecordId", stringSchema("Succeeded build record UUID to release.")).
-		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, targeted updates an identifier route.", "full", "targeted")).
-		WithProperty("identifier", stringSchema("Targeting identifier. Required for targeted releases and forbidden for full releases.")).
+		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, gray updates a targeted or percentage gray route.", "full", "gray")).
+		WithProperty("grayStrategy", enumStringSchema("Gray strategy. Required for gray releases.", "", "targeted", "percentage")).
+		WithProperty("grayPercentage", int32Schema("Initial percentage for percentage gray releases. Create supports 0 to 99.")).
+		WithProperty("expiresAt", dateTimeSchema("Expiration time. Required for targeted gray releases and forbidden otherwise.")).
+		WithProperty("identifier", stringSchema("Targeting identifier. Required for targeted gray releases and forbidden otherwise.")).
 		WithProperty("description", stringSchema("Release description."))
+}
+
+func releaseGrayPercentageUpdateRequestSchema() *openapi3.Schema {
+	return objectSchema("grayPercentage").
+		WithProperty("grayPercentage", int32Schema("Updated percentage gray value. 100 promotes this release to full."))
 }
 
 func releaseDetailResponseSchema() *openapi3.Schema {
@@ -1669,11 +1730,14 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("environmentName", stringSchema("Environment display name.")).
 		WithProperty("id", stringSchema("Release UUID.")).
-		WithProperty("identifier", stringSchema("Targeting identifier for targeted releases.")).
+		WithProperty("identifier", stringSchema("Targeting identifier for targeted gray releases.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
-		WithProperty("releaseType", enumStringSchema("Release type.", "full", "targeted")).
-		WithProperty("status", enumStringSchema("Release status.", "active", "inactive", "revoked")).
+		WithProperty("releaseType", enumStringSchema("Release type.", "full", "gray")).
+		WithProperty("grayStrategy", enumStringSchema("Gray strategy.", "", "targeted", "percentage")).
+		WithProperty("grayPercentage", int32Schema("Percentage gray value.")).
+		WithProperty("expiresAt", stringSchema("Expiration time for targeted gray releases, or empty otherwise.")).
+		WithProperty("status", enumStringSchema("Release status.", "active", "inactive")).
 		WithProperty("updatedAt", dateTimeSchema("Release update time."))
 }
 
@@ -1707,7 +1771,9 @@ func releaseRouteSchema() *openapi3.Schema {
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseId", stringSchema("Release UUID.")).
-		WithProperty("routeType", enumStringSchema("Route type.", "default", "identifier")).
+		WithProperty("routeType", enumStringSchema("Route type.", "default", "identifier", "percentage")).
+		WithProperty("grayStrategy", enumStringSchema("Gray strategy.", "", "targeted", "percentage")).
+		WithProperty("grayPercentage", int32Schema("Percentage gray value.")).
 		WithProperty("status", enumStringSchema("Release route status.", "active", "inactive")).
 		WithProperty("updatedAt", dateTimeSchema("Route update time."))
 }
