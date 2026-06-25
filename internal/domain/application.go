@@ -101,15 +101,26 @@ type ApplicationModule struct {
 	Repository       string
 }
 
-type ApplicationPipeline struct {
-	ID         string
-	RunID      string
-	ModuleName string
-	Branch     string
-	Status     string
-	Duration   string
-	Operator   string
-	StartedAt  string
+type ClientIntegrationField struct {
+	Name        string
+	Description string
+	Required    bool
+	Type        string
+	Example     string
+}
+
+type ClientIntegrationEndpoint struct {
+	BaseURL        string
+	Path           string
+	Method         string
+	Description    string
+	ExampleURL     string
+	RequestFields  []ClientIntegrationField
+	ResponseFields []ClientIntegrationField
+}
+
+type ClientIntegrationInfo struct {
+	Endpoint ClientIntegrationEndpoint
 }
 
 type ApplicationDetail struct {
@@ -128,7 +139,7 @@ type ApplicationDetail struct {
 	Environments       []ApplicationEnvironmentBinding
 	Modules            []ApplicationModule
 	Members            []ApplicationMember
-	Pipelines          []ApplicationPipeline
+	ClientIntegration  ClientIntegrationInfo
 }
 
 type ApplicationEnvironmentInput struct {

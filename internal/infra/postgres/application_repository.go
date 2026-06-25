@@ -359,7 +359,6 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 	detail.Slug = detail.Application.Slug
 	detail.Name = detail.Application.Name
 	detail.OwnerDepartmentIDs = detail.Application.OwnerDepartmentIDs
-	detail.Pipelines = []domain.ApplicationPipeline{}
 
 	return detail, nil
 }

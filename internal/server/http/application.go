@@ -61,21 +61,21 @@ type applicationSummaryResponse struct {
 }
 
 type applicationDetailFields struct {
-	ID                 string                           `json:"id"`
-	AppKey             string                           `json:"appKey"`
-	Slug               string                           `json:"slug"`
-	Name               string                           `json:"name"`
-	Description        string                           `json:"description"`
-	OwnerUserID        string                           `json:"ownerUserId"`
-	Owner              string                           `json:"owner"`
-	OwnerEmail         string                           `json:"ownerEmail"`
-	OwnerAvatarURL     string                           `json:"ownerAvatarUrl"`
-	OwnerDepartmentIDs []string                         `json:"ownerDepartmentIds"`
-	Metrics            []applicationMetricResponse      `json:"metrics"`
-	Environments       []applicationEnvironmentResponse `json:"environments"`
-	Modules            []applicationModuleResponse      `json:"modules"`
-	Members            []applicationMemberResponse      `json:"members"`
-	Pipelines          []applicationPipelineResponse    `json:"pipelines"`
+	ID                 string                               `json:"id"`
+	AppKey             string                               `json:"appKey"`
+	Slug               string                               `json:"slug"`
+	Name               string                               `json:"name"`
+	Description        string                               `json:"description"`
+	OwnerUserID        string                               `json:"ownerUserId"`
+	Owner              string                               `json:"owner"`
+	OwnerEmail         string                               `json:"ownerEmail"`
+	OwnerAvatarURL     string                               `json:"ownerAvatarUrl"`
+	OwnerDepartmentIDs []string                             `json:"ownerDepartmentIds"`
+	Metrics            []applicationMetricResponse          `json:"metrics"`
+	Environments       []applicationEnvironmentResponse     `json:"environments"`
+	Modules            []applicationModuleResponse          `json:"modules"`
+	Members            []applicationMemberResponse          `json:"members"`
+	ClientIntegration  applicationClientIntegrationResponse `json:"clientIntegration"`
 }
 
 type applicationMetricResponse struct {
@@ -111,15 +111,26 @@ type applicationMemberResponse struct {
 	Team string `json:"team"`
 }
 
-type applicationPipelineResponse struct {
-	ID         string `json:"id"`
-	RunID      string `json:"runId"`
-	ModuleName string `json:"moduleName"`
-	Branch     string `json:"branch"`
-	Status     string `json:"status"`
-	Duration   string `json:"duration"`
-	Operator   string `json:"operator"`
-	StartedAt  string `json:"startedAt"`
+type applicationClientIntegrationResponse struct {
+	Endpoint applicationClientIntegrationEndpoint `json:"endpoint"`
+}
+
+type applicationClientIntegrationEndpoint struct {
+	BaseURL        string                              `json:"baseUrl"`
+	Path           string                              `json:"path"`
+	Method         string                              `json:"method"`
+	Description    string                              `json:"description"`
+	ExampleURL     string                              `json:"exampleUrl"`
+	RequestFields  []applicationClientIntegrationField `json:"requestFields"`
+	ResponseFields []applicationClientIntegrationField `json:"responseFields"`
+}
+
+type applicationClientIntegrationField struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+	Type        string `json:"type"`
+	Example     string `json:"example"`
 }
 
 type applicationRequest struct {
@@ -227,7 +238,7 @@ func (h applicationHandler) detail(c echo.Context) error {
 		return applicationErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusOK, newApplicationDetailResponse(detail))
+	return c.JSON(http.StatusOK, newApplicationDetailResponse(c, detail))
 }
 
 func (h applicationHandler) create(c echo.Context) error {
@@ -245,7 +256,7 @@ func (h applicationHandler) create(c echo.Context) error {
 		return applicationErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusCreated, newApplicationDetailResponse(detail))
+	return c.JSON(http.StatusCreated, newApplicationDetailResponse(c, detail))
 }
 
 func (h applicationHandler) update(c echo.Context) error {
@@ -263,7 +274,7 @@ func (h applicationHandler) update(c echo.Context) error {
 		return applicationErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusOK, newApplicationDetailResponse(detail))
+	return c.JSON(http.StatusOK, newApplicationDetailResponse(c, detail))
 }
 
 func (h applicationHandler) updateStatus(c echo.Context) error {
@@ -281,7 +292,7 @@ func (h applicationHandler) updateStatus(c echo.Context) error {
 		return applicationErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusOK, newApplicationDetailResponse(detail))
+	return c.JSON(http.StatusOK, newApplicationDetailResponse(c, detail))
 }
 
 func (h applicationHandler) deleteCheck(c echo.Context) error {
@@ -400,7 +411,7 @@ func newApplicationSummaryResponse(summary domain.ApplicationSummary) applicatio
 	}
 }
 
-func newApplicationDetailResponse(detail domain.ApplicationDetail) applicationDetailResponse {
+func newApplicationDetailResponse(c echo.Context, detail domain.ApplicationDetail) applicationDetailResponse {
 	return applicationDetailResponse{
 		Application: newApplicationResponse(detail.Application),
 		Detail: applicationDetailFields{
@@ -418,7 +429,7 @@ func newApplicationDetailResponse(detail domain.ApplicationDetail) applicationDe
 			Environments:       newApplicationEnvironmentResponses(detail.Environments),
 			Modules:            newApplicationModuleResponses(detail.Modules),
 			Members:            newApplicationMemberResponses(detail.Members),
-			Pipelines:          newApplicationPipelineResponses(detail.Pipelines),
+			ClientIntegration:  newApplicationClientIntegrationResponse(detail.ClientIntegration, applicationRequestBaseURL(c)),
 		},
 	}
 }
@@ -517,18 +528,50 @@ func newApplicationMemberResponses(members []domain.ApplicationMember) []applica
 	return response
 }
 
-func newApplicationPipelineResponses(pipelines []domain.ApplicationPipeline) []applicationPipelineResponse {
-	response := make([]applicationPipelineResponse, 0, len(pipelines))
-	for _, pipeline := range pipelines {
-		response = append(response, applicationPipelineResponse{
-			ID:         pipeline.ID,
-			RunID:      pipeline.RunID,
-			ModuleName: pipeline.ModuleName,
-			Branch:     pipeline.Branch,
-			Status:     pipeline.Status,
-			Duration:   pipeline.Duration,
-			Operator:   pipeline.Operator,
-			StartedAt:  pipeline.StartedAt,
+func applicationRequestBaseURL(c echo.Context) string {
+	request := c.Request()
+	host := strings.TrimSpace(request.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(request.Host)
+	}
+	if host == "" {
+		return ""
+	}
+
+	scheme := strings.TrimSpace(request.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = c.Scheme()
+	}
+	if scheme == "" {
+		scheme = "http"
+	}
+
+	return scheme + "://" + host
+}
+
+func newApplicationClientIntegrationResponse(integration domain.ClientIntegrationInfo, baseURL string) applicationClientIntegrationResponse {
+	return applicationClientIntegrationResponse{
+		Endpoint: applicationClientIntegrationEndpoint{
+			BaseURL:        baseURL,
+			Path:           integration.Endpoint.Path,
+			Method:         integration.Endpoint.Method,
+			Description:    integration.Endpoint.Description,
+			ExampleURL:     integration.Endpoint.ExampleURL,
+			RequestFields:  newApplicationClientIntegrationFieldResponses(integration.Endpoint.RequestFields),
+			ResponseFields: newApplicationClientIntegrationFieldResponses(integration.Endpoint.ResponseFields),
+		},
+	}
+}
+
+func newApplicationClientIntegrationFieldResponses(fields []domain.ClientIntegrationField) []applicationClientIntegrationField {
+	response := make([]applicationClientIntegrationField, 0, len(fields))
+	for _, field := range fields {
+		response = append(response, applicationClientIntegrationField{
+			Name:        field.Name,
+			Description: field.Description,
+			Required:    field.Required,
+			Type:        field.Type,
+			Example:     field.Example,
 		})
 	}
 	return response

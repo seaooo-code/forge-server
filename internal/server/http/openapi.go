@@ -701,88 +701,90 @@ func openAPIDocument() *openapi3.T {
 				}},
 			},
 			Schemas: openapi3.Schemas{
-				"ErrorResponse":                       schemaValue(errorResponseSchema()),
-				"HealthResponse":                      schemaValue(healthResponseSchema()),
-				"ReadinessResponse":                   schemaValue(readinessResponseSchema()),
-				"PingResponse":                        schemaValue(pingResponseSchema()),
-				"EnumOption":                          schemaValue(enumOptionSchema()),
-				"EnumsResponse":                       schemaValue(enumsResponseSchema()),
-				"Environment":                         schemaValue(environmentSchema()),
-				"EnvironmentCreateRequest":            schemaValue(environmentCreateRequestSchema()),
-				"EnvironmentUpdateRequest":            schemaValue(environmentCreateRequestSchema()),
-				"EnvironmentsResponse":                schemaValue(environmentsResponseSchema()),
-				"EnvironmentDetailResponse":           schemaValue(environmentDetailResponseSchema()),
-				"Application":                         schemaValue(applicationSchema()),
-				"ApplicationOption":                   schemaValue(applicationOptionSchema()),
-				"ApplicationOptions":                  schemaValue(applicationOptionsSchema()),
-				"ApplicationSummary":                  schemaValue(applicationSummarySchema()),
-				"ApplicationMetric":                   schemaValue(applicationMetricSchema()),
-				"ApplicationEnvironment":              schemaValue(applicationEnvironmentSchema()),
-				"ApplicationModule":                   schemaValue(applicationModuleSchema()),
-				"ApplicationMember":                   schemaValue(applicationMemberSchema()),
-				"ApplicationPipeline":                 schemaValue(applicationPipelineSchema()),
-				"ApplicationDetail":                   schemaValue(applicationDetailSchema()),
-				"ApplicationsResponse":                schemaValue(applicationsResponseSchema()),
-				"ApplicationDetailResponse":           schemaValue(applicationDetailResponseSchema()),
-				"ApplicationCreateRequest":            schemaValue(applicationRequestSchema(true)),
-				"ApplicationUpdateRequest":            schemaValue(applicationRequestSchema(false)),
-				"ApplicationStatusUpdateRequest":      schemaValue(applicationStatusUpdateRequestSchema()),
-				"ApplicationEnvironmentRequest":       schemaValue(applicationEnvironmentRequestSchema()),
-				"ApplicationMemberRequest":            schemaValue(applicationMemberRequestSchema()),
-				"ApplicationDeleteCheck":              schemaValue(applicationDeleteCheckSchema()),
-				"ApplicationDeleteDependency":         schemaValue(applicationDeleteDependencySchema()),
-				"Module":                              schemaValue(moduleSchema()),
-				"ModuleSummary":                       schemaValue(moduleSummarySchema()),
-				"ModulesResponse":                     schemaValue(modulesResponseSchema()),
-				"ModuleDetailResponse":                schemaValue(moduleDetailResponseSchema()),
-				"ModuleRepositoryRequest":             schemaValue(moduleRepositoryRequestSchema()),
-				"ModuleCreateRequest":                 schemaValue(moduleRequestSchema(true)),
-				"ModuleUpdateRequest":                 schemaValue(moduleRequestSchema(false)),
-				"BuildRecord":                         schemaValue(buildRecordSchema()),
-				"BuildArtifactTree":                   schemaValue(buildArtifactTreeSchema()),
-				"BuildArtifactTreeNode":               schemaValue(buildArtifactTreeNodeSchema()),
-				"BuildRecordCreateRequest":            schemaValue(buildRecordCreateRequestSchema()),
-				"BuildRecordDetailResponse":           schemaValue(buildRecordDetailResponseSchema()),
-				"BuildRecordSummary":                  schemaValue(buildRecordSummarySchema()),
-				"BuildRecordsResponse":                schemaValue(buildRecordsResponseSchema()),
-				"ArtifactManifestResponse":            schemaValue(artifactManifestResponseSchema()),
-				"ArtifactManifestApplication":         schemaValue(artifactManifestApplicationSchema()),
-				"ArtifactManifestEnvironment":         schemaValue(artifactManifestEnvironmentSchema()),
-				"ArtifactManifestModule":              schemaValue(artifactManifestModuleSchema()),
-				"ArtifactManifestFile":                schemaValue(artifactManifestFileSchema()),
-				"ArtifactMissingModule":               schemaValue(artifactMissingModuleSchema()),
-				"ReleaseRecord":                       schemaValue(releaseRecordSchema()),
-				"ReleaseRoute":                        schemaValue(releaseRouteSchema()),
-				"ReleaseCreateRequest":                schemaValue(releaseCreateRequestSchema()),
-				"ReleaseGrayPercentageUpdateRequest":  schemaValue(releaseGrayPercentageUpdateRequestSchema()),
-				"ReleaseDetailResponse":               schemaValue(releaseDetailResponseSchema()),
-				"ReleaseResolveResponse":              schemaValue(releaseResolveResponseSchema()),
-				"ReleasesResponse":                    schemaValue(releasesResponseSchema()),
-				"CodeSourceApp":                       schemaValue(codeSourceAppSchema()),
-				"CodeSourceAppDetailResponse":         schemaValue(codeSourceAppDetailResponseSchema()),
-				"CodeSourceAppManifest":               schemaValue(codeSourceAppManifestSchema()),
-				"CodeSourceInstallURL":                schemaValue(codeSourceInstallURLSchema()),
-				"CodeSourceRepository":                schemaValue(codeSourceRepositorySchema()),
-				"CodeSourceRepositorySearchResponse":  schemaValue(codeSourceRepositorySearchResponseSchema()),
-				"CodeSourcesResponse":                 schemaValue(codeSourcesResponseSchema()),
-				"ArtifactAccessToken":                 schemaValue(artifactAccessTokenSchema()),
-				"ArtifactAccessTokensResponse":        schemaValue(artifactAccessTokensResponseSchema()),
-				"ArtifactAccessTokenDetailResponse":   schemaValue(artifactAccessTokenDetailResponseSchema()),
-				"ArtifactAccessTokenGenerateResponse": schemaValue(artifactAccessTokenGenerateResponseSchema()),
-				"ArtifactAccessTokenCreateRequest":    schemaValue(artifactAccessTokenCreateRequestSchema()),
-				"ArtifactAccessTokenUpdateRequest":    schemaValue(artifactAccessTokenUpdateRequestSchema()),
-				"StorageConfiguration":                schemaValue(storageConfigurationSchema()),
-				"StorageConfigurationsResponse":       schemaValue(storageConfigurationsResponseSchema()),
-				"StorageConfigurationDetailResponse":  schemaValue(storageConfigurationDetailResponseSchema()),
-				"StorageConfigurationCreateRequest":   schemaValue(storageConfigurationRequestSchema()),
-				"StorageConfigurationUpdateRequest":   schemaValue(storageConfigurationRequestSchema()),
-				"StorageConfigurationTestRequest":     schemaValue(storageConfigurationTestRequestSchema()),
-				"StorageConfigurationTestResponse":    schemaValue(storageConfigurationTestResponseSchema()),
-				"FeishuAuthResponse":                  schemaValue(feishuAuthResponseSchema()),
-				"FeishuToken":                         schemaValue(feishuTokenSchema()),
-				"FeishuUser":                          schemaValue(feishuUserSchema()),
-				"FeishuUserSearchItem":                schemaValue(feishuUserSearchItemSchema()),
-				"FeishuUserSearchResponse":            schemaValue(feishuUserSearchResponseSchema()),
+				"ErrorResponse":                        schemaValue(errorResponseSchema()),
+				"HealthResponse":                       schemaValue(healthResponseSchema()),
+				"ReadinessResponse":                    schemaValue(readinessResponseSchema()),
+				"PingResponse":                         schemaValue(pingResponseSchema()),
+				"EnumOption":                           schemaValue(enumOptionSchema()),
+				"EnumsResponse":                        schemaValue(enumsResponseSchema()),
+				"Environment":                          schemaValue(environmentSchema()),
+				"EnvironmentCreateRequest":             schemaValue(environmentCreateRequestSchema()),
+				"EnvironmentUpdateRequest":             schemaValue(environmentCreateRequestSchema()),
+				"EnvironmentsResponse":                 schemaValue(environmentsResponseSchema()),
+				"EnvironmentDetailResponse":            schemaValue(environmentDetailResponseSchema()),
+				"Application":                          schemaValue(applicationSchema()),
+				"ApplicationOption":                    schemaValue(applicationOptionSchema()),
+				"ApplicationOptions":                   schemaValue(applicationOptionsSchema()),
+				"ApplicationSummary":                   schemaValue(applicationSummarySchema()),
+				"ApplicationMetric":                    schemaValue(applicationMetricSchema()),
+				"ApplicationEnvironment":               schemaValue(applicationEnvironmentSchema()),
+				"ApplicationModule":                    schemaValue(applicationModuleSchema()),
+				"ApplicationMember":                    schemaValue(applicationMemberSchema()),
+				"ApplicationClientIntegration":         schemaValue(applicationClientIntegrationSchema()),
+				"ApplicationClientIntegrationEndpoint": schemaValue(applicationClientIntegrationEndpointSchema()),
+				"ApplicationClientIntegrationField":    schemaValue(applicationClientIntegrationFieldSchema()),
+				"ApplicationDetail":                    schemaValue(applicationDetailSchema()),
+				"ApplicationsResponse":                 schemaValue(applicationsResponseSchema()),
+				"ApplicationDetailResponse":            schemaValue(applicationDetailResponseSchema()),
+				"ApplicationCreateRequest":             schemaValue(applicationRequestSchema(true)),
+				"ApplicationUpdateRequest":             schemaValue(applicationRequestSchema(false)),
+				"ApplicationStatusUpdateRequest":       schemaValue(applicationStatusUpdateRequestSchema()),
+				"ApplicationEnvironmentRequest":        schemaValue(applicationEnvironmentRequestSchema()),
+				"ApplicationMemberRequest":             schemaValue(applicationMemberRequestSchema()),
+				"ApplicationDeleteCheck":               schemaValue(applicationDeleteCheckSchema()),
+				"ApplicationDeleteDependency":          schemaValue(applicationDeleteDependencySchema()),
+				"Module":                               schemaValue(moduleSchema()),
+				"ModuleSummary":                        schemaValue(moduleSummarySchema()),
+				"ModulesResponse":                      schemaValue(modulesResponseSchema()),
+				"ModuleDetailResponse":                 schemaValue(moduleDetailResponseSchema()),
+				"ModuleRepositoryRequest":              schemaValue(moduleRepositoryRequestSchema()),
+				"ModuleCreateRequest":                  schemaValue(moduleRequestSchema(true)),
+				"ModuleUpdateRequest":                  schemaValue(moduleRequestSchema(false)),
+				"BuildRecord":                          schemaValue(buildRecordSchema()),
+				"BuildArtifactTree":                    schemaValue(buildArtifactTreeSchema()),
+				"BuildArtifactTreeNode":                schemaValue(buildArtifactTreeNodeSchema()),
+				"BuildRecordCreateRequest":             schemaValue(buildRecordCreateRequestSchema()),
+				"BuildRecordDetailResponse":            schemaValue(buildRecordDetailResponseSchema()),
+				"BuildRecordSummary":                   schemaValue(buildRecordSummarySchema()),
+				"BuildRecordsResponse":                 schemaValue(buildRecordsResponseSchema()),
+				"ArtifactManifestResponse":             schemaValue(artifactManifestResponseSchema()),
+				"ArtifactManifestApplication":          schemaValue(artifactManifestApplicationSchema()),
+				"ArtifactManifestEnvironment":          schemaValue(artifactManifestEnvironmentSchema()),
+				"ArtifactManifestModule":               schemaValue(artifactManifestModuleSchema()),
+				"ArtifactManifestFile":                 schemaValue(artifactManifestFileSchema()),
+				"ArtifactMissingModule":                schemaValue(artifactMissingModuleSchema()),
+				"ReleaseRecord":                        schemaValue(releaseRecordSchema()),
+				"ReleaseRoute":                         schemaValue(releaseRouteSchema()),
+				"ReleaseCreateRequest":                 schemaValue(releaseCreateRequestSchema()),
+				"ReleaseGrayPercentageUpdateRequest":   schemaValue(releaseGrayPercentageUpdateRequestSchema()),
+				"ReleaseDetailResponse":                schemaValue(releaseDetailResponseSchema()),
+				"ReleaseResolveResponse":               schemaValue(releaseResolveResponseSchema()),
+				"ReleasesResponse":                     schemaValue(releasesResponseSchema()),
+				"CodeSourceApp":                        schemaValue(codeSourceAppSchema()),
+				"CodeSourceAppDetailResponse":          schemaValue(codeSourceAppDetailResponseSchema()),
+				"CodeSourceAppManifest":                schemaValue(codeSourceAppManifestSchema()),
+				"CodeSourceInstallURL":                 schemaValue(codeSourceInstallURLSchema()),
+				"CodeSourceRepository":                 schemaValue(codeSourceRepositorySchema()),
+				"CodeSourceRepositorySearchResponse":   schemaValue(codeSourceRepositorySearchResponseSchema()),
+				"CodeSourcesResponse":                  schemaValue(codeSourcesResponseSchema()),
+				"ArtifactAccessToken":                  schemaValue(artifactAccessTokenSchema()),
+				"ArtifactAccessTokensResponse":         schemaValue(artifactAccessTokensResponseSchema()),
+				"ArtifactAccessTokenDetailResponse":    schemaValue(artifactAccessTokenDetailResponseSchema()),
+				"ArtifactAccessTokenGenerateResponse":  schemaValue(artifactAccessTokenGenerateResponseSchema()),
+				"ArtifactAccessTokenCreateRequest":     schemaValue(artifactAccessTokenCreateRequestSchema()),
+				"ArtifactAccessTokenUpdateRequest":     schemaValue(artifactAccessTokenUpdateRequestSchema()),
+				"StorageConfiguration":                 schemaValue(storageConfigurationSchema()),
+				"StorageConfigurationsResponse":        schemaValue(storageConfigurationsResponseSchema()),
+				"StorageConfigurationDetailResponse":   schemaValue(storageConfigurationDetailResponseSchema()),
+				"StorageConfigurationCreateRequest":    schemaValue(storageConfigurationRequestSchema()),
+				"StorageConfigurationUpdateRequest":    schemaValue(storageConfigurationRequestSchema()),
+				"StorageConfigurationTestRequest":      schemaValue(storageConfigurationTestRequestSchema()),
+				"StorageConfigurationTestResponse":     schemaValue(storageConfigurationTestResponseSchema()),
+				"FeishuAuthResponse":                   schemaValue(feishuAuthResponseSchema()),
+				"FeishuToken":                          schemaValue(feishuTokenSchema()),
+				"FeishuUser":                           schemaValue(feishuUserSchema()),
+				"FeishuUserSearchItem":                 schemaValue(feishuUserSearchItemSchema()),
+				"FeishuUserSearchResponse":             schemaValue(feishuUserSearchResponseSchema()),
 			},
 		},
 	}
@@ -1288,16 +1290,29 @@ func applicationMemberSchema() *openapi3.Schema {
 		WithProperty("team", stringSchema("Member team."))
 }
 
-func applicationPipelineSchema() *openapi3.Schema {
-	return objectSchema("id", "runId", "moduleName", "branch", "status", "duration", "operator", "startedAt").
-		WithProperty("id", stringSchema("Pipeline record id.")).
-		WithProperty("runId", stringSchema("Pipeline run id.")).
-		WithProperty("moduleName", stringSchema("Module name.")).
-		WithProperty("branch", stringSchema("Git branch.")).
-		WithProperty("status", enumStringSchema("Pipeline status.", "success", "running", "failed", "queued")).
-		WithProperty("duration", stringSchema("Pipeline duration.")).
-		WithProperty("operator", stringSchema("Operator account.")).
-		WithProperty("startedAt", stringSchema("Pipeline start display time."))
+func applicationClientIntegrationSchema() *openapi3.Schema {
+	return objectSchema("endpoint").
+		WithPropertyRef("endpoint", schemaRef("ApplicationClientIntegrationEndpoint"))
+}
+
+func applicationClientIntegrationEndpointSchema() *openapi3.Schema {
+	return objectSchema("baseUrl", "path", "method", "requestFields", "responseFields").
+		WithProperty("baseUrl", stringSchema("Manifest API base URL for clients.")).
+		WithProperty("path", stringSchema("Manifest API path.")).
+		WithProperty("method", stringSchema("Manifest API HTTP method.")).
+		WithProperty("description", stringSchema("Manifest API endpoint description.")).
+		WithProperty("exampleUrl", stringSchema("Example manifest request URL.")).
+		WithPropertyRef("requestFields", arraySchemaRef("ApplicationClientIntegrationField")).
+		WithPropertyRef("responseFields", arraySchemaRef("ApplicationClientIntegrationField"))
+}
+
+func applicationClientIntegrationFieldSchema() *openapi3.Schema {
+	return objectSchema("name", "description", "required", "type", "example").
+		WithProperty("name", stringSchema("Field name.")).
+		WithProperty("description", stringSchema("Field description.")).
+		WithProperty("required", boolSchema("Whether the field is required.")).
+		WithProperty("type", stringSchema("Field value type.")).
+		WithProperty("example", stringSchema("Field example value."))
 }
 
 func applicationDetailSchema() *openapi3.Schema {
@@ -1316,7 +1331,7 @@ func applicationDetailSchema() *openapi3.Schema {
 		"environments",
 		"modules",
 		"members",
-		"pipelines",
+		"clientIntegration",
 	).
 		WithProperty("id", stringSchema("Application id.")).
 		WithProperty("appKey", stringSchema("Application key.")).
@@ -1332,7 +1347,7 @@ func applicationDetailSchema() *openapi3.Schema {
 		WithPropertyRef("environments", arraySchemaRef("ApplicationEnvironment")).
 		WithPropertyRef("modules", arraySchemaRef("ApplicationModule")).
 		WithPropertyRef("members", arraySchemaRef("ApplicationMember")).
-		WithPropertyRef("pipelines", arraySchemaRef("ApplicationPipeline"))
+		WithPropertyRef("clientIntegration", schemaRef("ApplicationClientIntegration"))
 }
 
 func applicationsResponseSchema() *openapi3.Schema {

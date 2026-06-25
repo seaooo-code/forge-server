@@ -149,8 +149,17 @@ func TestGetApplicationDetail(t *testing.T) {
 	if len(response.Detail.Members) != 1 {
 		t.Fatalf("expected members, got %d", len(response.Detail.Members))
 	}
-	if response.Detail.Modules == nil || response.Detail.Pipelines == nil {
-		t.Fatalf("expected empty module and pipeline arrays")
+	if response.Detail.Modules == nil {
+		t.Fatalf("expected empty module array")
+	}
+	if response.Detail.ClientIntegration.Endpoint.Path != "/api/v1/artifacts/applications/mi-car/environments/{environment}/manifest" {
+		t.Fatalf("expected client manifest path, got %#v", response.Detail.ClientIntegration.Endpoint)
+	}
+	if len(response.Detail.ClientIntegration.Endpoint.RequestFields) != 1 || response.Detail.ClientIntegration.Endpoint.RequestFields[0].Name != "identifier" {
+		t.Fatalf("expected client request field descriptions, got %#v", response.Detail.ClientIntegration.Endpoint.RequestFields)
+	}
+	if len(response.Detail.ClientIntegration.Endpoint.ResponseFields) != 1 || response.Detail.ClientIntegration.Endpoint.ResponseFields[0].Name != "modules" {
+		t.Fatalf("expected client response field descriptions, got %#v", response.Detail.ClientIntegration.Endpoint.ResponseFields)
 	}
 }
 
@@ -558,7 +567,21 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 				Team: "小米汽车 - RN 平台组",
 			},
 		},
-		Pipelines: []domain.ApplicationPipeline{},
+		ClientIntegration: domain.ClientIntegrationInfo{
+			Endpoint: domain.ClientIntegrationEndpoint{
+				BaseURL:     "https://forge.example.com",
+				Path:        "/api/v1/artifacts/applications/mi-car/environments/{environment}/manifest",
+				Method:      http.MethodGet,
+				Description: "客户端获取指定应用环境下模块 manifest 的接口",
+				ExampleURL:  "https://forge.example.com/api/v1/artifacts/applications/mi-car/environments/product/manifest?identifier=user-1",
+				RequestFields: []domain.ClientIntegrationField{
+					{Name: "identifier", Description: "定向灰度标识", Required: false, Type: "string", Example: "user-1"},
+				},
+				ResponseFields: []domain.ClientIntegrationField{
+					{Name: "modules", Description: "模块 manifest 列表", Required: true, Type: "array", Example: "[]"},
+				},
+			},
+		},
 	}
 }
 

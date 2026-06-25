@@ -336,11 +336,41 @@ func withApplicationDerivedDetail(detail domain.ApplicationDetail) domain.Applic
 	if detail.Modules == nil {
 		detail.Modules = []domain.ApplicationModule{}
 	}
-	if detail.Pipelines == nil {
-		detail.Pipelines = []domain.ApplicationPipeline{}
+	detail.ClientIntegration = clientIntegrationInfo(detail.Application.Slug)
+	if detail.ClientIntegration.Endpoint.RequestFields == nil {
+		detail.ClientIntegration.Endpoint.RequestFields = []domain.ClientIntegrationField{}
+	}
+	if detail.ClientIntegration.Endpoint.ResponseFields == nil {
+		detail.ClientIntegration.Endpoint.ResponseFields = []domain.ClientIntegrationField{}
 	}
 
 	return detail
+}
+
+func clientIntegrationInfo(applicationSlug string) domain.ClientIntegrationInfo {
+	path := "/api/v1/artifacts/applications/" + applicationSlug + "/environments/{environment}/manifest"
+	exampleURL := "/api/v1/artifacts/applications/" + applicationSlug + "/environments/product/manifest?identifier=user-123"
+
+	return domain.ClientIntegrationInfo{
+		Endpoint: domain.ClientIntegrationEndpoint{
+			Path:        path,
+			Method:      "GET",
+			Description: "客户端获取指定应用环境下模块 manifest 的接口说明",
+			ExampleURL:  exampleURL,
+			RequestFields: []domain.ClientIntegrationField{
+				{Name: "environment", Description: "客户端所属环境编码，来自路径参数", Required: true, Type: "string", Example: "product"},
+				{Name: "identifier", Description: "定向灰度标识；传入后优先命中 identifier 路由", Required: false, Type: "string", Example: "user-123"},
+				{Name: "userId", Description: "用户标识；用于百分比灰度路由计算", Required: false, Type: "string", Example: "user-123"},
+			},
+			ResponseFields: []domain.ClientIntegrationField{
+				{Name: "application", Description: "应用信息，包含 slug 和名称", Required: true, Type: "object", Example: `{"slug":"` + applicationSlug + `","name":"小米汽车"}`},
+				{Name: "environment", Description: "环境信息，包含环境编码", Required: true, Type: "object", Example: `{"code":"product"}`},
+				{Name: "identifier", Description: "请求使用的定向灰度标识，未传时为空", Required: false, Type: "string", Example: "user-123"},
+				{Name: "modules", Description: "客户端需要加载的模块 manifest 列表", Required: true, Type: "array", Example: `[{"id":"profile","files":[]}]`},
+				{Name: "missingModules", Description: "未能解析到发布路由或 manifest 的模块列表", Required: true, Type: "array", Example: "[]"},
+			},
+		},
+	}
 }
 
 func platformCount(platform string) int {
