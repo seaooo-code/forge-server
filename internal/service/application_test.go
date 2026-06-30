@@ -249,6 +249,22 @@ func TestApplicationServiceDeletesAfterDependencyCheck(t *testing.T) {
 	}
 }
 
+func TestApplicationServicePropagatesLastOwnerDeleteRejection(t *testing.T) {
+	repository := fakeApplicationRepository{
+		detail:          testApplicationDetail("mi-car", domain.ApplicationStatusRunning),
+		deleteMemberErr: domain.ErrApplicationLastOwner,
+	}
+	service := NewApplicationService(&repository)
+
+	err := service.DeleteApplicationMember(context.Background(), "mi-car", "ou-li-ming")
+	if !errors.Is(err, domain.ErrApplicationLastOwner) {
+		t.Fatalf("expected application last owner, got %v", err)
+	}
+	if repository.deleteMemberCalls != 1 {
+		t.Fatalf("expected delete member call, got %d", repository.deleteMemberCalls)
+	}
+}
+
 type fakeApplicationRepository struct {
 	applications      []domain.Application
 	deleteCheck       domain.ApplicationDeleteCheck
@@ -261,6 +277,8 @@ type fakeApplicationRepository struct {
 	updateStatusCalls int
 	deleteCheckCalls  int
 	deleteCalls       int
+	deleteMemberCalls int
+	deleteMemberErr   error
 }
 
 func (r *fakeApplicationRepository) ListApplications(_ context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error) {
@@ -279,6 +297,10 @@ func (r *fakeApplicationRepository) ListApplicationOwners(context.Context) ([]do
 
 func (r *fakeApplicationRepository) ListApplicationEnvironments(context.Context) ([]domain.ApplicationOptionItem, error) {
 	return []domain.ApplicationOptionItem{{Label: "QA 环境", Value: "qa"}}, nil
+}
+
+func (r *fakeApplicationRepository) ListApplicationMembers(context.Context, string) ([]domain.ApplicationMember, error) {
+	return r.detail.Members, nil
 }
 
 func (r *fakeApplicationRepository) CreateApplication(_ context.Context, input domain.ApplicationInput) (domain.ApplicationDetail, error) {
@@ -307,6 +329,20 @@ func (r *fakeApplicationRepository) DeleteApplication(context.Context, string) e
 	return nil
 }
 
+func (r *fakeApplicationRepository) UpsertApplicationMember(_ context.Context, _ string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error) {
+	return domain.ApplicationMember{
+		ID:     input.UserID,
+		UserID: input.UserID,
+		Name:   input.UserID,
+		Role:   input.Role,
+	}, nil
+}
+
+func (r *fakeApplicationRepository) DeleteApplicationMember(context.Context, string, string) error {
+	r.deleteMemberCalls++
+	return r.deleteMemberErr
+}
+
 func validApplicationInput(slug string) domain.ApplicationInput {
 	return domain.ApplicationInput{
 		Slug:               slug,
@@ -329,9 +365,8 @@ func validApplicationInput(slug string) domain.ApplicationInput {
 		},
 		Members: []domain.ApplicationMemberInput{
 			{
-				Name: "li.ming",
-				Role: domain.ApplicationMemberRoleOwner,
-				Team: "小米汽车 - RN 平台组",
+				Role:   domain.ApplicationMemberRoleOwner,
+				UserID: "ou-li-ming",
 			},
 		},
 	}

@@ -68,6 +68,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	environmentService := service.NewEnvironmentService(environmentRepository)
 	applicationRepository := postgres.NewApplicationRepository(postgresPool)
 	applicationService := service.NewApplicationService(applicationRepository)
+	authorizationRepository := postgres.NewAuthorizationRepository(postgresPool)
+	authorizationService := service.NewAuthorizationService(authorizationRepository)
 	codeSourceRepository := postgres.NewCodeSourceRepository(postgresPool)
 	githubClient := githubinfra.NewClient(cfg.GitHub, cfg.Telemetry.Enabled)
 	codeSourceService := service.NewCodeSourceService(codeSourceRepository, githubClient, domainCodeSourceAppConfig(cfg.GitHub))
@@ -89,12 +91,24 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
 	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository)
 	feishuContactService := service.NewFeishuContactService(feishuClient)
+	dashboardService := service.NewDashboardService(service.DashboardDependencies{
+		ApplicationService:         applicationService,
+		ModuleService:              moduleService,
+		BuildService:               buildService,
+		ReleaseService:             releaseService,
+		CodeSourceService:          codeSourceService,
+		StorageService:             storageService,
+		EnvironmentService:         environmentService,
+		ArtifactAccessTokenService: artifactAccessTokenService,
+	})
 
 	server := httpserver.New(cfg, httpserver.Dependencies{
 		ApplicationService:         applicationService,
 		ArtifactService:            artifactService,
 		ArtifactAccessTokenService: artifactAccessTokenService,
+		AuthorizationService:       authorizationService,
 		BuildService:               buildService,
+		DashboardService:           dashboardService,
 		CodeSourceService:          codeSourceService,
 		EnvironmentService:         environmentService,
 		FeishuAuthService:          feishuAuthService,

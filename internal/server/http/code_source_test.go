@@ -97,7 +97,7 @@ func TestGetCodeSourceInstallURL(t *testing.T) {
 	service := &fakeCodeSourceService{
 		installURL: domain.CodeSourceInstallURL{URL: "https://github.com/apps/forge/installations/new"},
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		CodeSourceService: service,
 		FeishuAuthService: testCodeSourceAuthService(),
 	})
@@ -153,7 +153,7 @@ func TestCompleteCodeSourceInstallation(t *testing.T) {
 			Status:   domain.CodeSourceAppStatusInstalled,
 		},
 	}
-	e := New(config.Config{
+	e := newAuthorizedTestServerWithConfig(config.Config{
 		GitHub: config.GitHubConfig{InstallRedirectURL: "http://127.0.0.1:5173/code-sources"},
 	}, Dependencies{
 		CodeSourceService: service,

@@ -13,9 +13,12 @@ type ApplicationRepository interface {
 	CreateApplication(ctx context.Context, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	DeleteApplication(ctx context.Context, slug string) error
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
+	DeleteApplicationMember(ctx context.Context, applicationID string, userID string) error
 	ListApplicationEnvironments(ctx context.Context) ([]domain.ApplicationOptionItem, error)
+	ListApplicationMembers(ctx context.Context, applicationID string) ([]domain.ApplicationMember, error)
 	ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error)
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error)
+	UpsertApplicationMember(ctx context.Context, applicationID string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
 }
@@ -64,6 +67,16 @@ func (s *ApplicationService) CreateApplication(ctx context.Context, input domain
 	detail, err := s.repository.CreateApplication(ctx, normalized)
 	if err != nil {
 		return domain.ApplicationDetail{}, err
+	}
+	if normalized.OwnerUserID != "" {
+		member, err := s.repository.UpsertApplicationMember(ctx, detail.ID, domain.ApplicationMemberInput{
+			Role:   domain.ApplicationMemberRoleOwner,
+			UserID: normalized.OwnerUserID,
+		})
+		if err != nil {
+			return domain.ApplicationDetail{}, err
+		}
+		detail.Members = []domain.ApplicationMember{member}
 	}
 
 	return withApplicationDerivedDetail(detail), nil
@@ -129,6 +142,38 @@ func (s *ApplicationService) DeleteApplication(ctx context.Context, slug string)
 	}
 
 	return s.repository.DeleteApplication(ctx, slug)
+}
+
+func (s *ApplicationService) ListApplicationMembers(ctx context.Context, slug string) ([]domain.ApplicationMember, error) {
+	detail, err := s.GetApplicationDetail(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	return s.repository.ListApplicationMembers(ctx, detail.ID)
+}
+
+func (s *ApplicationService) UpsertApplicationMember(ctx context.Context, slug string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error) {
+	detail, err := s.GetApplicationDetail(ctx, slug)
+	if err != nil {
+		return domain.ApplicationMember{}, err
+	}
+	normalized, err := normalizeApplicationMemberInput(input)
+	if err != nil {
+		return domain.ApplicationMember{}, err
+	}
+	return s.repository.UpsertApplicationMember(ctx, detail.ID, normalized)
+}
+
+func (s *ApplicationService) DeleteApplicationMember(ctx context.Context, slug string, userID string) error {
+	detail, err := s.GetApplicationDetail(ctx, slug)
+	if err != nil {
+		return err
+	}
+	normalizedUserID := strings.TrimSpace(userID)
+	if normalizedUserID == "" {
+		return domain.ErrInvalidApplicationInput
+	}
+	return s.repository.DeleteApplicationMember(ctx, detail.ID, normalizedUserID)
 }
 
 func (s *ApplicationService) GetApplicationOptions(ctx context.Context) (domain.ApplicationOptions, error) {
@@ -225,17 +270,24 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 	}
 
 	for _, member := range input.Members {
-		normalizedMember := domain.ApplicationMemberInput{
-			Name: strings.TrimSpace(member.Name),
-			Role: member.Role,
-			Team: strings.TrimSpace(member.Team),
-		}
-		if normalizedMember.Name == "" || !domain.IsValidApplicationMemberRole(normalizedMember.Role) {
-			return domain.ApplicationInput{}, domain.ErrInvalidApplicationInput
+		normalizedMember, err := normalizeApplicationMemberInput(member)
+		if err != nil {
+			return domain.ApplicationInput{}, err
 		}
 		normalized.Members = append(normalized.Members, normalizedMember)
 	}
 
+	return normalized, nil
+}
+
+func normalizeApplicationMemberInput(input domain.ApplicationMemberInput) (domain.ApplicationMemberInput, error) {
+	normalized := domain.ApplicationMemberInput{
+		Role:   input.Role,
+		UserID: strings.TrimSpace(input.UserID),
+	}
+	if normalized.UserID == "" || !domain.IsValidApplicationMemberRole(normalized.Role) {
+		return domain.ApplicationMemberInput{}, domain.ErrInvalidApplicationInput
+	}
 	return normalized, nil
 }
 

@@ -81,10 +81,11 @@ func TestCreateStorageConfiguration(t *testing.T) {
 	service := &fakeStorageService{
 		configuration: testHTTPStorageConfiguration("storage-prod", domain.StorageStatusHealthy),
 	}
-	e := New(config.Config{}, Dependencies{StorageService: service})
+	e := newAuthorizedTestServer(Dependencies{StorageService: service})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations", jsonBody(storageRequest()))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -107,12 +108,13 @@ func TestUpdateStorageConfigurationRequiresCompletePayload(t *testing.T) {
 	service := &fakeStorageService{
 		configuration: testHTTPStorageConfiguration("storage-prod", domain.StorageStatusDisabled),
 	}
-	e := New(config.Config{}, Dependencies{StorageService: service})
+	e := newAuthorizedTestServer(Dependencies{StorageService: service})
 
 	request := storageRequest()
 	request["status"] = "disabled"
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/storage/configurations/storage-prod", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -135,9 +137,10 @@ func TestDeleteStorageConfiguration(t *testing.T) {
 	service := &fakeStorageService{
 		configuration: testHTTPStorageConfiguration("storage-prod", domain.StorageStatusHealthy),
 	}
-	e := New(config.Config{}, Dependencies{StorageService: service})
+	e := newAuthorizedTestServer(Dependencies{StorageService: service})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/storage/configurations/storage-prod", nil)
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -151,13 +154,14 @@ func TestDeleteStorageConfiguration(t *testing.T) {
 }
 
 func TestDeleteStorageConfigurationInUse(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		StorageService: &fakeStorageService{
 			err: domain.ErrStorageConfigurationInUse,
 		},
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/storage/configurations/storage-prod", nil)
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -182,11 +186,12 @@ func TestTestStorageConfiguration(t *testing.T) {
 			TestedAt: time.Date(2026, 6, 12, 11, 20, 0, 0, time.UTC),
 		},
 	}
-	e := New(config.Config{}, Dependencies{StorageService: service})
+	e := newAuthorizedTestServer(Dependencies{StorageService: service})
 
 	request := storageRequest()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations/test", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -208,7 +213,7 @@ func TestTestStorageConfiguration(t *testing.T) {
 }
 
 func TestTestStorageConfigurationFailure(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		StorageService: &fakeStorageService{
 			err: domain.ErrStorageConfigurationTestFailed,
 		},
@@ -216,6 +221,7 @@ func TestTestStorageConfigurationFailure(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations/test", jsonBody(storageRequest()))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)

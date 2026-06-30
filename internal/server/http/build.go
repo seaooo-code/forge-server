@@ -10,7 +10,8 @@ import (
 )
 
 type buildHandler struct {
-	service BuildService
+	authService AuthorizationService
+	service     BuildService
 }
 
 type buildCreateRequest struct {
@@ -88,8 +89,8 @@ type buildRecordSummaryResponse struct {
 	Total     int `json:"total"`
 }
 
-func registerBuildRoutes(group *echo.Group, service BuildService) {
-	handler := buildHandler{service: service}
+func registerBuildRoutes(group *echo.Group, service BuildService, authService AuthorizationService) {
+	handler := buildHandler{authService: authService, service: service}
 
 	group.GET("/builds", handler.list)
 	group.POST("/builds", handler.create)
@@ -134,6 +135,9 @@ func (h buildHandler) create(c echo.Context) error {
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid build request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionBuildCreate, domain.AuthorizationResource{ModuleID: request.ModuleID}); err != nil {
+		return err
+	}
 
 	record, err := h.service.CreateBuildRecord(c.Request().Context(), domain.BuildRecordInput{
 		ModuleID:    request.ModuleID,
@@ -161,6 +165,8 @@ func buildErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "storage configuration not found"})
 	case errors.Is(err, domain.ErrBuildRecordNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "build record not found"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

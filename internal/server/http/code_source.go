@@ -12,6 +12,7 @@ import (
 
 type codeSourceHandler struct {
 	authService        FeishuAuthService
+	authorization      AuthorizationService
 	installRedirectURL string
 	service            CodeSourceService
 }
@@ -63,9 +64,10 @@ type codeSourceRepositoryResponse struct {
 	UpdatedAt      string `json:"updatedAt"`
 }
 
-func registerCodeSourceRoutes(group *echo.Group, publicGroup *echo.Group, service CodeSourceService, authService FeishuAuthService, installRedirectURL string) {
+func registerCodeSourceRoutes(group *echo.Group, publicGroup *echo.Group, service CodeSourceService, authService FeishuAuthService, authorization AuthorizationService, installRedirectURL string) {
 	handler := codeSourceHandler{
 		authService:        authService,
+		authorization:      authorization,
 		installRedirectURL: installRedirectURL,
 		service:            service,
 	}
@@ -127,6 +129,9 @@ func (h codeSourceHandler) installURL(c echo.Context) error {
 	if err != nil || !ok {
 		return err
 	}
+	if err := authorizeCurrentUser(c, h.authorization, domain.ActionCodeSourceManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 
 	installURL, err := h.service.GetInstallURL(c.Request().Context(), domain.CodeSourceProvider(c.Param("provider")), session.User.UnionID)
 	if err != nil {
@@ -160,6 +165,9 @@ func (h codeSourceHandler) completeInstallation(c echo.Context) error {
 	if err != nil || !ok {
 		return err
 	}
+	if err := authorizeCurrentUser(c, h.authorization, domain.ActionCodeSourceManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 
 	installationID, err := strconv.ParseInt(c.QueryParam("installation_id"), 10, 64)
 	if err != nil || installationID <= 0 {
@@ -187,6 +195,9 @@ func (h codeSourceHandler) deleteInstallations(c echo.Context) error {
 
 	session, ok, err := h.currentSession(c)
 	if err != nil || !ok {
+		return err
+	}
+	if err := authorizeCurrentUser(c, h.authorization, domain.ActionCodeSourceManage, domain.AuthorizationResource{}); err != nil {
 		return err
 	}
 
@@ -257,19 +268,19 @@ func (h codeSourceHandler) currentSession(c echo.Context) (domain.FeishuAuthResu
 
 	session, err := h.authService.GetSession(c.Request().Context(), sessionToken)
 	if err != nil {
-		if errors.Is(err, domain.ErrFeishuSessionNotFound) || errors.Is(err, domain.ErrFeishuSessionExpired) {
+		if errors.Is(err, domain.ErrFeishuSessionNotFound) ||
+			errors.Is(err, domain.ErrFeishuSessionExpired) ||
+			errors.Is(err, domain.ErrFeishuAuthorization) {
 			clearFeishuSessionCookie(c)
 			return domain.FeishuAuthResult{}, false, c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		}
 		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
 			return domain.FeishuAuthResult{}, false, c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
 		}
-		if errors.Is(err, domain.ErrFeishuAuthorization) {
-			return domain.FeishuAuthResult{}, false, c.JSON(http.StatusBadGateway, map[string]string{"error": "feishu authorization failed"})
-		}
 		return domain.FeishuAuthResult{}, false, c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 	setFeishuSessionCookie(c, session)
+	c.Set(consoleSessionContextKey, session)
 
 	return session, true, nil
 }
@@ -286,6 +297,8 @@ func codeSourceErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source provider not found"})
 	case errors.Is(err, domain.ErrCodeSourceAuthorization):
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "code source authorization failed"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

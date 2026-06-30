@@ -83,6 +83,14 @@ func (r *FeishuUserRepository) UpsertUser(ctx context.Context, user domain.UserI
 	return upsertUser(ctx, r.pool, user)
 }
 
+func (r *FeishuUserRepository) BootstrapFirstSuperAdmin(ctx context.Context, userID string) error {
+	return NewAuthorizationRepository(r.pool).BootstrapFirstSuperAdmin(ctx, userID)
+}
+
+func (r *FeishuUserRepository) ListGlobalRoles(ctx context.Context, userID string) ([]domain.GlobalRole, error) {
+	return NewAuthorizationRepository(r.pool).ListGlobalRoles(ctx, userID)
+}
+
 func (r *FeishuUserRepository) CreateFeishuAuthSession(ctx context.Context, session domain.FeishuAuthSession) error {
 	if _, err := r.pool.Exec(ctx, `
 		insert into feishu_auth_sessions (

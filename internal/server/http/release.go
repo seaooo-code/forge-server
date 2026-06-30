@@ -10,7 +10,8 @@ import (
 )
 
 type releaseHandler struct {
-	service ReleaseService
+	authService AuthorizationService
+	service     ReleaseService
 }
 
 type releaseCreateRequest struct {
@@ -85,8 +86,8 @@ type releaseRouteResponse struct {
 	UpdatedAt       string `json:"updatedAt"`
 }
 
-func registerReleaseRoutes(group *echo.Group, service ReleaseService) {
-	handler := releaseHandler{service: service}
+func registerReleaseRoutes(group *echo.Group, service ReleaseService, authService AuthorizationService) {
+	handler := releaseHandler{authService: authService, service: service}
 
 	group.GET("/releases", handler.list)
 	group.POST("/releases", handler.create)
@@ -120,6 +121,9 @@ func (h releaseHandler) create(c echo.Context) error {
 	var request releaseCreateRequest
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionReleaseCreate, domain.AuthorizationResource{BuildRecordID: request.BuildRecordID}); err != nil {
+		return err
 	}
 
 	session, ok := consoleSession(c)
@@ -164,6 +168,9 @@ func (h releaseHandler) updateGrayPercentage(c echo.Context) error {
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionReleaseCreate, domain.AuthorizationResource{ReleaseID: c.Param("id")}); err != nil {
+		return err
+	}
 
 	session, ok := consoleSession(c)
 	if !ok {
@@ -192,6 +199,9 @@ func (h releaseHandler) updateGrayPercentage(c echo.Context) error {
 func (h releaseHandler) inactivate(c echo.Context) error {
 	if h.service == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionReleaseRollback, domain.AuthorizationResource{ReleaseID: c.Param("id")}); err != nil {
+		return err
 	}
 
 	session, ok := consoleSession(c)
@@ -251,6 +261,8 @@ func releaseErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "release not found"})
 	case errors.Is(err, domain.ErrReleaseRouteNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "release route not found"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

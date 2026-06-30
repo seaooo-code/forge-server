@@ -12,7 +12,8 @@ import (
 )
 
 type environmentHandler struct {
-	service EnvironmentService
+	authService AuthorizationService
+	service     EnvironmentService
 }
 
 type environmentsResponse struct {
@@ -43,8 +44,8 @@ type environmentResponse struct {
 	UpdatedAt                string `json:"updatedAt"`
 }
 
-func registerEnvironmentRoutes(group *echo.Group, service EnvironmentService) {
-	handler := environmentHandler{service: service}
+func registerEnvironmentRoutes(group *echo.Group, service EnvironmentService, authService AuthorizationService) {
+	handler := environmentHandler{authService: authService, service: service}
 
 	group.GET("/environments", handler.list)
 	group.POST("/environments", handler.create)
@@ -81,6 +82,9 @@ func (h environmentHandler) create(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid environment request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionEnvironmentManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 
 	environment, err := h.service.CreateEnvironment(c.Request().Context(), input)
 	if err != nil {
@@ -111,6 +115,9 @@ func (h environmentHandler) update(c echo.Context) error {
 	input, ok := bindEnvironmentRequest(c)
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid environment request"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionEnvironmentManage, domain.AuthorizationResource{}); err != nil {
+		return err
 	}
 
 	environment, err := h.service.UpdateEnvironment(c.Request().Context(), c.Param("code"), input)
@@ -145,6 +152,8 @@ func environmentErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid environment request"})
 	case errors.Is(err, domain.ErrStorageConfigurationNotFound):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "storage configuration not found"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

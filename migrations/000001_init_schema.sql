@@ -19,6 +19,17 @@ create index idx_users_feishu_user_id
     on users(feishu_user_id)
     where feishu_user_id <> '';
 
+create table global_role_assignments (
+    user_id text not null references users(id) on delete cascade,
+    role text not null check (role in ('SuperAdmin', 'PlatformAdmin', 'ReleaseAdmin', 'Auditor')),
+    created_by_user_id text references users(id) on delete set null,
+    created_at timestamptz not null default now(),
+    primary key (user_id, role)
+);
+
+create index idx_global_role_assignments_role
+    on global_role_assignments(role);
+
 create table artifact_access_tokens (
     id text primary key,
     name text not null,
@@ -112,18 +123,18 @@ create index idx_application_environment_bindings_environment
 create table application_members (
     id bigserial primary key,
     application_id text not null references applications(id) on delete cascade,
-    member_key text not null,
-    name text not null,
+    user_id text not null references users(id) on delete cascade,
     role text not null check (role in ('Owner', 'Developer', 'QA', 'Release')),
-    team text not null,
     sort_order integer not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    unique (application_id, member_key)
+    unique (application_id, user_id)
 );
 
 create index idx_application_members_application
     on application_members(application_id);
+create index idx_application_members_user
+    on application_members(user_id);
 
 create table feishu_users (
     union_id text primary key,

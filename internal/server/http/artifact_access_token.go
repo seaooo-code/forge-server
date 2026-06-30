@@ -11,7 +11,8 @@ import (
 )
 
 type artifactAccessTokenHandler struct {
-	service ArtifactAccessTokenService
+	authService AuthorizationService
+	service     ArtifactAccessTokenService
 }
 
 type artifactAccessTokensResponse struct {
@@ -47,8 +48,8 @@ type artifactAccessTokenUpdateRequest struct {
 	Status string `json:"status"`
 }
 
-func registerArtifactAccessTokenRoutes(group *echo.Group, service ArtifactAccessTokenService) {
-	handler := artifactAccessTokenHandler{service: service}
+func registerArtifactAccessTokenRoutes(group *echo.Group, service ArtifactAccessTokenService, authService AuthorizationService) {
+	handler := artifactAccessTokenHandler{authService: authService, service: service}
 
 	group.GET("/artifact-access-tokens", handler.list)
 	group.POST("/artifact-access-tokens/generate", handler.generate)
@@ -72,6 +73,9 @@ func (h artifactAccessTokenHandler) generate(c echo.Context) error {
 	if h.service == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "artifact access token service unavailable"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionAccessTokenManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 	result, err := h.service.GenerateArtifactAccessToken(c.Request().Context())
 	if err != nil {
 		return artifactAccessTokenErrorResponse(c, err)
@@ -87,6 +91,9 @@ func (h artifactAccessTokenHandler) create(c echo.Context) error {
 	var request artifactAccessTokenCreateRequest
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid artifact access token request"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionAccessTokenManage, domain.AuthorizationResource{}); err != nil {
+		return err
 	}
 
 	createdByUserID := ""
@@ -122,6 +129,9 @@ func (h artifactAccessTokenHandler) update(c echo.Context) error {
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid artifact access token request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionAccessTokenManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 	token, err := h.service.UpdateArtifactAccessToken(c.Request().Context(), c.Param("id"), domain.ArtifactAccessTokenUpdateInput{
 		Status: domain.ArtifactAccessTokenStatus(request.Status),
 	})
@@ -134,6 +144,9 @@ func (h artifactAccessTokenHandler) update(c echo.Context) error {
 func (h artifactAccessTokenHandler) delete(c echo.Context) error {
 	if h.service == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "artifact access token service unavailable"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionAccessTokenManage, domain.AuthorizationResource{}); err != nil {
+		return err
 	}
 	if err := h.service.DeleteArtifactAccessToken(c.Request().Context(), c.Param("id")); err != nil {
 		return artifactAccessTokenErrorResponse(c, err)
@@ -149,6 +162,8 @@ func artifactAccessTokenErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusConflict, map[string]string{"error": "artifact access token already exists"})
 	case errors.Is(err, domain.ErrArtifactAccessTokenNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "artifact access token not found"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

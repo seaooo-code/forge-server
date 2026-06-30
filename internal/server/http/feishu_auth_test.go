@@ -144,6 +144,27 @@ func TestFeishuSessionReturnsCurrentSession(t *testing.T) {
 	}
 }
 
+func TestFeishuSessionTreatsAuthorizationFailureAsUnauthorized(t *testing.T) {
+	service := &fakeFeishuAuthService{sessionErr: domain.ErrFeishuAuthorization}
+	e := New(config.Config{}, Dependencies{
+		FeishuAuthService: service,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	req.AddCookie(&http.Cookie{Name: feishuSessionCookieName, Value: "session-token"})
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+	if service.sessionToken != "session-token" {
+		t.Fatalf("expected session token, got %q", service.sessionToken)
+	}
+	assertClearedSessionCookie(t, rec)
+}
+
 func TestFeishuCallbackRejectsInvalidState(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
 		FeishuAuthService: &fakeFeishuAuthService{},
@@ -158,6 +179,19 @@ func TestFeishuCallbackRejectsInvalidState(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
+}
+
+func assertClearedSessionCookie(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == feishuSessionCookieName {
+			if cookie.MaxAge < 0 {
+				return
+			}
+			t.Fatalf("expected cleared session cookie, got %#v", cookie)
+		}
+	}
+	t.Fatalf("expected cleared session cookie, got %#v", rec.Result().Cookies())
 }
 
 type fakeFeishuAuthService struct {

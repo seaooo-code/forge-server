@@ -10,6 +10,7 @@ var (
 	ErrApplicationNotFound     = errors.New("application not found")
 	ErrApplicationSlugConflict = errors.New("application slug already exists")
 	ErrApplicationInUse        = errors.New("application is referenced by modules")
+	ErrApplicationLastOwner    = errors.New("application last owner")
 	ErrInvalidApplicationInput = errors.New("invalid application request")
 )
 
@@ -85,10 +86,13 @@ type ApplicationEnvironmentBinding struct {
 }
 
 type ApplicationMember struct {
-	ID   string
-	Name string
-	Role ApplicationMemberRole
-	Team string
+	AvatarURL string
+	Email     string
+	ID        string
+	Name      string
+	Role      ApplicationMemberRole
+	Team      string
+	UserID    string
 }
 
 type ApplicationModule struct {
@@ -139,6 +143,7 @@ type ApplicationDetail struct {
 	Environments       []ApplicationEnvironmentBinding
 	Modules            []ApplicationModule
 	Members            []ApplicationMember
+	Capabilities       ApplicationCapabilities
 	ClientIntegration  ClientIntegrationInfo
 }
 
@@ -147,9 +152,8 @@ type ApplicationEnvironmentInput struct {
 }
 
 type ApplicationMemberInput struct {
-	Name string
-	Role ApplicationMemberRole
-	Team string
+	Role   ApplicationMemberRole
+	UserID string
 }
 
 type ApplicationInput struct {

@@ -11,7 +11,8 @@ import (
 )
 
 type applicationHandler struct {
-	service ApplicationService
+	authService AuthorizationService
+	service     ApplicationService
 }
 
 type applicationsResponse struct {
@@ -75,6 +76,7 @@ type applicationDetailFields struct {
 	Environments       []applicationEnvironmentResponse     `json:"environments"`
 	Modules            []applicationModuleResponse          `json:"modules"`
 	Members            []applicationMemberResponse          `json:"members"`
+	Capabilities       domain.ApplicationCapabilities       `json:"capabilities"`
 	ClientIntegration  applicationClientIntegrationResponse `json:"clientIntegration"`
 }
 
@@ -105,10 +107,17 @@ type applicationModuleResponse struct {
 }
 
 type applicationMemberResponse struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Role string `json:"role"`
-	Team string `json:"team"`
+	AvatarURL string `json:"avatarUrl"`
+	Email     string `json:"email"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	Team      string `json:"team"`
+	UserID    string `json:"userId"`
+}
+
+type applicationMembersResponse struct {
+	Members []applicationMemberResponse `json:"members"`
 }
 
 type applicationClientIntegrationResponse struct {
@@ -160,9 +169,8 @@ type applicationEnvironmentRequest struct {
 }
 
 type applicationMemberRequest struct {
-	Name string                       `json:"name"`
-	Role domain.ApplicationMemberRole `json:"role"`
-	Team string                       `json:"team"`
+	Role   domain.ApplicationMemberRole `json:"role"`
+	UserID string                       `json:"userId"`
 }
 
 type applicationOptionsResponse struct {
@@ -177,14 +185,18 @@ type applicationOptionResponse struct {
 	Value string `json:"value"`
 }
 
-func registerApplicationRoutes(group *echo.Group, service ApplicationService) {
-	handler := applicationHandler{service: service}
+func registerApplicationRoutes(group *echo.Group, service ApplicationService, authService AuthorizationService) {
+	handler := applicationHandler{authService: authService, service: service}
 
 	group.GET("/applications", handler.list)
 	group.GET("/applications/options", handler.options)
 	group.GET("/applications/:slug/delete-check", handler.deleteCheck)
+	group.GET("/applications/:slug/members", handler.members)
 	group.GET("/applications/:slug", handler.detail)
 	group.POST("/applications", handler.create)
+	group.POST("/applications/:slug/members", handler.upsertMember)
+	group.PATCH("/applications/:slug/members/:userId", handler.upsertMember)
+	group.DELETE("/applications/:slug/members/:userId", handler.deleteMember)
 	group.PATCH("/applications/:slug", handler.update)
 	group.PATCH("/applications/:slug/status", handler.updateStatus)
 	group.DELETE("/applications/:slug", handler.delete)
@@ -237,6 +249,10 @@ func (h applicationHandler) detail(c echo.Context) error {
 	if err != nil {
 		return applicationErrorResponse(c, err)
 	}
+	detail, err = h.detailWithCapabilities(c, detail)
+	if err != nil {
+		return err
+	}
 
 	return c.JSON(http.StatusOK, newApplicationDetailResponse(c, detail))
 }
@@ -250,10 +266,17 @@ func (h applicationHandler) create(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionApplicationCreate, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 
 	detail, err := h.service.CreateApplication(c.Request().Context(), input)
 	if err != nil {
 		return applicationErrorResponse(c, err)
+	}
+	detail, err = h.detailWithCapabilities(c, detail)
+	if err != nil {
+		return err
 	}
 
 	return c.JSON(http.StatusCreated, newApplicationDetailResponse(c, detail))
@@ -268,10 +291,17 @@ func (h applicationHandler) update(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionApplicationUpdate, domain.AuthorizationResource{ApplicationSlug: c.Param("slug")}); err != nil {
+		return err
+	}
 
 	detail, err := h.service.UpdateApplication(c.Request().Context(), c.Param("slug"), input)
 	if err != nil {
 		return applicationErrorResponse(c, err)
+	}
+	detail, err = h.detailWithCapabilities(c, detail)
+	if err != nil {
+		return err
 	}
 
 	return c.JSON(http.StatusOK, newApplicationDetailResponse(c, detail))
@@ -286,10 +316,17 @@ func (h applicationHandler) updateStatus(c echo.Context) error {
 	if err := c.Bind(&request); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionApplicationStatus, domain.AuthorizationResource{ApplicationSlug: c.Param("slug")}); err != nil {
+		return err
+	}
 
 	detail, err := h.service.UpdateApplicationStatus(c.Request().Context(), c.Param("slug"), request.Status)
 	if err != nil {
 		return applicationErrorResponse(c, err)
+	}
+	detail, err = h.detailWithCapabilities(c, detail)
+	if err != nil {
+		return err
 	}
 
 	return c.JSON(http.StatusOK, newApplicationDetailResponse(c, detail))
@@ -313,11 +350,85 @@ func (h applicationHandler) delete(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
 	}
 
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionApplicationDelete, domain.AuthorizationResource{ApplicationSlug: c.Param("slug")}); err != nil {
+		return err
+	}
 	if err := h.service.DeleteApplication(c.Request().Context(), c.Param("slug")); err != nil {
 		return applicationErrorResponse(c, err)
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (h applicationHandler) members(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
+	}
+
+	members, err := h.service.ListApplicationMembers(c.Request().Context(), c.Param("slug"))
+	if err != nil {
+		return applicationErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, applicationMembersResponse{Members: newApplicationMemberResponses(members)})
+}
+
+func (h applicationHandler) upsertMember(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionApplicationMemberManage, domain.AuthorizationResource{ApplicationSlug: c.Param("slug")}); err != nil {
+		return err
+	}
+
+	var request applicationMemberRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
+	}
+	userID := strings.TrimSpace(c.Param("userId"))
+	if userID == "" {
+		userID = request.UserID
+	}
+	member, err := h.service.UpsertApplicationMember(c.Request().Context(), c.Param("slug"), domain.ApplicationMemberInput{
+		Role:   request.Role,
+		UserID: userID,
+	})
+	if err != nil {
+		return applicationErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, applicationMemberResponseFromDomain(member))
+}
+
+func (h applicationHandler) deleteMember(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionApplicationMemberManage, domain.AuthorizationResource{ApplicationSlug: c.Param("slug")}); err != nil {
+		return err
+	}
+	if err := h.service.DeleteApplicationMember(c.Request().Context(), c.Param("slug"), c.Param("userId")); err != nil {
+		return applicationErrorResponse(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h applicationHandler) detailWithCapabilities(c echo.Context, detail domain.ApplicationDetail) (domain.ApplicationDetail, error) {
+	if h.authService == nil {
+		return detail, nil
+	}
+	session, ok := consoleSession(c)
+	if !ok {
+		return detail, nil
+	}
+	userID := domain.ConsoleUserIDFromFeishu(session.User)
+	if userID == "" {
+		return detail, nil
+	}
+	capabilities, err := h.authService.ApplicationCapabilities(c.Request().Context(), userID, detail.ID)
+	if err != nil {
+		return domain.ApplicationDetail{}, c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	}
+	detail.Capabilities = capabilities
+	return detail, nil
 }
 
 func bindApplicationRequest(c echo.Context) (domain.ApplicationInput, bool) {
@@ -336,9 +447,8 @@ func bindApplicationRequest(c echo.Context) (domain.ApplicationInput, bool) {
 	members := make([]domain.ApplicationMemberInput, 0, len(request.Members))
 	for _, member := range request.Members {
 		members = append(members, domain.ApplicationMemberInput{
-			Name: member.Name,
-			Role: member.Role,
-			Team: member.Team,
+			Role:   member.Role,
+			UserID: member.UserID,
 		})
 	}
 
@@ -369,8 +479,12 @@ func applicationErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusConflict, map[string]string{"error": "application slug already exists"})
 	case errors.Is(err, domain.ErrApplicationInUse):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "application is referenced by modules"})
+	case errors.Is(err, domain.ErrApplicationLastOwner):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "application last owner"})
 	case errors.Is(err, domain.ErrInvalidApplicationInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid application request"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
@@ -429,6 +543,7 @@ func newApplicationDetailResponse(c echo.Context, detail domain.ApplicationDetai
 			Environments:       newApplicationEnvironmentResponses(detail.Environments),
 			Modules:            newApplicationModuleResponses(detail.Modules),
 			Members:            newApplicationMemberResponses(detail.Members),
+			Capabilities:       detail.Capabilities,
 			ClientIntegration:  newApplicationClientIntegrationResponse(detail.ClientIntegration, applicationRequestBaseURL(c)),
 		},
 	}
@@ -518,14 +633,21 @@ func newApplicationModuleResponses(modules []domain.ApplicationModule) []applica
 func newApplicationMemberResponses(members []domain.ApplicationMember) []applicationMemberResponse {
 	response := make([]applicationMemberResponse, 0, len(members))
 	for _, member := range members {
-		response = append(response, applicationMemberResponse{
-			ID:   member.ID,
-			Name: member.Name,
-			Role: string(member.Role),
-			Team: member.Team,
-		})
+		response = append(response, applicationMemberResponseFromDomain(member))
 	}
 	return response
+}
+
+func applicationMemberResponseFromDomain(member domain.ApplicationMember) applicationMemberResponse {
+	return applicationMemberResponse{
+		AvatarURL: member.AvatarURL,
+		Email:     member.Email,
+		ID:        member.ID,
+		Name:      member.Name,
+		Role:      string(member.Role),
+		Team:      member.Team,
+		UserID:    member.UserID,
+	}
 }
 
 func applicationRequestBaseURL(c echo.Context) string {

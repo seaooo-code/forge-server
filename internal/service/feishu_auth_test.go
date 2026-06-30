@@ -45,6 +45,15 @@ func TestFeishuAuthServiceCompleteAuthorization(t *testing.T) {
 	if repository.savedConsoleUser.DepartmentIDs == nil || len(repository.savedConsoleUser.DepartmentIDs) != 0 {
 		t.Fatalf("expected empty department ids, got %#v", repository.savedConsoleUser.DepartmentIDs)
 	}
+	if repository.bootstrapUserID != "ou_open" {
+		t.Fatalf("expected first login bootstrap, got %q", repository.bootstrapUserID)
+	}
+	if len(result.Roles) != 1 || result.Roles[0] != domain.GlobalRoleSuperAdmin {
+		t.Fatalf("expected super admin role, got %#v", result.Roles)
+	}
+	if !result.Capabilities.CanCreateApplication || !result.Capabilities.CanManageApplications {
+		t.Fatalf("expected super admin capabilities, got %#v", result.Capabilities)
+	}
 	if result.SessionToken == "" {
 		t.Fatal("expected session token")
 	}
@@ -129,7 +138,9 @@ func (c fakeFeishuClient) RefreshAccessToken(context.Context, string) (domain.Fe
 }
 
 type fakeFeishuUserRepository struct {
+	bootstrapUserID  string
 	createdSession   domain.FeishuAuthSession
+	globalRoles      []domain.GlobalRole
 	savedConsoleUser domain.UserInput
 	savedUser        domain.FeishuUser
 	session          domain.FeishuAuthSession
@@ -144,6 +155,18 @@ func (r *fakeFeishuUserRepository) UpsertFeishuUser(_ context.Context, user doma
 func (r *fakeFeishuUserRepository) UpsertUser(_ context.Context, user domain.UserInput) error {
 	r.savedConsoleUser = user
 	return nil
+}
+
+func (r *fakeFeishuUserRepository) BootstrapFirstSuperAdmin(_ context.Context, userID string) error {
+	r.bootstrapUserID = userID
+	if len(r.globalRoles) == 0 {
+		r.globalRoles = []domain.GlobalRole{domain.GlobalRoleSuperAdmin}
+	}
+	return nil
+}
+
+func (r *fakeFeishuUserRepository) ListGlobalRoles(context.Context, string) ([]domain.GlobalRole, error) {
+	return r.globalRoles, nil
 }
 
 func (r *fakeFeishuUserRepository) CreateFeishuAuthSession(_ context.Context, session domain.FeishuAuthSession) error {

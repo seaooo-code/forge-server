@@ -221,7 +221,7 @@ func TestGetApplicationDetailNotFound(t *testing.T) {
 }
 
 func TestCreateApplication(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ApplicationService: fakeApplicationService{
 			detail: testHTTPApplicationDetail("mi-car-global", domain.ApplicationStatusRunning),
 		},
@@ -229,6 +229,7 @@ func TestCreateApplication(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/applications", jsonBody(testApplicationRequest("mi-car-global")))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -250,7 +251,7 @@ func TestCreateApplication(t *testing.T) {
 }
 
 func TestCreateApplicationSlugConflict(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ApplicationService: fakeApplicationService{
 			createErr: domain.ErrApplicationSlugConflict,
 		},
@@ -258,6 +259,7 @@ func TestCreateApplicationSlugConflict(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/applications", jsonBody(testApplicationRequest("mi-car")))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -268,7 +270,7 @@ func TestCreateApplicationSlugConflict(t *testing.T) {
 }
 
 func TestUpdateApplication(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ApplicationService: fakeApplicationService{
 			detail: testHTTPApplicationDetail("mi-car", domain.ApplicationStatusMaintenance),
 		},
@@ -278,6 +280,7 @@ func TestUpdateApplication(t *testing.T) {
 	request.Status = domain.ApplicationStatusMaintenance
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/applications/mi-car", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -296,7 +299,7 @@ func TestUpdateApplication(t *testing.T) {
 }
 
 func TestUpdateApplicationStatus(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ApplicationService: fakeApplicationService{
 			detail: testHTTPApplicationDetail("mi-car", domain.ApplicationStatusRunning),
 		},
@@ -306,6 +309,7 @@ func TestUpdateApplicationStatus(t *testing.T) {
 		Status: domain.ApplicationStatusRunning,
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -320,6 +324,82 @@ func TestUpdateApplicationStatus(t *testing.T) {
 	}
 	if response.Application.Status != "running" {
 		t.Fatalf("expected running status, got %q", response.Application.Status)
+	}
+}
+
+func TestCreateApplicationRejectsForbiddenUser(t *testing.T) {
+	e := newAuthorizedTestServer(Dependencies{
+		ApplicationService: fakeApplicationService{
+			detail: testHTTPApplicationDetail("mi-car-global", domain.ApplicationStatusRunning),
+		},
+		AuthorizationService: fakeAuthorizationService{err: domain.ErrForbidden},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/applications", jsonBody(testApplicationRequest("mi-car-global")))
+	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpsertApplicationMember(t *testing.T) {
+	e := newAuthorizedTestServer(Dependencies{
+		ApplicationService: fakeApplicationService{
+			detail: testHTTPApplicationDetail("mi-car", domain.ApplicationStatusRunning),
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/applications/mi-car/members", jsonBody(applicationMemberRequest{
+		Role:   domain.ApplicationMemberRoleDeveloper,
+		UserID: "ou-dev",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response applicationMemberResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.UserID != "ou-dev" || response.Role != "Developer" {
+		t.Fatalf("unexpected member response: %#v", response)
+	}
+}
+
+func TestDeleteApplicationLastOwnerReturnsBadRequest(t *testing.T) {
+	e := newAuthorizedTestServer(Dependencies{
+		ApplicationService: fakeApplicationService{
+			detail:    testHTTPApplicationDetail("mi-car", domain.ApplicationStatusRunning),
+			deleteErr: domain.ErrApplicationLastOwner,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/applications/mi-car/members/ou-li-ming", nil)
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	var response map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["error"] != "application last owner" {
+		t.Fatalf("unexpected error response: %#v", response)
 	}
 }
 
@@ -360,11 +440,12 @@ func TestCheckApplicationDelete(t *testing.T) {
 }
 
 func TestDeleteApplicationHardDeletes(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ApplicationService: fakeApplicationService{},
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/applications/mi-car", nil)
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -378,13 +459,14 @@ func TestDeleteApplicationHardDeletes(t *testing.T) {
 }
 
 func TestDeleteApplicationRejectsDependencies(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ApplicationService: fakeApplicationService{
 			deleteErr: domain.ErrApplicationInUse,
 		},
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/applications/mi-car", nil)
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -461,6 +543,10 @@ func (s fakeApplicationService) GetApplicationOptions(context.Context) (domain.A
 	}, nil
 }
 
+func (s fakeApplicationService) ListApplicationMembers(context.Context, string) ([]domain.ApplicationMember, error) {
+	return s.detail.Members, nil
+}
+
 func (s fakeApplicationService) CreateApplication(context.Context, domain.ApplicationInput) (domain.ApplicationDetail, error) {
 	if s.createErr != nil {
 		return domain.ApplicationDetail{}, s.createErr
@@ -487,6 +573,22 @@ func (s fakeApplicationService) CheckApplicationDelete(context.Context, string) 
 }
 
 func (s fakeApplicationService) DeleteApplication(context.Context, string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return nil
+}
+
+func (s fakeApplicationService) UpsertApplicationMember(_ context.Context, _ string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error) {
+	return domain.ApplicationMember{
+		ID:     input.UserID,
+		UserID: input.UserID,
+		Name:   input.UserID,
+		Role:   input.Role,
+	}, nil
+}
+
+func (s fakeApplicationService) DeleteApplicationMember(context.Context, string, string) error {
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -604,9 +706,8 @@ func testApplicationRequest(slug string) applicationRequest {
 		},
 		Members: []applicationMemberRequest{
 			{
-				Name: "li.ming",
-				Role: domain.ApplicationMemberRoleOwner,
-				Team: "小米汽车 - RN 平台组",
+				UserID: "ou-li-ming",
+				Role:   domain.ApplicationMemberRoleOwner,
 			},
 		},
 	}

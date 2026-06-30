@@ -33,6 +33,10 @@ func openAPIDocument() *openapi3.T {
 				Description: "Service health and diagnostics.",
 			},
 			{
+				Name:        "Dashboard",
+				Description: "Forge console dashboard aggregation.",
+			},
+			{
 				Name:        "Environments",
 				Description: "Runtime environment management.",
 			},
@@ -99,6 +103,14 @@ func openAPIDocument() *openapi3.T {
 					response(http.StatusOK, "Global enum options.", schemaRef("EnumsResponse")),
 				)),
 			}),
+			openapi3.WithPath("/api/v1/dashboard", &openapi3.PathItem{
+				Get: operation("getDashboard", "Get console dashboard snapshot", []string{"Dashboard"}, responses(
+					response(http.StatusOK, "Dashboard snapshot.", schemaRef("DashboardResponse")),
+					response(http.StatusUnauthorized, "Console session is required.", schemaRef("ErrorResponse")),
+					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					response(http.StatusServiceUnavailable, "Dashboard service is unavailable.", schemaRef("ErrorResponse")),
+				)),
+			}),
 			openapi3.WithPath("/api/v1/environments", &openapi3.PathItem{
 				Get: operation("listEnvironments", "List environments", []string{"Environments"}, responses(
 					response(http.StatusOK, "Environment list.", schemaRef("EnvironmentsResponse")),
@@ -108,6 +120,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createEnvironment", "Create environment", []string{"Environments"}, responses(
 						response(http.StatusCreated, "Environment created.", schemaRef("EnvironmentDetailResponse")),
 						response(http.StatusBadRequest, "Invalid environment request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage environments.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.RequestBody = requestBody("Environment creation payload.", schemaRef("EnvironmentCreateRequest"))
@@ -128,6 +141,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("updateEnvironment", "Update environment", []string{"Environments"}, responses(
 						response(http.StatusOK, "Environment updated.", schemaRef("EnvironmentDetailResponse")),
 						response(http.StatusBadRequest, "Invalid environment request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage environments.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Environment not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -150,6 +164,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createApplication", "Create application", []string{"Applications"}, responses(
 						response(http.StatusCreated, "Application created.", schemaRef("ApplicationDetailResponse")),
 						response(http.StatusBadRequest, "Invalid application request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot create applications.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Application slug already exists.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -177,6 +192,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("updateApplication", "Update application", []string{"Applications"}, responses(
 						response(http.StatusOK, "Application updated.", schemaRef("ApplicationDetailResponse")),
 						response(http.StatusBadRequest, "Invalid application request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot update this application.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -187,6 +203,7 @@ func openAPIDocument() *openapi3.T {
 				Delete: func() *openapi3.Operation {
 					op := operation("deleteApplication", "Delete application", []string{"Applications"}, responses(
 						responseNoBody(http.StatusNoContent, "Application was deleted."),
+						response(http.StatusForbidden, "Current user cannot delete this application.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Application is referenced by modules.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -200,6 +217,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("updateApplicationStatus", "Update application status", []string{"Applications"}, responses(
 						response(http.StatusOK, "Application status updated.", schemaRef("ApplicationDetailResponse")),
 						response(http.StatusBadRequest, "Invalid application status request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot update this application status.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -219,6 +237,54 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/applications/{slug}/members", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("listApplicationMembers", "List application members", []string{"Applications"}, responses(
+						response(http.StatusOK, "Application members.", schemaRef("ApplicationMembersResponse")),
+						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = applicationSlugParameters()
+					return op
+				}(),
+				Post: func() *openapi3.Operation {
+					op := operation("upsertApplicationMember", "Add or update application member", []string{"Applications"}, responses(
+						response(http.StatusOK, "Application member was added or updated.", schemaRef("ApplicationMember")),
+						response(http.StatusBadRequest, "Invalid member request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage application members.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Application not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = applicationSlugParameters()
+					op.RequestBody = requestBody("Application member payload.", schemaRef("ApplicationMemberRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/applications/{slug}/members/{userId}", &openapi3.PathItem{
+				Patch: func() *openapi3.Operation {
+					op := operation("updateApplicationMember", "Update application member role", []string{"Applications"}, responses(
+						response(http.StatusOK, "Application member was updated.", schemaRef("ApplicationMember")),
+						response(http.StatusBadRequest, "Invalid member request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage application members.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Application member or application not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = append(applicationSlugParameters(), applicationMemberUserIDParameter())
+					op.RequestBody = requestBody("Application member role payload.", schemaRef("ApplicationMemberRoleUpdateRequest"))
+					return op
+				}(),
+				Delete: func() *openapi3.Operation {
+					op := operation("deleteApplicationMember", "Remove application member", []string{"Applications"}, responses(
+						responseNoBody(http.StatusNoContent, "Application member was removed."),
+						response(http.StatusBadRequest, "Invalid member request or application last owner.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage application members.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Application member or application not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = append(applicationSlugParameters(), applicationMemberUserIDParameter())
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/modules", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("listModules", "List modules", []string{"Modules"}, responses(
@@ -233,6 +299,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createModule", "Create module", []string{"Modules"}, responses(
 						response(http.StatusCreated, "Module created.", schemaRef("ModuleDetailResponse")),
 						response(http.StatusBadRequest, "Invalid module request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot create modules for this application.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Module id or repository already exists.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -254,6 +321,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("updateModule", "Update module", []string{"Modules"}, responses(
 						response(http.StatusOK, "Module updated.", schemaRef("ModuleDetailResponse")),
 						response(http.StatusBadRequest, "Invalid module request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot update this module.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Module not found.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Module repository already exists.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -265,6 +333,7 @@ func openAPIDocument() *openapi3.T {
 				Delete: func() *openapi3.Operation {
 					op := operation("deleteModule", "Delete module", []string{"Modules"}, responses(
 						responseNoBody(http.StatusNoContent, "Module was deleted."),
+						response(http.StatusForbidden, "Current user cannot delete this module.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Module not found.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Module is referenced.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -282,6 +351,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createBuildRecord", "Create RN JS bundle build record", []string{"Builds"}, responses(
 						response(http.StatusCreated, "Build record created.", schemaRef("BuildRecordDetailResponse")),
 						response(http.StatusBadRequest, "Invalid build request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot create builds for this module.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Module or environment not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -342,6 +412,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createRelease", "Create RN JS bundle release", []string{"Releases"}, responses(
 						response(http.StatusCreated, "Release created and route activated.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot create releases for this build.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Release target is already active for the same build.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -355,6 +426,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("updateReleaseGrayPercentage", "Update percentage gray release", []string{"Releases"}, responses(
 						response(http.StatusOK, "Release gray percentage updated.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot update this release.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Release not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -375,6 +447,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("inactivateTargetedGrayRelease", "Inactivate targeted gray release", []string{"Releases"}, responses(
 						response(http.StatusOK, "Targeted gray release inactivated.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Release is not an active targeted gray release.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot rollback this release.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Release not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -441,6 +514,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("getCodeSourceInstallURL", "Get code source app installation URL", []string{"CodeSources"}, responses(
 						response(http.StatusOK, "Code source installation URL.", schemaRef("CodeSourceInstallURL")),
 						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage code sources.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Code source provider not found.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
@@ -456,6 +530,7 @@ func openAPIDocument() *openapi3.T {
 						response(http.StatusFound, "Code source app installation completed and redirects to console.", nil),
 						response(http.StatusBadRequest, "Invalid code source callback.", schemaRef("ErrorResponse")),
 						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage code sources.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Code source provider or installation not found.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
@@ -470,6 +545,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("deleteCodeSourceInstallations", "Delete current user's code source app authorizations and repository cache", []string{"CodeSources"}, responses(
 						responseNoBody(http.StatusNoContent, "Current user's code source app authorizations and repository cache were deleted."),
 						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage code sources.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Code source provider or installation not found.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
@@ -505,6 +581,7 @@ func openAPIDocument() *openapi3.T {
 						response(http.StatusCreated, "Artifact access token created.", schemaRef("ArtifactAccessTokenDetailResponse")),
 						response(http.StatusBadRequest, "Invalid artifact access token request.", schemaRef("ErrorResponse")),
 						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage artifact access tokens.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Artifact access token already exists.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -516,6 +593,7 @@ func openAPIDocument() *openapi3.T {
 				Post: operation("generateArtifactAccessToken", "Generate artifact access token", []string{"AccessTokens"}, responses(
 					response(http.StatusOK, "One-time generated artifact access token.", schemaRef("ArtifactAccessTokenGenerateResponse")),
 					response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+					response(http.StatusForbidden, "Current user cannot manage artifact access tokens.", schemaRef("ErrorResponse")),
 					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 				)),
 			}),
@@ -525,6 +603,7 @@ func openAPIDocument() *openapi3.T {
 						response(http.StatusOK, "Artifact access token updated.", schemaRef("ArtifactAccessTokenDetailResponse")),
 						response(http.StatusBadRequest, "Invalid artifact access token request.", schemaRef("ErrorResponse")),
 						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage artifact access tokens.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Artifact access token not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -536,6 +615,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("deleteArtifactAccessToken", "Delete artifact access token", []string{"AccessTokens"}, responses(
 						responseNoBody(http.StatusNoContent, "Artifact access token deleted."),
 						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage artifact access tokens.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Artifact access token not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -552,6 +632,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("createStorageConfiguration", "Create storage configuration", []string{"Storage"}, responses(
 						response(http.StatusCreated, "Storage configuration created.", schemaRef("StorageConfigurationDetailResponse")),
 						response(http.StatusBadRequest, "Invalid storage configuration request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage storage configurations.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.RequestBody = requestBody("Storage configuration create payload.", schemaRef("StorageConfigurationCreateRequest"))
@@ -563,6 +644,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("testStorageConfiguration", "Test storage configuration connectivity", []string{"Storage"}, responses(
 						response(http.StatusOK, "Storage configuration test passed.", schemaRef("StorageConfigurationTestResponse")),
 						response(http.StatusBadRequest, "Invalid storage configuration request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage storage configurations.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Storage backend could not be reached.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -584,6 +666,7 @@ func openAPIDocument() *openapi3.T {
 					op := operation("updateStorageConfiguration", "Update storage configuration", []string{"Storage"}, responses(
 						response(http.StatusOK, "Storage configuration updated.", schemaRef("StorageConfigurationDetailResponse")),
 						response(http.StatusBadRequest, "Invalid storage configuration request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage storage configurations.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Storage configuration not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -594,6 +677,7 @@ func openAPIDocument() *openapi3.T {
 				Delete: func() *openapi3.Operation {
 					op := operation("deleteStorageConfiguration", "Delete storage configuration", []string{"Storage"}, responses(
 						response(http.StatusOK, "Storage configuration deleted.", schemaRef("StorageConfigurationDetailResponse")),
+						response(http.StatusForbidden, "Current user cannot manage storage configurations.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Storage configuration is referenced by environments.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Storage configuration not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -707,6 +791,12 @@ func openAPIDocument() *openapi3.T {
 				"PingResponse":                         schemaValue(pingResponseSchema()),
 				"EnumOption":                           schemaValue(enumOptionSchema()),
 				"EnumsResponse":                        schemaValue(enumsResponseSchema()),
+				"DashboardResponse":                    schemaValue(dashboardResponseSchema()),
+				"DashboardMetric":                      schemaValue(dashboardMetricSchema()),
+				"DashboardBuildTrendPoint":             schemaValue(dashboardBuildTrendPointSchema()),
+				"DashboardBuildRecord":                 schemaValue(dashboardBuildRecordSchema()),
+				"DashboardReleaseRecord":               schemaValue(dashboardReleaseRecordSchema()),
+				"DashboardResourceStatus":              schemaValue(dashboardResourceStatusSchema()),
 				"Environment":                          schemaValue(environmentSchema()),
 				"EnvironmentCreateRequest":             schemaValue(environmentCreateRequestSchema()),
 				"EnvironmentUpdateRequest":             schemaValue(environmentCreateRequestSchema()),
@@ -720,6 +810,8 @@ func openAPIDocument() *openapi3.T {
 				"ApplicationEnvironment":               schemaValue(applicationEnvironmentSchema()),
 				"ApplicationModule":                    schemaValue(applicationModuleSchema()),
 				"ApplicationMember":                    schemaValue(applicationMemberSchema()),
+				"ApplicationMembersResponse":           schemaValue(applicationMembersResponseSchema()),
+				"ApplicationCapabilities":              schemaValue(applicationCapabilitiesSchema()),
 				"ApplicationClientIntegration":         schemaValue(applicationClientIntegrationSchema()),
 				"ApplicationClientIntegrationEndpoint": schemaValue(applicationClientIntegrationEndpointSchema()),
 				"ApplicationClientIntegrationField":    schemaValue(applicationClientIntegrationFieldSchema()),
@@ -731,6 +823,7 @@ func openAPIDocument() *openapi3.T {
 				"ApplicationStatusUpdateRequest":       schemaValue(applicationStatusUpdateRequestSchema()),
 				"ApplicationEnvironmentRequest":        schemaValue(applicationEnvironmentRequestSchema()),
 				"ApplicationMemberRequest":             schemaValue(applicationMemberRequestSchema()),
+				"ApplicationMemberRoleUpdateRequest":   schemaValue(applicationMemberRoleUpdateRequestSchema()),
 				"ApplicationDeleteCheck":               schemaValue(applicationDeleteCheckSchema()),
 				"ApplicationDeleteDependency":          schemaValue(applicationDeleteDependencySchema()),
 				"Module":                               schemaValue(moduleSchema()),
@@ -780,6 +873,7 @@ func openAPIDocument() *openapi3.T {
 				"StorageConfigurationUpdateRequest":    schemaValue(storageConfigurationRequestSchema()),
 				"StorageConfigurationTestRequest":      schemaValue(storageConfigurationTestRequestSchema()),
 				"StorageConfigurationTestResponse":     schemaValue(storageConfigurationTestResponseSchema()),
+				"GlobalCapabilities":                   schemaValue(globalCapabilitiesSchema()),
 				"FeishuAuthResponse":                   schemaValue(feishuAuthResponseSchema()),
 				"FeishuToken":                          schemaValue(feishuTokenSchema()),
 				"FeishuUser":                           schemaValue(feishuUserSchema()),
@@ -889,6 +983,70 @@ func enumsResponseSchema() *openapi3.Schema {
 		WithPropertyRef("platforms", arraySchemaRef("EnumOption"))
 }
 
+func dashboardResponseSchema() *openapi3.Schema {
+	return objectSchema("metrics", "buildTrend", "builds", "releases", "resources", "updatedAt").
+		WithPropertyRef("metrics", arraySchemaRef("DashboardMetric")).
+		WithPropertyRef("buildTrend", arraySchemaRef("DashboardBuildTrendPoint")).
+		WithPropertyRef("builds", arraySchemaRef("DashboardBuildRecord")).
+		WithPropertyRef("releases", arraySchemaRef("DashboardReleaseRecord")).
+		WithPropertyRef("resources", arraySchemaRef("DashboardResourceStatus")).
+		WithProperty("updatedAt", dateTimeSchema("Dashboard snapshot update time."))
+}
+
+func dashboardMetricSchema() *openapi3.Schema {
+	return objectSchema("description", "id", "label", "value", "trend", "trendTone", "icon", "iconTone", "sparkline").
+		WithProperty("description", stringSchema("Metric description.")).
+		WithProperty("id", stringSchema("Metric id.")).
+		WithProperty("label", stringSchema("Metric display label.")).
+		WithProperty("value", stringSchema("Metric display value.")).
+		WithProperty("trend", stringSchema("Metric secondary trend label.")).
+		WithProperty("trendTone", enumStringSchema("Metric trend tone.", "positive", "negative", "neutral")).
+		WithProperty("icon", enumStringSchema("Metric icon name.", "accessToken", "app", "build", "codeSource", "environment", "module", "release", "storage")).
+		WithProperty("iconTone", enumStringSchema("Metric icon tone.", "amber", "blue", "cyan", "emerald", "indigo", "red", "slate", "violet")).
+		WithProperty("sparkline", intArraySchema("Metric sparkline values."))
+}
+
+func dashboardBuildTrendPointSchema() *openapi3.Schema {
+	return objectSchema("date", "buildCount", "successCount").
+		WithProperty("date", stringSchema("Trend point date label.")).
+		WithProperty("buildCount", int32Schema("Build count.")).
+		WithProperty("successCount", int32Schema("Succeeded build count."))
+}
+
+func dashboardBuildRecordSchema() *openapi3.Schema {
+	return objectSchema("application", "duration", "environment", "id", "module", "operator", "startedAt", "status").
+		WithProperty("application", stringSchema("Application display name.")).
+		WithProperty("duration", stringSchema("Build duration display label.")).
+		WithProperty("environment", stringSchema("Environment code.")).
+		WithProperty("id", stringSchema("Build record id.")).
+		WithProperty("module", stringSchema("Module display name.")).
+		WithProperty("operator", stringSchema("Worker or operator label.")).
+		WithProperty("startedAt", stringSchema("Build start display time.")).
+		WithProperty("status", enumStringSchema("Dashboard build status.", "failed", "queued", "running", "success"))
+}
+
+func dashboardReleaseRecordSchema() *openapi3.Schema {
+	return objectSchema("application", "id", "environment", "gray", "module", "status", "updatedAt").
+		WithProperty("application", stringSchema("Application display name.")).
+		WithProperty("id", stringSchema("Release record id.")).
+		WithProperty("environment", stringSchema("Environment code.")).
+		WithProperty("gray", stringSchema("Release gray display label.")).
+		WithProperty("module", stringSchema("Module display name.")).
+		WithProperty("status", enumStringSchema("Release status.", "active", "inactive")).
+		WithProperty("updatedAt", stringSchema("Release update display time."))
+}
+
+func dashboardResourceStatusSchema() *openapi3.Schema {
+	return objectSchema("description", "href", "id", "label", "status", "statusLabel", "value").
+		WithProperty("description", stringSchema("Resource description.")).
+		WithProperty("href", stringSchema("Console route path.")).
+		WithProperty("id", stringSchema("Resource id.")).
+		WithProperty("label", stringSchema("Resource display label.")).
+		WithProperty("status", enumStringSchema("Resource status tone.", "attention", "healthy", "neutral")).
+		WithProperty("statusLabel", stringSchema("Resource status label.")).
+		WithProperty("value", stringSchema("Resource count display value."))
+}
+
 func environmentSchema() *openapi3.Schema {
 	return objectSchema(
 		"id",
@@ -951,6 +1109,14 @@ func applicationSlugParameters() openapi3.Parameters {
 				WithDescription("Immutable application slug.").
 				WithSchema(stringSchema("Application slug.")),
 		},
+	}
+}
+
+func applicationMemberUserIDParameter() *openapi3.ParameterRef {
+	return &openapi3.ParameterRef{
+		Value: openapi3.NewPathParameter("userId").
+			WithDescription("Console user id of the application member.").
+			WithSchema(stringSchema("Application member user id.")),
 	}
 }
 
@@ -1283,11 +1449,28 @@ func applicationModuleSchema() *openapi3.Schema {
 }
 
 func applicationMemberSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "role", "team").
+	return objectSchema("id", "userId", "name", "email", "avatarUrl", "team", "role").
 		WithProperty("id", stringSchema("Member id.")).
-		WithProperty("name", stringSchema("Member account or name.")).
-		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release")).
-		WithProperty("team", stringSchema("Member team."))
+		WithProperty("userId", stringSchema("Console user id.")).
+		WithProperty("name", stringSchema("Member name.")).
+		WithProperty("email", stringSchema("Member email.")).
+		WithProperty("avatarUrl", stringSchema("Member avatar url.")).
+		WithProperty("team", stringSchema("Member department path.")).
+		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release"))
+}
+
+func applicationMembersResponseSchema() *openapi3.Schema {
+	return objectSchema("members").
+		WithPropertyRef("members", arraySchemaRef("ApplicationMember"))
+}
+
+func applicationCapabilitiesSchema() *openapi3.Schema {
+	return objectSchema("canEditApplication", "canManageMembers", "canUpdateStatus", "canCreateBuild", "canRelease").
+		WithProperty("canEditApplication", boolSchema("Whether current user can edit this application.")).
+		WithProperty("canManageMembers", boolSchema("Whether current user can manage this application members.")).
+		WithProperty("canUpdateStatus", boolSchema("Whether current user can update this application status.")).
+		WithProperty("canCreateBuild", boolSchema("Whether current user can create builds for this application.")).
+		WithProperty("canRelease", boolSchema("Whether current user can create or rollback releases for this application."))
 }
 
 func applicationClientIntegrationSchema() *openapi3.Schema {
@@ -1331,6 +1514,7 @@ func applicationDetailSchema() *openapi3.Schema {
 		"environments",
 		"modules",
 		"members",
+		"capabilities",
 		"clientIntegration",
 	).
 		WithProperty("id", stringSchema("Application id.")).
@@ -1347,6 +1531,7 @@ func applicationDetailSchema() *openapi3.Schema {
 		WithPropertyRef("environments", arraySchemaRef("ApplicationEnvironment")).
 		WithPropertyRef("modules", arraySchemaRef("ApplicationModule")).
 		WithPropertyRef("members", arraySchemaRef("ApplicationMember")).
+		WithPropertyRef("capabilities", schemaRef("ApplicationCapabilities")).
 		WithPropertyRef("clientIntegration", schemaRef("ApplicationClientIntegration"))
 }
 
@@ -1422,10 +1607,14 @@ func applicationEnvironmentRequestSchema() *openapi3.Schema {
 }
 
 func applicationMemberRequestSchema() *openapi3.Schema {
-	return objectSchema("name", "role", "team").
-		WithProperty("name", stringSchema("Member account or name.")).
-		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release")).
-		WithProperty("team", stringSchema("Member team."))
+	return objectSchema("userId", "role").
+		WithProperty("userId", stringSchema("Console user id to grant application role to.")).
+		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release"))
+}
+
+func applicationMemberRoleUpdateRequestSchema() *openapi3.Schema {
+	return objectSchema("role").
+		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release"))
 }
 
 func modulesResponseSchema() *openapi3.Schema {
@@ -1975,8 +2164,33 @@ func storageConfigurationTestResponseSchema() *openapi3.Schema {
 		WithProperty("testedAt", dateTimeSchema("Test completion time."))
 }
 
+func globalCapabilitiesSchema() *openapi3.Schema {
+	return objectSchema(
+		"canCreateApplication",
+		"canManageApplications",
+		"canManageModules",
+		"canCreateBuild",
+		"canCreateRelease",
+		"canManageCodeSources",
+		"canManageStorage",
+		"canManageEnvironments",
+		"canManageAccessTokens",
+	).
+		WithProperty("canCreateApplication", boolSchema("Whether current user can create applications.")).
+		WithProperty("canManageApplications", boolSchema("Whether current user can manage applications globally.")).
+		WithProperty("canManageModules", boolSchema("Whether current user can manage modules globally.")).
+		WithProperty("canCreateBuild", boolSchema("Whether current user can create builds globally.")).
+		WithProperty("canCreateRelease", boolSchema("Whether current user can create or rollback releases globally.")).
+		WithProperty("canManageCodeSources", boolSchema("Whether current user can manage code source integrations.")).
+		WithProperty("canManageStorage", boolSchema("Whether current user can manage storage configurations.")).
+		WithProperty("canManageEnvironments", boolSchema("Whether current user can manage environments.")).
+		WithProperty("canManageAccessTokens", boolSchema("Whether current user can manage artifact access tokens."))
+}
+
 func feishuAuthResponseSchema() *openapi3.Schema {
-	return objectSchema("user", "token").
+	return objectSchema("capabilities", "roles", "user", "token").
+		WithPropertyRef("capabilities", schemaRef("GlobalCapabilities")).
+		WithProperty("roles", stringArraySchema("Global roles assigned to the current user.")).
 		WithPropertyRef("user", schemaRef("FeishuUser")).
 		WithPropertyRef("token", schemaRef("FeishuToken"))
 }
@@ -2075,6 +2289,13 @@ func stringArraySchema(description string) *openapi3.Schema {
 	schema := openapi3.NewArraySchema()
 	schema.Description = description
 	schema.Items = schemaValue(stringSchema(""))
+	return schema
+}
+
+func intArraySchema(description string) *openapi3.Schema {
+	schema := openapi3.NewArraySchema()
+	schema.Description = description
+	schema.Items = schemaValue(int32Schema(""))
 	return schema
 }
 

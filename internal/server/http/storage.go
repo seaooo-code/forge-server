@@ -10,7 +10,8 @@ import (
 )
 
 type storageHandler struct {
-	service StorageService
+	authService AuthorizationService
+	service     StorageService
 }
 
 type storageConfigurationsResponse struct {
@@ -61,8 +62,8 @@ type storageConfigurationRequest struct {
 	Status             string `json:"status"`
 }
 
-func registerStorageRoutes(group *echo.Group, service StorageService) {
-	handler := storageHandler{service: service}
+func registerStorageRoutes(group *echo.Group, service StorageService, authService AuthorizationService) {
+	handler := storageHandler{authService: authService, service: service}
 
 	group.GET("/storage/configurations", handler.list)
 	group.POST("/storage/configurations/test", handler.test)
@@ -111,6 +112,9 @@ func (h storageHandler) create(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid storage configuration request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionStorageManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 
 	configuration, err := h.service.CreateStorageConfiguration(c.Request().Context(), input)
 	if err != nil {
@@ -131,6 +135,9 @@ func (h storageHandler) update(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid storage configuration request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionStorageManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 
 	configuration, err := h.service.UpdateStorageConfiguration(c.Request().Context(), c.Param("id"), input)
 	if err != nil {
@@ -147,6 +154,9 @@ func (h storageHandler) delete(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "storage service unavailable"})
 	}
 
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionStorageManage, domain.AuthorizationResource{}); err != nil {
+		return err
+	}
 	configuration, err := h.service.DeleteStorageConfiguration(c.Request().Context(), c.Param("id"))
 	if err != nil {
 		return storageErrorResponse(c, err)
@@ -165,6 +175,9 @@ func (h storageHandler) test(c echo.Context) error {
 	input, ok := bindStorageConfigurationTestRequest(c)
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid storage configuration request"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionStorageManage, domain.AuthorizationResource{}); err != nil {
+		return err
 	}
 
 	result, err := h.service.TestStorageConfiguration(c.Request().Context(), input)
@@ -234,6 +247,8 @@ func storageErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusConflict, map[string]string{"error": "storage configuration is referenced by environments"})
 	case errors.Is(err, domain.ErrStorageConfigurationTestFailed):
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "storage configuration test failed"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

@@ -27,6 +27,8 @@ type Dependencies struct {
 	ArtifactService            ArtifactService
 	ArtifactAccessTokenService ArtifactAccessTokenService
 	BuildService               BuildService
+	DashboardService           DashboardService
+	AuthorizationService       AuthorizationService
 	CodeSourceService          CodeSourceService
 	EnvironmentService         EnvironmentService
 	FeishuAuthService          FeishuAuthService
@@ -44,9 +46,18 @@ type ApplicationService interface {
 	DeleteApplication(ctx context.Context, slug string) error
 	GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error)
 	GetApplicationOptions(ctx context.Context) (domain.ApplicationOptions, error)
+	ListApplicationMembers(ctx context.Context, slug string) ([]domain.ApplicationMember, error)
 	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error)
+	UpsertApplicationMember(ctx context.Context, slug string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error)
+	DeleteApplicationMember(ctx context.Context, slug string, userID string) error
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
+}
+
+type AuthorizationService interface {
+	ApplicationCapabilities(ctx context.Context, userID string, applicationID string) (domain.ApplicationCapabilities, error)
+	Authorize(ctx context.Context, userID string, action domain.AuthorizationAction, resource domain.AuthorizationResource) error
+	GlobalCapabilities(ctx context.Context, userID string) (domain.GlobalCapabilities, []domain.GlobalRole, error)
 }
 
 type ArtifactService interface {
@@ -67,6 +78,10 @@ type BuildService interface {
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
 	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
 	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+}
+
+type DashboardService interface {
+	GetDashboardSnapshot(ctx context.Context, ownerUnionID string) (domain.DashboardSnapshot, error)
 }
 
 type ReleaseService interface {
@@ -159,15 +174,16 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 		protectedAPI.Use(requireConsoleSession(deps.FeishuAuthService))
 	}
 	registerEnumRoutes(protectedAPI)
-	registerArtifactAccessTokenRoutes(protectedAPI, deps.ArtifactAccessTokenService)
-	registerApplicationRoutes(protectedAPI, deps.ApplicationService)
-	registerBuildRoutes(protectedAPI, deps.BuildService)
-	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, cfg.GitHub.InstallRedirectURL)
-	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService)
+	registerArtifactAccessTokenRoutes(protectedAPI, deps.ArtifactAccessTokenService, deps.AuthorizationService)
+	registerApplicationRoutes(protectedAPI, deps.ApplicationService, deps.AuthorizationService)
+	registerBuildRoutes(protectedAPI, deps.BuildService, deps.AuthorizationService)
+	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, deps.AuthorizationService, cfg.GitHub.InstallRedirectURL)
+	registerDashboardRoutes(protectedAPI, deps.DashboardService)
+	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService, deps.AuthorizationService)
 	registerFeishuContactRoutes(protectedAPI, deps.FeishuContactService, deps.FeishuAuthService)
-	registerModuleRoutes(protectedAPI, deps.ModuleService)
-	registerReleaseRoutes(protectedAPI, deps.ReleaseService)
-	registerStorageRoutes(protectedAPI, deps.StorageService)
+	registerModuleRoutes(protectedAPI, deps.ModuleService, deps.AuthorizationService)
+	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
+	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
 
 	return e
 }

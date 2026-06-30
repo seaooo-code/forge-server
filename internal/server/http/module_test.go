@@ -118,7 +118,7 @@ func TestGetModule(t *testing.T) {
 }
 
 func TestCreateModule(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
 			module: testHTTPModule("module-profile", domain.ModuleKindFeature),
 		},
@@ -126,6 +126,7 @@ func TestCreateModule(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(testModuleRequest("module-profile")))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -144,7 +145,7 @@ func TestCreateModule(t *testing.T) {
 }
 
 func TestCreateModuleConflict(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
 			createErr: domain.ErrModuleIDConflict,
 		},
@@ -152,6 +153,7 @@ func TestCreateModuleConflict(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(testModuleRequest("module-home")))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -162,7 +164,7 @@ func TestCreateModuleConflict(t *testing.T) {
 }
 
 func TestCreateModuleCommonConflict(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
 			createErr: domain.ErrModuleCommonConflict,
 		},
@@ -173,6 +175,7 @@ func TestCreateModuleCommonConflict(t *testing.T) {
 	request.CommonModuleID = ""
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -183,7 +186,7 @@ func TestCreateModuleCommonConflict(t *testing.T) {
 }
 
 func TestCreateModuleRepositoryConflict(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
 			createErr: domain.ErrModuleRepositoryConflict,
 		},
@@ -191,6 +194,7 @@ func TestCreateModuleRepositoryConflict(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(testModuleRequest("module-profile")))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -204,7 +208,7 @@ func TestCreateModuleRepositoryConflict(t *testing.T) {
 }
 
 func TestUpdateModule(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
 			module: testHTTPModule("module-home", domain.ModuleKindFeature),
 		},
@@ -213,6 +217,7 @@ func TestUpdateModule(t *testing.T) {
 	request := testModuleRequest("")
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/modules/module-home", jsonBody(request))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -231,11 +236,12 @@ func TestUpdateModule(t *testing.T) {
 }
 
 func TestDeleteModule(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{},
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/modules/module-home", nil)
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -246,13 +252,14 @@ func TestDeleteModule(t *testing.T) {
 }
 
 func TestDeleteModuleNotFound(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
 			deleteErr: domain.ErrModuleNotFound,
 		},
 	})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/modules/unknown", nil)
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)

@@ -95,16 +95,36 @@ func consoleSession(c echo.Context) (domain.FeishuAuthResult, bool) {
 	return session, ok
 }
 
+func authorizeCurrentUser(c echo.Context, service AuthorizationService, action domain.AuthorizationAction, resource domain.AuthorizationResource) error {
+	if service == nil {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
+	}
+	session, ok := consoleSession(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	userID := domain.ConsoleUserIDFromFeishu(session.User)
+	if userID == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	if err := service.Authorize(c.Request().Context(), userID, action, resource); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	}
+	return nil
+}
+
 func consoleSessionErrorResponse(c echo.Context, err error) error {
-	if errors.Is(err, domain.ErrFeishuSessionNotFound) || errors.Is(err, domain.ErrFeishuSessionExpired) {
+	if errors.Is(err, domain.ErrFeishuSessionNotFound) ||
+		errors.Is(err, domain.ErrFeishuSessionExpired) ||
+		errors.Is(err, domain.ErrFeishuAuthorization) {
 		clearFeishuSessionCookie(c)
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
 	if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
-	}
-	if errors.Is(err, domain.ErrFeishuAuthorization) {
-		return c.JSON(http.StatusBadGateway, map[string]string{"error": "feishu authorization failed"})
 	}
 	return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }

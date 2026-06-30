@@ -24,8 +24,10 @@ type feishuAuthHandler struct {
 }
 
 type feishuAuthResponse struct {
-	User  feishuUserResponse  `json:"user"`
-	Token feishuTokenResponse `json:"token"`
+	Capabilities domain.GlobalCapabilities `json:"capabilities"`
+	Roles        []domain.GlobalRole       `json:"roles"`
+	User         feishuUserResponse        `json:"user"`
+	Token        feishuTokenResponse       `json:"token"`
 }
 
 type feishuUserResponse struct {
@@ -132,15 +134,14 @@ func (h feishuAuthHandler) session(c echo.Context) error {
 
 	result, err := h.service.GetSession(c.Request().Context(), sessionToken)
 	if err != nil {
-		if errors.Is(err, domain.ErrFeishuSessionNotFound) || errors.Is(err, domain.ErrFeishuSessionExpired) {
+		if errors.Is(err, domain.ErrFeishuSessionNotFound) ||
+			errors.Is(err, domain.ErrFeishuSessionExpired) ||
+			errors.Is(err, domain.ErrFeishuAuthorization) {
 			clearFeishuSessionCookie(c)
 			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		}
 		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
-		}
-		if errors.Is(err, domain.ErrFeishuAuthorization) {
-			return c.JSON(http.StatusBadGateway, map[string]string{"error": "feishu authorization failed"})
 		}
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
@@ -165,6 +166,8 @@ func (h feishuAuthHandler) logout(c echo.Context) error {
 
 func newFeishuAuthResponse(result domain.FeishuAuthResult) feishuAuthResponse {
 	return feishuAuthResponse{
+		Capabilities: result.Capabilities,
+		Roles:        result.Roles,
 		User: feishuUserResponse{
 			ID:              domain.ConsoleUserIDFromFeishu(result.User),
 			UnionID:         result.User.UnionID,

@@ -17,7 +17,7 @@ func TestCreateBuildRecord(t *testing.T) {
 	service := &fakeBuildService{
 		record: testHTTPBuildRecord(),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		BuildService: service,
 	})
 
@@ -29,6 +29,7 @@ func TestCreateBuildRecord(t *testing.T) {
 		TriggerType: "pipeline",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -158,7 +159,7 @@ func TestGetBuildRecordNotFound(t *testing.T) {
 }
 
 func TestCreateBuildRecordRejectsInvalidRequest(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		BuildService: &fakeBuildService{
 			err: domain.ErrInvalidBuildInput,
 		},
@@ -168,6 +169,7 @@ func TestCreateBuildRecordRejectsInvalidRequest(t *testing.T) {
 		ModuleID: "bad module",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -178,7 +180,7 @@ func TestCreateBuildRecordRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestCreateBuildRecordModuleNotFound(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		BuildService: &fakeBuildService{
 			err: domain.ErrModuleNotFound,
 		},
@@ -189,6 +191,7 @@ func TestCreateBuildRecordModuleNotFound(t *testing.T) {
 		Environment: "qa",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)

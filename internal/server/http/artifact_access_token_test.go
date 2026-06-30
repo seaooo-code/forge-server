@@ -19,7 +19,7 @@ func TestCreateArtifactAccessToken(t *testing.T) {
 			Token: testHTTPArtifactAccessToken("artifact-token-1", domain.ArtifactAccessTokenStatusActive),
 		},
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ArtifactAccessTokenService: service,
 		FeishuAuthService:          testArtifactAccessTokenAuthService(),
 	})
@@ -60,7 +60,7 @@ func TestGenerateArtifactAccessToken(t *testing.T) {
 	service := &fakeArtifactAccessTokenService{
 		generateResult: domain.ArtifactAccessTokenGenerateResult{PlainToken: "forge_art_generated_token"},
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ArtifactAccessTokenService: service,
 		FeishuAuthService:          testArtifactAccessTokenAuthService(),
 	})
@@ -84,7 +84,7 @@ func TestGenerateArtifactAccessToken(t *testing.T) {
 }
 
 func TestCreateArtifactAccessTokenRejectsInvalidRequest(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ArtifactAccessTokenService: &fakeArtifactAccessTokenService{err: domain.ErrInvalidArtifactAccessTokenInput},
 		FeishuAuthService:          testArtifactAccessTokenAuthService(),
 	})
@@ -129,7 +129,7 @@ func TestUpdateArtifactAccessTokenStatus(t *testing.T) {
 	service := &fakeArtifactAccessTokenService{
 		updatedToken: testHTTPArtifactAccessToken("artifact-token-1", domain.ArtifactAccessTokenStatusDisabled),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ArtifactAccessTokenService: service,
 		FeishuAuthService:          testArtifactAccessTokenAuthService(),
 	})
@@ -151,7 +151,7 @@ func TestUpdateArtifactAccessTokenStatus(t *testing.T) {
 
 func TestDeleteArtifactAccessToken(t *testing.T) {
 	service := &fakeArtifactAccessTokenService{}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		ArtifactAccessTokenService: service,
 		FeishuAuthService:          testArtifactAccessTokenAuthService(),
 	})

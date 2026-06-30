@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"forge-server/internal/config"
 	"forge-server/internal/domain"
 )
 
@@ -18,7 +17,7 @@ func TestCreateRelease(t *testing.T) {
 		record: testHTTPReleaseRecord(domain.ReleaseTypeFull),
 		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault, ""),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -61,7 +60,7 @@ func TestCreateTargetedGrayRelease(t *testing.T) {
 		record: testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyTargeted, 0, &expiresAt),
 		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1"),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -110,7 +109,7 @@ func TestCreatePercentageGrayRelease(t *testing.T) {
 		record: testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyPercentage, 25, nil),
 		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypePercentage, ""),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -150,7 +149,7 @@ func TestListReleases(t *testing.T) {
 	service := &fakeReleaseService{
 		records: []domain.ReleaseRecord{testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyTargeted, 0, &expiresAt)},
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -184,7 +183,7 @@ func TestResolveReleaseRoute(t *testing.T) {
 	service := &fakeReleaseService{
 		route: testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1"),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -219,7 +218,7 @@ func TestUpdateReleaseGrayPercentage(t *testing.T) {
 		record: testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyPercentage, 100, nil),
 		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault, ""),
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -252,7 +251,7 @@ func TestInactivateTargetedGrayRelease(t *testing.T) {
 		record: record,
 		route:  route,
 	}
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
@@ -280,7 +279,7 @@ func TestInactivateTargetedGrayRelease(t *testing.T) {
 }
 
 func TestCreateReleaseRejectsInvalidExpiresAt(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    &fakeReleaseService{},
 	})
@@ -304,7 +303,7 @@ func TestCreateReleaseRejectsInvalidExpiresAt(t *testing.T) {
 }
 
 func TestCreateReleaseRejectsInvalidRequest(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService: &fakeReleaseService{
 			err: domain.ErrInvalidReleaseInput,
@@ -328,7 +327,7 @@ func TestCreateReleaseRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestCreateReleaseRejectsAlreadyActiveRelease(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
+	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService: &fakeReleaseService{
 			err: domain.ErrReleaseAlreadyActive,

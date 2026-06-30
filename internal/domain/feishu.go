@@ -76,6 +76,8 @@ type FeishuUserSearchPage struct {
 }
 
 type FeishuAuthResult struct {
+	Capabilities     GlobalCapabilities
+	Roles            []GlobalRole
 	SessionExpiresAt time.Time
 	SessionToken     string
 	Token            FeishuToken

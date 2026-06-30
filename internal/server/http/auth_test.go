@@ -40,3 +40,20 @@ func TestProtectedAPIRouteAcceptsSession(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
 }
+
+func TestProtectedAPIRouteTreatsAuthorizationFailureAsUnauthorized(t *testing.T) {
+	e := New(config.Config{}, Dependencies{
+		FeishuAuthService: &fakeFeishuAuthService{sessionErr: domain.ErrFeishuAuthorization},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/enums", nil)
+	req.AddCookie(&http.Cookie{Name: feishuSessionCookieName, Value: "session-token"})
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, rec.Code, rec.Body.String())
+	}
+	assertClearedSessionCookie(t, rec)
+}

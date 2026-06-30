@@ -54,7 +54,7 @@ func TestListEnvironments(t *testing.T) {
 
 func TestCreateEnvironment(t *testing.T) {
 	service := fakeEnvironmentService{}
-	e := New(config.Config{}, Dependencies{EnvironmentService: &service})
+	e := newAuthorizedTestServer(Dependencies{EnvironmentService: &service})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/environments", jsonBody(environmentRequest{
 		Code:                   "qa",
@@ -64,6 +64,7 @@ func TestCreateEnvironment(t *testing.T) {
 		StorageConfigurationID: "storage-qa",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -87,7 +88,7 @@ func TestCreateEnvironment(t *testing.T) {
 
 func TestUpdateEnvironment(t *testing.T) {
 	service := fakeEnvironmentService{}
-	e := New(config.Config{}, Dependencies{EnvironmentService: &service})
+	e := newAuthorizedTestServer(Dependencies{EnvironmentService: &service})
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/environments/qa", jsonBody(environmentRequest{
 		Code:                   "qa",
@@ -97,6 +98,7 @@ func TestUpdateEnvironment(t *testing.T) {
 		StorageConfigurationID: "storage-qa-2",
 	}))
 	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)

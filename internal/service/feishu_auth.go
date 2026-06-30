@@ -21,9 +21,11 @@ type FeishuOAuthClient interface {
 }
 
 type FeishuUserRepository interface {
+	BootstrapFirstSuperAdmin(ctx context.Context, userID string) error
 	CreateFeishuAuthSession(ctx context.Context, session domain.FeishuAuthSession) error
 	DeleteFeishuAuthSession(ctx context.Context, sessionTokenHash string) error
 	FindFeishuAuthSession(ctx context.Context, sessionTokenHash string) (domain.FeishuAuthSession, error)
+	ListGlobalRoles(ctx context.Context, userID string) ([]domain.GlobalRole, error)
 	UpdateFeishuAuthSessionToken(ctx context.Context, session domain.FeishuAuthSession) error
 	UpsertFeishuUser(ctx context.Context, user domain.FeishuUser) (domain.FeishuUser, error)
 	UpsertUser(ctx context.Context, user domain.UserInput) error
@@ -60,7 +62,8 @@ func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code stri
 	if err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
-	if err := s.syncConsoleUser(ctx, savedUser); err != nil {
+	userID, err := s.syncConsoleUser(ctx, savedUser)
+	if err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
 
@@ -75,8 +78,14 @@ func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code stri
 		return domain.FeishuAuthResult{}, err
 	}
 
+	roles, err := s.repository.ListGlobalRoles(ctx, userID)
+	if err != nil {
+		return domain.FeishuAuthResult{}, err
+	}
 	token.ExpiresIn = secondsUntil(session.AccessTokenExpiresAt, now)
 	return domain.FeishuAuthResult{
+		Capabilities:     domain.GlobalCapabilitiesForRoles(roles),
+		Roles:            roles,
 		SessionExpiresAt: sessionExpiresAt(session),
 		SessionToken:     sessionToken,
 		Token:            token,
@@ -104,17 +113,17 @@ func (s *FeishuAuthService) GetSession(ctx context.Context, sessionToken string)
 		refreshedSession, err := s.refreshSession(ctx, session, now)
 		if err != nil {
 			if now.Before(session.AccessTokenExpiresAt) {
-				return authResultFromSession(session, sessionToken, now), nil
+				return s.authResultWithRoles(ctx, session, sessionToken, now)
 			}
 			return domain.FeishuAuthResult{}, err
 		}
 		session = refreshedSession
 	}
-	if err := s.syncConsoleUser(ctx, session.User); err != nil {
+	if _, err := s.syncConsoleUser(ctx, session.User); err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
 
-	return authResultFromSession(session, sessionToken, now), nil
+	return s.authResultWithRoles(ctx, session, sessionToken, now)
 }
 
 func (s *FeishuAuthService) Logout(ctx context.Context, sessionToken string) error {
@@ -124,12 +133,12 @@ func (s *FeishuAuthService) Logout(ctx context.Context, sessionToken string) err
 	return s.repository.DeleteFeishuAuthSession(ctx, sessionTokenHash(sessionToken))
 }
 
-func (s *FeishuAuthService) syncConsoleUser(ctx context.Context, user domain.FeishuUser) error {
+func (s *FeishuAuthService) syncConsoleUser(ctx context.Context, user domain.FeishuUser) (string, error) {
 	id := domain.ConsoleUserIDFromFeishu(user)
 	if id == "" {
-		return domain.ErrFeishuAuthorization
+		return "", domain.ErrFeishuAuthorization
 	}
-	return s.repository.UpsertUser(ctx, domain.UserInput{
+	if err := s.repository.UpsertUser(ctx, domain.UserInput{
 		ID:            id,
 		Name:          firstNonEmpty(user.Name, user.EnName, id),
 		Email:         firstNonEmpty(user.EnterpriseEmail, user.Email),
@@ -138,7 +147,13 @@ func (s *FeishuAuthService) syncConsoleUser(ctx context.Context, user domain.Fei
 		FeishuUnionID: user.UnionID,
 		FeishuOpenID:  user.OpenID,
 		FeishuUserID:  user.UserID,
-	})
+	}); err != nil {
+		return "", err
+	}
+	if err := s.repository.BootstrapFirstSuperAdmin(ctx, id); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (s *FeishuAuthService) refreshSession(ctx context.Context, session domain.FeishuAuthSession, now time.Time) (domain.FeishuAuthSession, error) {
@@ -200,6 +215,18 @@ func authResultFromSession(session domain.FeishuAuthSession, sessionToken string
 		},
 		User: session.User,
 	}
+}
+
+func (s *FeishuAuthService) authResultWithRoles(ctx context.Context, session domain.FeishuAuthSession, sessionToken string, now time.Time) (domain.FeishuAuthResult, error) {
+	result := authResultFromSession(session, sessionToken, now)
+	userID := domain.ConsoleUserIDFromFeishu(session.User)
+	roles, err := s.repository.ListGlobalRoles(ctx, userID)
+	if err != nil {
+		return domain.FeishuAuthResult{}, err
+	}
+	result.Roles = roles
+	result.Capabilities = domain.GlobalCapabilitiesForRoles(roles)
+	return result, nil
 }
 
 func refreshTokenExpired(session domain.FeishuAuthSession, now time.Time) bool {

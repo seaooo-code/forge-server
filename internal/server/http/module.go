@@ -12,7 +12,8 @@ import (
 )
 
 type moduleHandler struct {
-	service ModuleService
+	authService AuthorizationService
+	service     ModuleService
 }
 
 type modulesResponse struct {
@@ -84,8 +85,8 @@ type moduleRepositoryRequest struct {
 	SSHURL         string `json:"sshUrl"`
 }
 
-func registerModuleRoutes(group *echo.Group, service ModuleService) {
-	handler := moduleHandler{service: service}
+func registerModuleRoutes(group *echo.Group, service ModuleService, authService AuthorizationService) {
+	handler := moduleHandler{authService: authService, service: service}
 
 	group.GET("/modules", handler.list)
 	group.GET("/modules/:id", handler.detail)
@@ -137,6 +138,9 @@ func (h moduleHandler) create(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid module request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionModuleCreate, domain.AuthorizationResource{ApplicationID: input.ApplicationID}); err != nil {
+		return err
+	}
 
 	module, err := h.service.CreateModule(c.Request().Context(), input)
 	if err != nil {
@@ -155,6 +159,9 @@ func (h moduleHandler) update(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid module request"})
 	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionModuleUpdate, domain.AuthorizationResource{ModuleID: c.Param("id")}); err != nil {
+		return err
+	}
 
 	module, err := h.service.UpdateModule(c.Request().Context(), c.Param("id"), input)
 	if err != nil {
@@ -169,6 +176,9 @@ func (h moduleHandler) delete(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "module service unavailable"})
 	}
 
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionModuleDelete, domain.AuthorizationResource{ModuleID: c.Param("id")}); err != nil {
+		return err
+	}
 	if err := h.service.DeleteModule(c.Request().Context(), c.Param("id")); err != nil {
 		return moduleErrorResponse(c, err)
 	}
@@ -240,6 +250,8 @@ func moduleErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "common module must belong to same application"})
 	case errors.Is(err, domain.ErrInvalidModuleInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid module request"})
+	case errors.Is(err, domain.ErrForbidden):
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
