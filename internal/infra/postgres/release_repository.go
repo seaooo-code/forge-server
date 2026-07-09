@@ -253,12 +253,14 @@ func (r *ReleaseRepository) GetReleaseRoute(ctx context.Context, id string) (dom
 	`, id))
 }
 
-func (r *ReleaseRepository) ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error) {
+func (r *ReleaseRepository) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
 	rows, err := r.pool.Query(ctx, releaseRecordSelectSQL()+`
 		where ($1 = '' or rr.module_id = $1)
 			and ($2 = '' or rr.environment_code = $2)
+			and ($3 = '' or rr.status = $3)
+			and ($4 = '' or rr.release_type = $4)
 		order by rr.created_at desc, rr.id desc
-	`, moduleID, environment)
+	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType))
 	if err != nil {
 		return nil, fmt.Errorf("query release records: %w", err)
 	}

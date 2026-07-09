@@ -12,7 +12,7 @@ type ReleaseRepository interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	ExpireTargetedGrayReleases(ctx context.Context) (int64, error)
 	InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
-	ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error)
+	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 }
@@ -38,13 +38,12 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, input domain.Release
 	return s.repository.CreateRelease(ctx, normalized)
 }
 
-func (s *ReleaseService) ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error) {
-	normalizedModuleID := strings.TrimSpace(moduleID)
-	normalizedEnvironment := strings.TrimSpace(environment)
-	if normalizedModuleID != "" && !domain.IsValidModuleID(normalizedModuleID) {
-		return nil, domain.ErrInvalidReleaseInput
+func (s *ReleaseService) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
+	normalized, err := normalizeReleaseRecordFilters(filters)
+	if err != nil {
+		return nil, err
 	}
-	return s.repository.ListReleases(ctx, normalizedModuleID, normalizedEnvironment)
+	return s.repository.ListReleases(ctx, normalized)
 }
 
 func (s *ReleaseService) ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error) {
@@ -130,6 +129,25 @@ func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.Release
 				return domain.ReleaseCreateInput{}, domain.ErrInvalidReleaseInput
 			}
 		}
+	}
+	return normalized, nil
+}
+
+func normalizeReleaseRecordFilters(filters domain.ReleaseRecordFilters) (domain.ReleaseRecordFilters, error) {
+	normalized := domain.ReleaseRecordFilters{
+		Environment: strings.TrimSpace(filters.Environment),
+		ModuleID:    strings.TrimSpace(filters.ModuleID),
+		ReleaseType: domain.ReleaseType(strings.TrimSpace(string(filters.ReleaseType))),
+		Status:      domain.ReleaseStatus(strings.TrimSpace(string(filters.Status))),
+	}
+	if normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
+		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
+	}
+	if normalized.ReleaseType != "" && !domain.IsValidReleaseType(normalized.ReleaseType) {
+		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
+	}
+	if normalized.Status != "" && !domain.IsValidReleaseStatus(normalized.Status) {
+		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
 	}
 	return normalized, nil
 }

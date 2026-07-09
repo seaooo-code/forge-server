@@ -136,7 +136,7 @@ func (r *fakeWorkerBuildRepository) GetBuildRecord(context.Context, string) (dom
 	return domain.BuildRecord{}, domain.ErrBuildRecordNotFound
 }
 
-func (r *fakeWorkerBuildRepository) ListBuildRecords(context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+func (r *fakeWorkerBuildRepository) ListBuildRecords(context.Context, domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
 	return nil, domain.BuildRecordSummary{}, nil
 }
 

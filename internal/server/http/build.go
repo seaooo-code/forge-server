@@ -102,7 +102,12 @@ func (h buildHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "build service unavailable"})
 	}
 
-	records, summary, err := h.service.ListBuildRecords(c.Request().Context())
+	records, summary, err := h.service.ListBuildRecords(c.Request().Context(), domain.BuildRecordFilters{
+		Environment: c.QueryParam("environment"),
+		ModuleID:    c.QueryParam("moduleId"),
+		Status:      domain.BuildStatus(c.QueryParam("status")),
+		TriggerType: domain.BuildTriggerType(c.QueryParam("triggerType")),
+	})
 	if err != nil {
 		return buildErrorResponse(c, err)
 	}

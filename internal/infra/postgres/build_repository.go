@@ -123,8 +123,8 @@ func (r *BuildRepository) createBuildRecordMissingDependency(ctx context.Context
 	return domain.ErrInvalidBuildInput
 }
 
-func (r *BuildRepository) ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
-	summary, err := r.buildRecordSummary(ctx)
+func (r *BuildRepository) ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+	summary, err := r.buildRecordSummary(ctx, filters)
 	if err != nil {
 		return nil, domain.BuildRecordSummary{}, err
 	}
@@ -134,8 +134,12 @@ func (r *BuildRepository) ListBuildRecords(ctx context.Context) ([]domain.BuildR
 		join applications a on a.id = m.application_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
+		where ($1 = '' or br.status = $1)
+			and ($2 = '' or br.module_id = $2)
+			and ($3 = '' or br.environment_code = $3)
+			and ($4 = '' or br.trigger_type = $4)
 		order by br.created_at desc, br.id desc
-	`))
+	`), string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType))
 	if err != nil {
 		return nil, domain.BuildRecordSummary{}, fmt.Errorf("query build records: %w", err)
 	}
@@ -165,7 +169,7 @@ func (r *BuildRepository) GetBuildRecord(ctx context.Context, id string) (domain
 	`), id))
 }
 
-func (r *BuildRepository) buildRecordSummary(ctx context.Context) (domain.BuildRecordSummary, error) {
+func (r *BuildRepository) buildRecordSummary(ctx context.Context, filters domain.BuildRecordFilters) (domain.BuildRecordSummary, error) {
 	var summary domain.BuildRecordSummary
 	if err := r.pool.QueryRow(ctx, `
 		select
@@ -175,7 +179,11 @@ func (r *BuildRepository) buildRecordSummary(ctx context.Context) (domain.BuildR
 			count(*) filter (where status = 'succeeded')::int,
 			count(*) filter (where status = 'failed')::int
 		from build_records
-	`).Scan(
+		where ($1 = '' or status = $1)
+			and ($2 = '' or module_id = $2)
+			and ($3 = '' or environment_code = $3)
+			and ($4 = '' or trigger_type = $4)
+	`, string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType)).Scan(
 		&summary.Total,
 		&summary.Pending,
 		&summary.Running,

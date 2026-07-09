@@ -88,13 +88,13 @@ func (f dashboardModuleFake) ListModules(context.Context, domain.ModuleListFilte
 
 type dashboardBuildFake struct{ records []domain.BuildRecord }
 
-func (f dashboardBuildFake) ListBuildRecords(context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+func (f dashboardBuildFake) ListBuildRecords(context.Context, domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
 	return f.records, domain.BuildRecordSummary{Total: len(f.records)}, nil
 }
 
 type dashboardReleaseFake struct{ records []domain.ReleaseRecord }
 
-func (f dashboardReleaseFake) ListReleases(context.Context, string, string) ([]domain.ReleaseRecord, error) {
+func (f dashboardReleaseFake) ListReleases(context.Context, domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
 	return f.records, nil
 }
 

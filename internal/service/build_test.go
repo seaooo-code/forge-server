@@ -138,12 +138,44 @@ func TestBuildServiceListBuildRecords(t *testing.T) {
 	}
 	service := NewBuildService(&repository)
 
-	records, summary, err := service.ListBuildRecords(context.Background())
+	records, summary, err := service.ListBuildRecords(context.Background(), domain.BuildRecordFilters{
+		Environment: " qa ",
+		ModuleID:    " module-profile ",
+		Status:      " pending ",
+		TriggerType: " pipeline ",
+	})
 	if err != nil {
 		t.Fatalf("list build records: %v", err)
 	}
 	if len(records) != 1 || records[0].ID != "build-1" || summary.Total != 1 {
 		t.Fatalf("unexpected list result: records=%+v summary=%+v", records, summary)
+	}
+	if repository.lastListFilters.Environment != "qa" ||
+		repository.lastListFilters.ModuleID != "module-profile" ||
+		repository.lastListFilters.Status != domain.BuildStatusPending ||
+		repository.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline {
+		t.Fatalf("unexpected filters: %+v", repository.lastListFilters)
+	}
+}
+
+func TestBuildServiceListBuildRecordsRejectsInvalidFilters(t *testing.T) {
+	tests := []domain.BuildRecordFilters{
+		{ModuleID: "bad module"},
+		{Status: "queued"},
+		{TriggerType: "cron"},
+	}
+
+	for _, filters := range tests {
+		repository := fakeBuildRecordRepository{}
+		service := NewBuildService(&repository)
+
+		_, _, err := service.ListBuildRecords(context.Background(), filters)
+		if !errors.Is(err, domain.ErrInvalidBuildInput) {
+			t.Fatalf("expected invalid build input for %+v, got %v", filters, err)
+		}
+		if repository.listCalls != 0 {
+			t.Fatalf("expected repository not to be called for %+v, got %d", filters, repository.listCalls)
+		}
 	}
 }
 
@@ -252,9 +284,11 @@ func TestBuildServiceGetBuildRecordKeepsEmptyTreeWhenManifestReadFails(t *testin
 type fakeBuildRecordRepository struct {
 	createCalls     int
 	getCalls        int
+	listCalls       int
 	lastCreateInput domain.BuildRecordInput
 	lastCompletion  domain.BuildRecordCompletion
 	lastGetID       string
+	lastListFilters domain.BuildRecordFilters
 	record          domain.BuildRecord
 	records         []domain.BuildRecord
 	summary         domain.BuildRecordSummary
@@ -299,7 +333,9 @@ func (r *fakeBuildRecordRepository) GetBuildRecord(_ context.Context, id string)
 	return r.record, nil
 }
 
-func (r *fakeBuildRecordRepository) ListBuildRecords(context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+func (r *fakeBuildRecordRepository) ListBuildRecords(_ context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+	r.listCalls++
+	r.lastListFilters = filters
 	return r.records, r.summary, nil
 }
 

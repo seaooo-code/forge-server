@@ -74,6 +74,13 @@ type BuildRecordInput struct {
 	TriggerType BuildTriggerType
 }
 
+type BuildRecordFilters struct {
+	Environment string
+	ModuleID    string
+	Status      BuildStatus
+	TriggerType BuildTriggerType
+}
+
 type BuildRecordSummary struct {
 	Failed    int
 	Pending   int

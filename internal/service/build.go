@@ -18,7 +18,7 @@ type BuildRecordRepository interface {
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
 	FailBuildRecord(ctx context.Context, id string, message string) (domain.BuildRecord, error)
 	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
-	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+	ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
 }
 
 type ArtifactManifestReader interface {
@@ -46,8 +46,12 @@ func (s *BuildService) CreateBuildRecord(ctx context.Context, input domain.Build
 	return s.repository.CreateBuildRecord(ctx, normalized)
 }
 
-func (s *BuildService) ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
-	return s.repository.ListBuildRecords(ctx)
+func (s *BuildService) ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+	normalized, err := normalizeBuildRecordFilters(filters)
+	if err != nil {
+		return nil, domain.BuildRecordSummary{}, err
+	}
+	return s.repository.ListBuildRecords(ctx, normalized)
 }
 
 func (s *BuildService) GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error) {
@@ -232,6 +236,25 @@ func validateBuildRecordInput(input domain.BuildRecordInput) (domain.BuildRecord
 	}
 	if normalized.TriggerType == domain.BuildTriggerTypePipeline && normalized.TriggerID == "" {
 		return domain.BuildRecordInput{}, domain.ErrInvalidBuildInput
+	}
+	return normalized, nil
+}
+
+func normalizeBuildRecordFilters(filters domain.BuildRecordFilters) (domain.BuildRecordFilters, error) {
+	normalized := domain.BuildRecordFilters{
+		Environment: strings.TrimSpace(filters.Environment),
+		ModuleID:    strings.TrimSpace(filters.ModuleID),
+		Status:      domain.BuildStatus(strings.TrimSpace(string(filters.Status))),
+		TriggerType: domain.BuildTriggerType(strings.TrimSpace(string(filters.TriggerType))),
+	}
+	if normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
+		return domain.BuildRecordFilters{}, domain.ErrInvalidBuildInput
+	}
+	if normalized.Status != "" && !domain.IsValidBuildStatus(normalized.Status) {
+		return domain.BuildRecordFilters{}, domain.ErrInvalidBuildInput
+	}
+	if normalized.TriggerType != "" && !domain.IsValidBuildTriggerType(normalized.TriggerType) {
+		return domain.BuildRecordFilters{}, domain.ErrInvalidBuildInput
 	}
 	return normalized, nil
 }

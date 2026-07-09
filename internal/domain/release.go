@@ -100,6 +100,13 @@ type ReleaseCreateInput struct {
 	CreatedByUserID string
 }
 
+type ReleaseRecordFilters struct {
+	Environment string
+	ModuleID    string
+	ReleaseType ReleaseType
+	Status      ReleaseStatus
+}
+
 type ReleaseGrayPercentageUpdateInput struct {
 	ID              string
 	GrayPercentage  int
@@ -120,6 +127,10 @@ type ReleaseResolveInput struct {
 
 func IsValidReleaseType(releaseType ReleaseType) bool {
 	return releaseType == ReleaseTypeFull || releaseType == ReleaseTypeGray
+}
+
+func IsValidReleaseStatus(status ReleaseStatus) bool {
+	return status == ReleaseStatusActive || status == ReleaseStatusInactive
 }
 
 func IsValidReleaseGrayStrategy(strategy ReleaseGrayStrategy) bool {

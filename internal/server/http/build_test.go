@@ -76,7 +76,7 @@ func TestListBuildRecords(t *testing.T) {
 		BuildService: service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds?status=pending&moduleId=module-profile&environment=qa&triggerType=pipeline", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -97,6 +97,12 @@ func TestListBuildRecords(t *testing.T) {
 	}
 	if response.Summary.Total != 10 || response.Summary.Succeeded != 4 {
 		t.Fatalf("unexpected build summary response: %#v", response.Summary)
+	}
+	if service.lastListFilters.Status != domain.BuildStatusPending ||
+		service.lastListFilters.ModuleID != "module-profile" ||
+		service.lastListFilters.Environment != "qa" ||
+		service.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline {
+		t.Fatalf("unexpected list filters: %+v", service.lastListFilters)
 	}
 	if strings.Contains(rec.Body.String(), "secret") {
 		t.Fatalf("build response must not expose storage secrets: %s", rec.Body.String())
@@ -202,12 +208,13 @@ func TestCreateBuildRecordModuleNotFound(t *testing.T) {
 }
 
 type fakeBuildService struct {
-	record    domain.BuildRecord
-	records   []domain.BuildRecord
-	err       error
-	lastGetID string
-	lastInput domain.BuildRecordInput
-	summary   domain.BuildRecordSummary
+	record          domain.BuildRecord
+	records         []domain.BuildRecord
+	err             error
+	lastGetID       string
+	lastInput       domain.BuildRecordInput
+	lastListFilters domain.BuildRecordFilters
+	summary         domain.BuildRecordSummary
 }
 
 func (s *fakeBuildService) CreateBuildRecord(_ context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
@@ -226,7 +233,8 @@ func (s *fakeBuildService) GetBuildRecord(_ context.Context, id string) (domain.
 	return s.record, nil
 }
 
-func (s *fakeBuildService) ListBuildRecords(context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+func (s *fakeBuildService) ListBuildRecords(_ context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error) {
+	s.lastListFilters = filters
 	if s.err != nil {
 		return nil, domain.BuildRecordSummary{}, s.err
 	}

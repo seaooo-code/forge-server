@@ -288,11 +288,53 @@ func TestReleaseServiceResolveRouteNormalizesInput(t *testing.T) {
 	}
 }
 
+func TestReleaseServiceListReleasesNormalizesFilters(t *testing.T) {
+	repository := fakeReleaseRepository{}
+	service := NewReleaseService(&repository)
+
+	_, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{
+		Environment: " qa ",
+		ModuleID:    " module-profile ",
+		ReleaseType: " gray ",
+		Status:      " active ",
+	})
+	if err != nil {
+		t.Fatalf("list releases: %v", err)
+	}
+	if repository.lastListFilters.Environment != "qa" ||
+		repository.lastListFilters.ModuleID != "module-profile" ||
+		repository.lastListFilters.ReleaseType != domain.ReleaseTypeGray ||
+		repository.lastListFilters.Status != domain.ReleaseStatusActive {
+		t.Fatalf("unexpected filters: %+v", repository.lastListFilters)
+	}
+}
+
+func TestReleaseServiceListReleasesRejectsInvalidFilters(t *testing.T) {
+	tests := []domain.ReleaseRecordFilters{
+		{ModuleID: "bad module"},
+		{ReleaseType: "partial"},
+		{Status: "pending"},
+	}
+
+	for _, filters := range tests {
+		repository := fakeReleaseRepository{}
+		service := NewReleaseService(&repository)
+
+		_, err := service.ListReleases(context.Background(), filters)
+		if !errors.Is(err, domain.ErrInvalidReleaseInput) {
+			t.Fatalf("expected invalid release input for %+v, got %v", filters, err)
+		}
+		if repository.listCalls != 0 {
+			t.Fatalf("expected repository not to be called for %+v, got %d", filters, repository.listCalls)
+		}
+	}
+}
+
 func TestReleaseServiceListReleasesRejectsInvalidModuleFilter(t *testing.T) {
 	repository := fakeReleaseRepository{}
 	service := NewReleaseService(&repository)
 
-	_, err := service.ListReleases(context.Background(), "bad module", "")
+	_, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{ModuleID: "bad module"})
 	if !errors.Is(err, domain.ErrInvalidReleaseInput) {
 		t.Fatalf("expected invalid release input, got %v", err)
 	}
@@ -309,6 +351,7 @@ type fakeReleaseRepository struct {
 	updateCalls         int
 	lastCreateInput     domain.ReleaseCreateInput
 	lastInactivateInput domain.ReleaseInactivateInput
+	lastListFilters     domain.ReleaseRecordFilters
 	lastResolveInput    domain.ReleaseResolveInput
 	lastUpdateInput     domain.ReleaseGrayPercentageUpdateInput
 	records             []domain.ReleaseRecord
@@ -350,8 +393,9 @@ func (r *fakeReleaseRepository) ExpireTargetedGrayReleases(context.Context) (int
 	return 0, nil
 }
 
-func (r *fakeReleaseRepository) ListReleases(context.Context, string, string) ([]domain.ReleaseRecord, error) {
+func (r *fakeReleaseRepository) ListReleases(_ context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
 	r.listCalls++
+	r.lastListFilters = filters
 	return r.records, nil
 }
 

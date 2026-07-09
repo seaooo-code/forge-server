@@ -343,10 +343,15 @@ func openAPIDocument() *openapi3.T {
 				}(),
 			}),
 			openapi3.WithPath("/api/v1/builds", &openapi3.PathItem{
-				Get: operation("listBuildRecords", "List RN JS bundle build records", []string{"Builds"}, responses(
-					response(http.StatusOK, "Build record list.", schemaRef("BuildRecordsResponse")),
-					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
-				)),
+				Get: func() *openapi3.Operation {
+					op := operation("listBuildRecords", "List RN JS bundle build records", []string{"Builds"}, responses(
+						response(http.StatusOK, "Build record list.", schemaRef("BuildRecordsResponse")),
+						response(http.StatusBadRequest, "Invalid build filter.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildListParameters()
+					return op
+				}(),
 				Post: func() *openapi3.Operation {
 					op := operation("createBuildRecord", "Create RN JS bundle build record", []string{"Builds"}, responses(
 						response(http.StatusCreated, "Build record created.", schemaRef("BuildRecordDetailResponse")),
@@ -1324,6 +1329,31 @@ func moduleListParameters() openapi3.Parameters {
 	}
 }
 
+func buildListParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("status").
+				WithDescription("Build status filter.").
+				WithSchema(enumStringSchema("Build status filter.", "pending", "running", "succeeded", "failed")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("moduleId").
+				WithDescription("Module id filter.").
+				WithSchema(stringSchema("Module id filter.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("environment").
+				WithDescription("Environment code filter.").
+				WithSchema(stringSchema("Environment code filter.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("triggerType").
+				WithDescription("Build trigger type filter.").
+				WithSchema(enumStringSchema("Build trigger type filter.", "manual", "pipeline")),
+		},
+	}
+}
+
 func releaseListParameters() openapi3.Parameters {
 	return openapi3.Parameters{
 		{
@@ -1335,6 +1365,16 @@ func releaseListParameters() openapi3.Parameters {
 			Value: openapi3.NewQueryParameter("environment").
 				WithDescription("Environment code filter.").
 				WithSchema(stringSchema("Environment code filter.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("status").
+				WithDescription("Release status filter.").
+				WithSchema(enumStringSchema("Release status filter.", "active", "inactive")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("releaseType").
+				WithDescription("Release type filter.").
+				WithSchema(enumStringSchema("Release type filter.", "full", "gray")),
 		},
 	}
 }

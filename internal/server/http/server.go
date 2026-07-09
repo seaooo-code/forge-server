@@ -77,7 +77,7 @@ type ArtifactAccessTokenService interface {
 type BuildService interface {
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
 	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
-	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+	ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
 }
 
 type DashboardService interface {
@@ -87,7 +87,7 @@ type DashboardService interface {
 type ReleaseService interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
-	ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error)
+	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 }

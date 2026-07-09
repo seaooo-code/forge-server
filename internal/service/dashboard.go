@@ -19,11 +19,11 @@ type DashboardModuleService interface {
 }
 
 type DashboardBuildService interface {
-	ListBuildRecords(ctx context.Context) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+	ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
 }
 
 type DashboardReleaseService interface {
-	ListReleases(ctx context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error)
+	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error)
 }
 
 type DashboardCodeSourceService interface {
@@ -221,14 +221,14 @@ func (s *DashboardService) listBuilds(ctx context.Context) ([]domain.BuildRecord
 	if s.builds == nil {
 		return nil, domain.BuildRecordSummary{}, nil
 	}
-	return s.builds.ListBuildRecords(ctx)
+	return s.builds.ListBuildRecords(ctx, domain.BuildRecordFilters{})
 }
 
 func (s *DashboardService) listReleases(ctx context.Context) ([]domain.ReleaseRecord, error) {
 	if s.releases == nil {
 		return nil, nil
 	}
-	return s.releases.ListReleases(ctx, "", "")
+	return s.releases.ListReleases(ctx, domain.ReleaseRecordFilters{})
 }
 
 func (s *DashboardService) listCodeSources(ctx context.Context, ownerUnionID string) ([]domain.CodeSourceApp, error) {

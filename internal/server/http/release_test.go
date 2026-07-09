@@ -154,7 +154,7 @@ func TestListReleases(t *testing.T) {
 		ReleaseService:    service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?moduleId=module-profile&environment=qa", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?moduleId=module-profile&environment=qa&status=active&releaseType=gray", nil)
 	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
@@ -174,8 +174,11 @@ func TestListReleases(t *testing.T) {
 		response.Releases[0].ExpiresAt == "" {
 		t.Fatalf("unexpected releases response: %#v", response.Releases)
 	}
-	if service.lastListModuleID != "module-profile" || service.lastListEnvironment != "qa" {
-		t.Fatalf("unexpected service filters: module=%q environment=%q", service.lastListModuleID, service.lastListEnvironment)
+	if service.lastListFilters.ModuleID != "module-profile" ||
+		service.lastListFilters.Environment != "qa" ||
+		service.lastListFilters.Status != domain.ReleaseStatusActive ||
+		service.lastListFilters.ReleaseType != domain.ReleaseTypeGray {
+		t.Fatalf("unexpected service filters: %+v", service.lastListFilters)
 	}
 }
 
@@ -375,8 +378,7 @@ type fakeReleaseService struct {
 	records             []domain.ReleaseRecord
 	err                 error
 	lastCreateInput     domain.ReleaseCreateInput
-	lastListModuleID    string
-	lastListEnvironment string
+	lastListFilters     domain.ReleaseRecordFilters
 	lastInactivateInput domain.ReleaseInactivateInput
 	lastResolveInput    domain.ReleaseResolveInput
 	lastUpdateInput     domain.ReleaseGrayPercentageUpdateInput
@@ -390,9 +392,8 @@ func (s *fakeReleaseService) CreateRelease(_ context.Context, input domain.Relea
 	return s.record, s.route, nil
 }
 
-func (s *fakeReleaseService) ListReleases(_ context.Context, moduleID string, environment string) ([]domain.ReleaseRecord, error) {
-	s.lastListModuleID = moduleID
-	s.lastListEnvironment = environment
+func (s *fakeReleaseService) ListReleases(_ context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
+	s.lastListFilters = filters
 	if s.err != nil {
 		return nil, s.err
 	}

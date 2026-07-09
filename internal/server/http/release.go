@@ -101,11 +101,12 @@ func (h releaseHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
 	}
 
-	records, err := h.service.ListReleases(
-		c.Request().Context(),
-		c.QueryParam("moduleId"),
-		c.QueryParam("environment"),
-	)
+	records, err := h.service.ListReleases(c.Request().Context(), domain.ReleaseRecordFilters{
+		Environment: c.QueryParam("environment"),
+		ModuleID:    c.QueryParam("moduleId"),
+		ReleaseType: domain.ReleaseType(c.QueryParam("releaseType")),
+		Status:      domain.ReleaseStatus(c.QueryParam("status")),
+	})
 	if err != nil {
 		return releaseErrorResponse(c, err)
 	}
