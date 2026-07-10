@@ -139,10 +139,11 @@ func TestBuildServiceListBuildRecords(t *testing.T) {
 	service := NewBuildService(&repository)
 
 	records, summary, err := service.ListBuildRecords(context.Background(), domain.BuildRecordFilters{
-		Environment: " qa ",
-		ModuleID:    " module-profile ",
-		Status:      " pending ",
-		TriggerType: " pipeline ",
+		ApplicationID: " app-main ",
+		Environment:   " qa ",
+		ModuleID:      " module-profile ",
+		Status:        " pending ",
+		TriggerType:   " pipeline ",
 	})
 	if err != nil {
 		t.Fatalf("list build records: %v", err)
@@ -150,7 +151,8 @@ func TestBuildServiceListBuildRecords(t *testing.T) {
 	if len(records) != 1 || records[0].ID != "build-1" || summary.Total != 1 {
 		t.Fatalf("unexpected list result: records=%+v summary=%+v", records, summary)
 	}
-	if repository.lastListFilters.Environment != "qa" ||
+	if repository.lastListFilters.ApplicationID != "app-main" ||
+		repository.lastListFilters.Environment != "qa" ||
 		repository.lastListFilters.ModuleID != "module-profile" ||
 		repository.lastListFilters.Status != domain.BuildStatusPending ||
 		repository.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline {

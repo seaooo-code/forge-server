@@ -154,7 +154,7 @@ func TestListReleases(t *testing.T) {
 		ReleaseService:    service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?moduleId=module-profile&environment=qa&status=active&releaseType=gray", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?applicationId=app-main&moduleId=module-profile&environment=qa&status=active&releaseType=gray", nil)
 	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
@@ -174,7 +174,8 @@ func TestListReleases(t *testing.T) {
 		response.Releases[0].ExpiresAt == "" {
 		t.Fatalf("unexpected releases response: %#v", response.Releases)
 	}
-	if service.lastListFilters.ModuleID != "module-profile" ||
+	if service.lastListFilters.ApplicationID != "app-main" ||
+		service.lastListFilters.ModuleID != "module-profile" ||
 		service.lastListFilters.Environment != "qa" ||
 		service.lastListFilters.Status != domain.ReleaseStatusActive ||
 		service.lastListFilters.ReleaseType != domain.ReleaseTypeGray {

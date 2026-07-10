@@ -103,10 +103,11 @@ func (h buildHandler) list(c echo.Context) error {
 	}
 
 	records, summary, err := h.service.ListBuildRecords(c.Request().Context(), domain.BuildRecordFilters{
-		Environment: c.QueryParam("environment"),
-		ModuleID:    c.QueryParam("moduleId"),
-		Status:      domain.BuildStatus(c.QueryParam("status")),
-		TriggerType: domain.BuildTriggerType(c.QueryParam("triggerType")),
+		ApplicationID: c.QueryParam("applicationId"),
+		Environment:   c.QueryParam("environment"),
+		ModuleID:      c.QueryParam("moduleId"),
+		Status:        domain.BuildStatus(c.QueryParam("status")),
+		TriggerType:   domain.BuildTriggerType(c.QueryParam("triggerType")),
 	})
 	if err != nil {
 		return buildErrorResponse(c, err)

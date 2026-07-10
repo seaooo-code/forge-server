@@ -135,10 +135,11 @@ func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.Release
 
 func normalizeReleaseRecordFilters(filters domain.ReleaseRecordFilters) (domain.ReleaseRecordFilters, error) {
 	normalized := domain.ReleaseRecordFilters{
-		Environment: strings.TrimSpace(filters.Environment),
-		ModuleID:    strings.TrimSpace(filters.ModuleID),
-		ReleaseType: domain.ReleaseType(strings.TrimSpace(string(filters.ReleaseType))),
-		Status:      domain.ReleaseStatus(strings.TrimSpace(string(filters.Status))),
+		ApplicationID: strings.TrimSpace(filters.ApplicationID),
+		Environment:   strings.TrimSpace(filters.Environment),
+		ModuleID:      strings.TrimSpace(filters.ModuleID),
+		ReleaseType:   domain.ReleaseType(strings.TrimSpace(string(filters.ReleaseType))),
+		Status:        domain.ReleaseStatus(strings.TrimSpace(string(filters.Status))),
 	}
 	if normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
 		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput

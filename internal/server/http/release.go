@@ -102,10 +102,11 @@ func (h releaseHandler) list(c echo.Context) error {
 	}
 
 	records, err := h.service.ListReleases(c.Request().Context(), domain.ReleaseRecordFilters{
-		Environment: c.QueryParam("environment"),
-		ModuleID:    c.QueryParam("moduleId"),
-		ReleaseType: domain.ReleaseType(c.QueryParam("releaseType")),
-		Status:      domain.ReleaseStatus(c.QueryParam("status")),
+		ApplicationID: c.QueryParam("applicationId"),
+		Environment:   c.QueryParam("environment"),
+		ModuleID:      c.QueryParam("moduleId"),
+		ReleaseType:   domain.ReleaseType(c.QueryParam("releaseType")),
+		Status:        domain.ReleaseStatus(c.QueryParam("status")),
 	})
 	if err != nil {
 		return releaseErrorResponse(c, err)

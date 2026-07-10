@@ -76,7 +76,7 @@ func TestListBuildRecords(t *testing.T) {
 		BuildService: service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds?status=pending&moduleId=module-profile&environment=qa&triggerType=pipeline", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds?applicationId=app-main&status=pending&moduleId=module-profile&environment=qa&triggerType=pipeline", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -98,7 +98,8 @@ func TestListBuildRecords(t *testing.T) {
 	if response.Summary.Total != 10 || response.Summary.Succeeded != 4 {
 		t.Fatalf("unexpected build summary response: %#v", response.Summary)
 	}
-	if service.lastListFilters.Status != domain.BuildStatusPending ||
+	if service.lastListFilters.ApplicationID != "app-main" ||
+		service.lastListFilters.Status != domain.BuildStatusPending ||
 		service.lastListFilters.ModuleID != "module-profile" ||
 		service.lastListFilters.Environment != "qa" ||
 		service.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline {

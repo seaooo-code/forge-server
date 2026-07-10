@@ -75,10 +75,11 @@ type BuildRecordInput struct {
 }
 
 type BuildRecordFilters struct {
-	Environment string
-	ModuleID    string
-	Status      BuildStatus
-	TriggerType BuildTriggerType
+	ApplicationID string
+	Environment   string
+	ModuleID      string
+	Status        BuildStatus
+	TriggerType   BuildTriggerType
 }
 
 type BuildRecordSummary struct {

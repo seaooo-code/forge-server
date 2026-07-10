@@ -1332,6 +1332,11 @@ func moduleListParameters() openapi3.Parameters {
 func buildListParameters() openapi3.Parameters {
 	return openapi3.Parameters{
 		{
+			Value: openapi3.NewQueryParameter("applicationId").
+				WithDescription("Linked application id filter.").
+				WithSchema(stringSchema("Application id filter.")),
+		},
+		{
 			Value: openapi3.NewQueryParameter("status").
 				WithDescription("Build status filter.").
 				WithSchema(enumStringSchema("Build status filter.", "pending", "running", "succeeded", "failed")),
@@ -1356,6 +1361,11 @@ func buildListParameters() openapi3.Parameters {
 
 func releaseListParameters() openapi3.Parameters {
 	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("applicationId").
+				WithDescription("Linked application id filter.").
+				WithSchema(stringSchema("Application id filter.")),
+		},
 		{
 			Value: openapi3.NewQueryParameter("moduleId").
 				WithDescription("Module id filter.").

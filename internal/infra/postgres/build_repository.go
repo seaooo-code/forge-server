@@ -138,8 +138,9 @@ func (r *BuildRepository) ListBuildRecords(ctx context.Context, filters domain.B
 			and ($2 = '' or br.module_id = $2)
 			and ($3 = '' or br.environment_code = $3)
 			and ($4 = '' or br.trigger_type = $4)
+			and ($5 = '' or m.application_id = $5)
 		order by br.created_at desc, br.id desc
-	`), string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType))
+	`), string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType), filters.ApplicationID)
 	if err != nil {
 		return nil, domain.BuildRecordSummary{}, fmt.Errorf("query build records: %w", err)
 	}
@@ -178,12 +179,14 @@ func (r *BuildRepository) buildRecordSummary(ctx context.Context, filters domain
 			count(*) filter (where status = 'running')::int,
 			count(*) filter (where status = 'succeeded')::int,
 			count(*) filter (where status = 'failed')::int
-		from build_records
-		where ($1 = '' or status = $1)
-			and ($2 = '' or module_id = $2)
-			and ($3 = '' or environment_code = $3)
-			and ($4 = '' or trigger_type = $4)
-	`, string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType)).Scan(
+		from build_records br
+		join modules m on m.id = br.module_id
+		where ($1 = '' or br.status = $1)
+			and ($2 = '' or br.module_id = $2)
+			and ($3 = '' or br.environment_code = $3)
+			and ($4 = '' or br.trigger_type = $4)
+			and ($5 = '' or m.application_id = $5)
+	`, string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType), filters.ApplicationID).Scan(
 		&summary.Total,
 		&summary.Pending,
 		&summary.Running,

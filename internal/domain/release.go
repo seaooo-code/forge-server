@@ -101,10 +101,11 @@ type ReleaseCreateInput struct {
 }
 
 type ReleaseRecordFilters struct {
-	Environment string
-	ModuleID    string
-	ReleaseType ReleaseType
-	Status      ReleaseStatus
+	ApplicationID string
+	Environment   string
+	ModuleID      string
+	ReleaseType   ReleaseType
+	Status        ReleaseStatus
 }
 
 type ReleaseGrayPercentageUpdateInput struct {

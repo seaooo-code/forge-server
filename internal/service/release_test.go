@@ -293,15 +293,17 @@ func TestReleaseServiceListReleasesNormalizesFilters(t *testing.T) {
 	service := NewReleaseService(&repository)
 
 	_, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{
-		Environment: " qa ",
-		ModuleID:    " module-profile ",
-		ReleaseType: " gray ",
-		Status:      " active ",
+		ApplicationID: " app-main ",
+		Environment:   " qa ",
+		ModuleID:      " module-profile ",
+		ReleaseType:   " gray ",
+		Status:        " active ",
 	})
 	if err != nil {
 		t.Fatalf("list releases: %v", err)
 	}
-	if repository.lastListFilters.Environment != "qa" ||
+	if repository.lastListFilters.ApplicationID != "app-main" ||
+		repository.lastListFilters.Environment != "qa" ||
 		repository.lastListFilters.ModuleID != "module-profile" ||
 		repository.lastListFilters.ReleaseType != domain.ReleaseTypeGray ||
 		repository.lastListFilters.Status != domain.ReleaseStatusActive {

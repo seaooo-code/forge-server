@@ -242,10 +242,11 @@ func validateBuildRecordInput(input domain.BuildRecordInput) (domain.BuildRecord
 
 func normalizeBuildRecordFilters(filters domain.BuildRecordFilters) (domain.BuildRecordFilters, error) {
 	normalized := domain.BuildRecordFilters{
-		Environment: strings.TrimSpace(filters.Environment),
-		ModuleID:    strings.TrimSpace(filters.ModuleID),
-		Status:      domain.BuildStatus(strings.TrimSpace(string(filters.Status))),
-		TriggerType: domain.BuildTriggerType(strings.TrimSpace(string(filters.TriggerType))),
+		ApplicationID: strings.TrimSpace(filters.ApplicationID),
+		Environment:   strings.TrimSpace(filters.Environment),
+		ModuleID:      strings.TrimSpace(filters.ModuleID),
+		Status:        domain.BuildStatus(strings.TrimSpace(string(filters.Status))),
+		TriggerType:   domain.BuildTriggerType(strings.TrimSpace(string(filters.TriggerType))),
 	}
 	if normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
 		return domain.BuildRecordFilters{}, domain.ErrInvalidBuildInput
