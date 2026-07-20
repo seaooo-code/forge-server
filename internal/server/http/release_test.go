@@ -148,13 +148,14 @@ func TestListReleases(t *testing.T) {
 	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC().Truncate(time.Second)
 	service := &fakeReleaseService{
 		records: []domain.ReleaseRecord{testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyTargeted, 0, &expiresAt)},
+		summary: domain.ReleaseRecordSummary{Active: 7, Inactive: 3, Total: 10},
 	}
 	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?applicationId=app-main&moduleId=module-profile&environment=qa&status=active&releaseType=gray", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases?applicationId=app-main&moduleId=module-profile&environment=qa&status=active&releaseType=gray&page=2&pageSize=50", nil)
 	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
@@ -174,11 +175,15 @@ func TestListReleases(t *testing.T) {
 		response.Releases[0].ExpiresAt == "" {
 		t.Fatalf("unexpected releases response: %#v", response.Releases)
 	}
+	if response.Pagination.Page != 2 || response.Pagination.PageSize != 50 || response.Pagination.Total != 10 || response.Summary.Active != 7 {
+		t.Fatalf("unexpected release pagination or summary: pagination=%+v summary=%+v", response.Pagination, response.Summary)
+	}
 	if service.lastListFilters.ApplicationID != "app-main" ||
 		service.lastListFilters.ModuleID != "module-profile" ||
 		service.lastListFilters.Environment != "qa" ||
 		service.lastListFilters.Status != domain.ReleaseStatusActive ||
-		service.lastListFilters.ReleaseType != domain.ReleaseTypeGray {
+		service.lastListFilters.ReleaseType != domain.ReleaseTypeGray ||
+		service.lastListFilters.Pagination != (domain.Pagination{Page: 2, PageSize: 50}) {
 		t.Fatalf("unexpected service filters: %+v", service.lastListFilters)
 	}
 }
@@ -377,6 +382,7 @@ type fakeReleaseService struct {
 	record              domain.ReleaseRecord
 	route               domain.ReleaseRoute
 	records             []domain.ReleaseRecord
+	summary             domain.ReleaseRecordSummary
 	err                 error
 	lastCreateInput     domain.ReleaseCreateInput
 	lastListFilters     domain.ReleaseRecordFilters
@@ -393,12 +399,15 @@ func (s *fakeReleaseService) CreateRelease(_ context.Context, input domain.Relea
 	return s.record, s.route, nil
 }
 
-func (s *fakeReleaseService) ListReleases(_ context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
+func (s *fakeReleaseService) ListReleases(_ context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
 	s.lastListFilters = filters
 	if s.err != nil {
-		return nil, s.err
+		return nil, domain.ReleaseRecordSummary{}, s.err
 	}
-	return s.records, nil
+	if s.summary.Total == 0 && len(s.records) > 0 {
+		s.summary.Total = len(s.records)
+	}
+	return s.records, s.summary, nil
 }
 
 func (s *fakeReleaseService) ResolveReleaseRoute(_ context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error) {

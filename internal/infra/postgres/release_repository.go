@@ -253,17 +253,23 @@ func (r *ReleaseRepository) GetReleaseRoute(ctx context.Context, id string) (dom
 	`, id))
 }
 
-func (r *ReleaseRepository) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
+func (r *ReleaseRepository) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
+	summary, err := r.releaseRecordSummary(ctx, filters)
+	if err != nil {
+		return nil, domain.ReleaseRecordSummary{}, err
+	}
+
 	rows, err := r.pool.Query(ctx, releaseRecordSelectSQL()+`
 	where ($1 = '' or rr.module_id = $1)
 			and ($2 = '' or rr.environment_code = $2)
 			and ($3 = '' or rr.status = $3)
 			and ($4 = '' or rr.release_type = $4)
 			and ($5 = '' or m.application_id = $5)
-		order by rr.created_at desc, rr.id desc
-	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID)
+			order by rr.created_at desc, rr.id desc
+			limit nullif($6, 0) offset $7
+	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID, filters.Pagination.Limit(), filters.Pagination.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("query release records: %w", err)
+		return nil, domain.ReleaseRecordSummary{}, fmt.Errorf("query release records: %w", err)
 	}
 	defer rows.Close()
 
@@ -271,14 +277,38 @@ func (r *ReleaseRepository) ListReleases(ctx context.Context, filters domain.Rel
 	for rows.Next() {
 		record, err := scanReleaseRecord(rows)
 		if err != nil {
-			return nil, err
+			return nil, domain.ReleaseRecordSummary{}, err
 		}
 		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate release records: %w", err)
+		return nil, domain.ReleaseRecordSummary{}, fmt.Errorf("iterate release records: %w", err)
 	}
-	return records, nil
+	return records, summary, nil
+}
+
+func (r *ReleaseRepository) releaseRecordSummary(ctx context.Context, filters domain.ReleaseRecordFilters) (domain.ReleaseRecordSummary, error) {
+	var summary domain.ReleaseRecordSummary
+	if err := r.pool.QueryRow(ctx, `
+		select
+			count(*)::integer,
+			count(*) filter (where rr.status = 'active')::integer,
+			count(*) filter (where rr.status = 'inactive')::integer
+		from release_records rr
+		join modules m on m.id = rr.module_id
+		where ($1 = '' or rr.module_id = $1)
+			and ($2 = '' or rr.environment_code = $2)
+			and ($3 = '' or rr.status = $3)
+			and ($4 = '' or rr.release_type = $4)
+			and ($5 = '' or m.application_id = $5)
+	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID).Scan(
+		&summary.Total,
+		&summary.Active,
+		&summary.Inactive,
+	); err != nil {
+		return domain.ReleaseRecordSummary{}, fmt.Errorf("summarize release records: %w", err)
+	}
+	return summary, nil
 }
 
 func (r *ReleaseRepository) ExpireTargetedGrayReleases(ctx context.Context) (int64, error) {

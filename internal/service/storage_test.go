@@ -183,8 +183,8 @@ type fakeStorageRepository struct {
 	updateCalls     int
 }
 
-func (r *fakeStorageRepository) ListStorageConfigurations(context.Context) ([]domain.StorageConfiguration, error) {
-	return r.configurations, nil
+func (r *fakeStorageRepository) ListStorageConfigurations(context.Context, domain.Pagination) ([]domain.StorageConfiguration, int, error) {
+	return r.configurations, len(r.configurations), nil
 }
 
 func (r *fakeStorageRepository) GetStorageConfiguration(context.Context, string) (domain.StorageConfiguration, error) {

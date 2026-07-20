@@ -245,10 +245,11 @@ func normalizeBuildRecordFilters(filters domain.BuildRecordFilters) (domain.Buil
 		ApplicationID: strings.TrimSpace(filters.ApplicationID),
 		Environment:   strings.TrimSpace(filters.Environment),
 		ModuleID:      strings.TrimSpace(filters.ModuleID),
+		Pagination:    filters.Pagination,
 		Status:        domain.BuildStatus(strings.TrimSpace(string(filters.Status))),
 		TriggerType:   domain.BuildTriggerType(strings.TrimSpace(string(filters.TriggerType))),
 	}
-	if normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
+	if !normalized.Pagination.IsValid() || normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
 		return domain.BuildRecordFilters{}, domain.ErrInvalidBuildInput
 	}
 	if normalized.Status != "" && !domain.IsValidBuildStatus(normalized.Status) {

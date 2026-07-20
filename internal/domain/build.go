@@ -78,6 +78,7 @@ type BuildRecordFilters struct {
 	ApplicationID string
 	Environment   string
 	ModuleID      string
+	Pagination    Pagination
 	Status        BuildStatus
 	TriggerType   BuildTriggerType
 }

@@ -23,7 +23,7 @@ type DashboardBuildService interface {
 }
 
 type DashboardReleaseService interface {
-	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error)
+	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error)
 }
 
 type DashboardCodeSourceService interface {
@@ -31,7 +31,7 @@ type DashboardCodeSourceService interface {
 }
 
 type DashboardStorageService interface {
-	ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error)
+	ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error)
 }
 
 type DashboardEnvironmentService interface {
@@ -93,7 +93,7 @@ func (s *DashboardService) GetDashboardSnapshot(ctx context.Context, ownerUnionI
 	if err != nil {
 		return domain.DashboardSnapshot{}, err
 	}
-	releases, err := s.listReleases(ctx)
+	releases, _, err := s.listReleases(ctx)
 	if err != nil {
 		return domain.DashboardSnapshot{}, err
 	}
@@ -101,7 +101,7 @@ func (s *DashboardService) GetDashboardSnapshot(ctx context.Context, ownerUnionI
 	if err != nil {
 		return domain.DashboardSnapshot{}, err
 	}
-	storage, err := s.listStorage(ctx)
+	storage, _, err := s.listStorage(ctx)
 	if err != nil {
 		return domain.DashboardSnapshot{}, err
 	}
@@ -224,9 +224,9 @@ func (s *DashboardService) listBuilds(ctx context.Context) ([]domain.BuildRecord
 	return s.builds.ListBuildRecords(ctx, domain.BuildRecordFilters{})
 }
 
-func (s *DashboardService) listReleases(ctx context.Context) ([]domain.ReleaseRecord, error) {
+func (s *DashboardService) listReleases(ctx context.Context) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
 	if s.releases == nil {
-		return nil, nil
+		return nil, domain.ReleaseRecordSummary{}, nil
 	}
 	return s.releases.ListReleases(ctx, domain.ReleaseRecordFilters{})
 }
@@ -238,11 +238,11 @@ func (s *DashboardService) listCodeSources(ctx context.Context, ownerUnionID str
 	return s.codeSources.ListCodeSources(ctx, ownerUnionID)
 }
 
-func (s *DashboardService) listStorage(ctx context.Context) ([]domain.StorageConfiguration, error) {
+func (s *DashboardService) listStorage(ctx context.Context) ([]domain.StorageConfiguration, int, error) {
 	if s.storage == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
-	return s.storage.ListStorageConfigurations(ctx)
+	return s.storage.ListStorageConfigurations(ctx, domain.Pagination{})
 }
 
 func (s *DashboardService) listEnvironments(ctx context.Context) ([]domain.Environment, error) {

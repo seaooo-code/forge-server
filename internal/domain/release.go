@@ -104,8 +104,15 @@ type ReleaseRecordFilters struct {
 	ApplicationID string
 	Environment   string
 	ModuleID      string
+	Pagination    Pagination
 	ReleaseType   ReleaseType
 	Status        ReleaseStatus
+}
+
+type ReleaseRecordSummary struct {
+	Active   int
+	Inactive int
+	Total    int
 }
 
 type ReleaseGrayPercentageUpdateInput struct {

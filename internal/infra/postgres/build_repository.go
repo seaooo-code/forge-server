@@ -137,10 +137,11 @@ func (r *BuildRepository) ListBuildRecords(ctx context.Context, filters domain.B
 		where ($1 = '' or br.status = $1)
 			and ($2 = '' or br.module_id = $2)
 			and ($3 = '' or br.environment_code = $3)
-			and ($4 = '' or br.trigger_type = $4)
-			and ($5 = '' or m.application_id = $5)
-		order by br.created_at desc, br.id desc
-	`), string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType), filters.ApplicationID)
+				and ($4 = '' or br.trigger_type = $4)
+				and ($5 = '' or m.application_id = $5)
+			order by br.created_at desc, br.id desc
+			limit nullif($6, 0) offset $7
+		`), string(filters.Status), filters.ModuleID, filters.Environment, string(filters.TriggerType), filters.ApplicationID, filters.Pagination.Limit(), filters.Pagination.Offset())
 	if err != nil {
 		return nil, domain.BuildRecordSummary{}, fmt.Errorf("query build records: %w", err)
 	}

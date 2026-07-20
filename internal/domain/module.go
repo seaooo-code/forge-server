@@ -83,6 +83,7 @@ type ModuleListFilters struct {
 	Kind          ModuleKind
 	Keyword       string
 	Owner         string
+	Pagination    Pagination
 }
 
 type ModuleSummary struct {

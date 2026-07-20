@@ -17,6 +17,7 @@ type applicationHandler struct {
 
 type applicationsResponse struct {
 	Applications []applicationResponse      `json:"applications"`
+	Pagination   paginationResponse         `json:"pagination"`
 	Summary      applicationSummaryResponse `json:"summary"`
 }
 
@@ -207,11 +208,17 @@ func (h applicationHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "application service unavailable"})
 	}
 
+	pagination, ok := requestPagination(c)
+	if !ok {
+		return applicationErrorResponse(c, domain.ErrInvalidApplicationInput)
+	}
+
 	filters := domain.ApplicationListFilters{
-		Platform: strings.TrimSpace(c.QueryParam("platform")),
-		Status:   domain.ApplicationStatus(strings.TrimSpace(c.QueryParam("status"))),
-		Owner:    strings.TrimSpace(c.QueryParam("owner")),
-		Keyword:  strings.TrimSpace(c.QueryParam("keyword")),
+		Pagination: pagination,
+		Platform:   strings.TrimSpace(c.QueryParam("platform")),
+		Status:     domain.ApplicationStatus(strings.TrimSpace(c.QueryParam("status"))),
+		Owner:      strings.TrimSpace(c.QueryParam("owner")),
+		Keyword:    strings.TrimSpace(c.QueryParam("keyword")),
 	}
 
 	applications, summary, err := h.service.ListApplications(c.Request().Context(), filters)
@@ -221,6 +228,7 @@ func (h applicationHandler) list(c echo.Context) error {
 
 	response := applicationsResponse{
 		Applications: newApplicationResponses(applications),
+		Pagination:   newPaginationResponse(pagination, summary.Total),
 		Summary:      newApplicationSummaryResponse(summary),
 	}
 

@@ -167,16 +167,23 @@ type fakeModuleRepository struct {
 	lastDeleteID    string
 }
 
-func (r *fakeModuleRepository) ListModules(_ context.Context, filters domain.ModuleListFilters) ([]domain.Module, error) {
+func (r *fakeModuleRepository) ListModules(_ context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
 	r.listCalls++
 	result := make([]domain.Module, 0, len(r.modules))
+	summary := domain.ModuleSummary{}
 	for _, module := range r.modules {
 		if filters.Kind != "" && module.Kind != filters.Kind {
 			continue
 		}
 		result = append(result, module)
+		summary.Total++
+		if module.Kind == domain.ModuleKindCommon {
+			summary.Common++
+		} else if module.Kind == domain.ModuleKindFeature {
+			summary.Feature++
+		}
 	}
-	return result, nil
+	return result, summary, nil
 }
 
 func (r *fakeModuleRepository) GetModule(_ context.Context, _ string) (domain.Module, error) {

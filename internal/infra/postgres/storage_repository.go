@@ -23,7 +23,12 @@ func NewStorageRepository(pool *pgxpool.Pool) *StorageRepository {
 	return &StorageRepository{pool: pool}
 }
 
-func (r *StorageRepository) ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error) {
+func (r *StorageRepository) ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error) {
+	var total int
+	if err := r.pool.QueryRow(ctx, `select count(*)::integer from storage_configurations`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count storage configurations: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		select
 			c.id,
@@ -43,10 +48,11 @@ func (r *StorageRepository) ListStorageConfigurations(ctx context.Context) ([]do
 			c.updated_at
 		from storage_configurations c
 		join users u on u.id = c.owner_user_id
-		order by c.sort_order asc, c.created_at asc
-	`)
+			order by c.sort_order asc, c.created_at asc
+			limit nullif($1, 0) offset $2
+		`, pagination.Limit(), pagination.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("query storage configurations: %w", err)
+		return nil, 0, fmt.Errorf("query storage configurations: %w", err)
 	}
 	defer rows.Close()
 
@@ -54,16 +60,16 @@ func (r *StorageRepository) ListStorageConfigurations(ctx context.Context) ([]do
 	for rows.Next() {
 		configuration, err := scanStorageConfiguration(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		configurations = append(configurations, configuration)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate storage configurations: %w", err)
+		return nil, 0, fmt.Errorf("iterate storage configurations: %w", err)
 	}
 
-	return configurations, nil
+	return configurations, total, nil
 }
 
 func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error) {

@@ -281,10 +281,21 @@ type fakeApplicationRepository struct {
 	deleteMemberErr   error
 }
 
-func (r *fakeApplicationRepository) ListApplications(_ context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error) {
+func (r *fakeApplicationRepository) ListApplications(_ context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error) {
 	r.listCalls++
 	r.lastListFilters = filters
-	return r.applications, nil
+	summary := domain.ApplicationSummary{Total: len(r.applications)}
+	for _, application := range r.applications {
+		switch application.Status {
+		case domain.ApplicationStatusRunning:
+			summary.Running++
+		case domain.ApplicationStatusMaintenance:
+			summary.Maintenance++
+		case domain.ApplicationStatusOffline:
+			summary.Offline++
+		}
+	}
+	return r.applications, summary, nil
 }
 
 func (r *fakeApplicationRepository) GetApplicationDetail(context.Context, string) (domain.ApplicationDetail, error) {

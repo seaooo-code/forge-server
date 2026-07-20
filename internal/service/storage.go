@@ -13,7 +13,7 @@ type StorageRepository interface {
 	CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 	DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
-	ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error)
+	ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error)
 	UpdateStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 }
 
@@ -30,8 +30,11 @@ func NewStorageService(repository StorageRepository, tester StorageConnectivityT
 	return &StorageService{repository: repository, tester: tester}
 }
 
-func (s *StorageService) ListStorageConfigurations(ctx context.Context) ([]domain.StorageConfiguration, error) {
-	return s.repository.ListStorageConfigurations(ctx)
+func (s *StorageService) ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error) {
+	if !pagination.IsValid() {
+		return nil, 0, domain.ErrInvalidStorageConfigurationInput
+	}
+	return s.repository.ListStorageConfigurations(ctx, pagination)
 }
 
 func (s *StorageService) GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error) {

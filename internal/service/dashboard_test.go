@@ -94,8 +94,8 @@ func (f dashboardBuildFake) ListBuildRecords(context.Context, domain.BuildRecord
 
 type dashboardReleaseFake struct{ records []domain.ReleaseRecord }
 
-func (f dashboardReleaseFake) ListReleases(context.Context, domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
-	return f.records, nil
+func (f dashboardReleaseFake) ListReleases(context.Context, domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
+	return f.records, domain.ReleaseRecordSummary{Total: len(f.records)}, nil
 }
 
 type dashboardCodeSourceFake struct{ apps []domain.CodeSourceApp }
@@ -106,8 +106,8 @@ func (f dashboardCodeSourceFake) ListCodeSources(context.Context, string) ([]dom
 
 type dashboardStorageFake struct{ configs []domain.StorageConfiguration }
 
-func (f dashboardStorageFake) ListStorageConfigurations(context.Context) ([]domain.StorageConfiguration, error) {
-	return f.configs, nil
+func (f dashboardStorageFake) ListStorageConfigurations(context.Context, domain.Pagination) ([]domain.StorageConfiguration, int, error) {
+	return f.configs, len(f.configs), nil
 }
 
 type dashboardEnvironmentFake struct{ environments []domain.Environment }

@@ -17,7 +17,7 @@ type ApplicationRepository interface {
 	ListApplicationEnvironments(ctx context.Context) ([]domain.ApplicationOptionItem, error)
 	ListApplicationMembers(ctx context.Context, applicationID string) ([]domain.ApplicationMember, error)
 	ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error)
-	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error)
+	ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error)
 	UpsertApplicationMember(ctx context.Context, applicationID string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error)
 	UpdateApplication(ctx context.Context, slug string, input domain.ApplicationInput) (domain.ApplicationDetail, error)
 	UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error)
@@ -37,12 +37,7 @@ func (s *ApplicationService) ListApplications(ctx context.Context, filters domai
 		return nil, domain.ApplicationSummary{}, err
 	}
 
-	applications, err := s.repository.ListApplications(ctx, normalizedFilters)
-	if err != nil {
-		return nil, domain.ApplicationSummary{}, err
-	}
-
-	return applications, summarizeApplications(applications), nil
+	return s.repository.ListApplications(ctx, normalizedFilters)
 }
 
 func (s *ApplicationService) GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error) {
@@ -314,34 +309,16 @@ func trimStringSlice(values []string) []string {
 
 func normalizeApplicationListFilters(filters domain.ApplicationListFilters) (domain.ApplicationListFilters, error) {
 	normalized := domain.ApplicationListFilters{
-		Platform: strings.TrimSpace(filters.Platform),
-		Status:   filters.Status,
-		Owner:    strings.TrimSpace(filters.Owner),
-		Keyword:  strings.TrimSpace(filters.Keyword),
+		Pagination: filters.Pagination,
+		Platform:   strings.TrimSpace(filters.Platform),
+		Status:     filters.Status,
+		Owner:      strings.TrimSpace(filters.Owner),
+		Keyword:    strings.TrimSpace(filters.Keyword),
 	}
-	if normalized.Status != "" && !domain.IsValidApplicationStatus(normalized.Status) {
+	if !normalized.Pagination.IsValid() || normalized.Status != "" && !domain.IsValidApplicationStatus(normalized.Status) {
 		return domain.ApplicationListFilters{}, domain.ErrInvalidApplicationInput
 	}
 	return normalized, nil
-}
-
-func summarizeApplications(applications []domain.Application) domain.ApplicationSummary {
-	summary := domain.ApplicationSummary{
-		Total: len(applications),
-	}
-
-	for _, application := range applications {
-		switch application.Status {
-		case domain.ApplicationStatusRunning:
-			summary.Running++
-		case domain.ApplicationStatusMaintenance:
-			summary.Maintenance++
-		case domain.ApplicationStatusOffline:
-			summary.Offline++
-		}
-	}
-
-	return summary
 }
 
 func withApplicationDerivedDetail(detail domain.ApplicationDetail) domain.ApplicationDetail {

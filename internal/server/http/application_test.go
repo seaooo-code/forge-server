@@ -54,6 +54,9 @@ func TestListApplications(t *testing.T) {
 	if response.Summary.Total != 3 || response.Summary.Running != 1 || response.Summary.Maintenance != 1 || response.Summary.Offline != 1 {
 		t.Fatalf("unexpected summary: %+v", response.Summary)
 	}
+	if response.Pagination.Page != 1 || response.Pagination.PageSize != 20 || response.Pagination.Total != 3 {
+		t.Fatalf("unexpected pagination: %+v", response.Pagination)
+	}
 }
 
 func TestListApplicationsWithFilters(t *testing.T) {

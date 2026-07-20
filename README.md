@@ -1,202 +1,232 @@
-# forge-server
+# Forge Server
 
-`forge-server` 是基于 Echo、PostgreSQL、Redis 的 Go HTTP 服务。
+Forge Server 是 RN Bundle 交付平台的后端服务，负责应用与模块管理、GitHub 代码源授权、构建任务编排、S3 产物存储、灰度发布路由和客户端 manifest 分发。
 
-## 启动服务
+## 系统组成
+
+```mermaid
+flowchart LR
+  Console["Forge Console"] -->|"Feishu session / REST"| API["forge-server"]
+  Client["RN Client"] -->|"Bearer token / manifest"| API
+  API --> PostgreSQL[(PostgreSQL)]
+  API --> Redis[(Redis)]
+  API --> GitHub["GitHub App API"]
+  Worker["forge-worker"] --> PostgreSQL
+  Worker --> GitHub
+  Worker --> Docker["Git + Docker"]
+  Worker --> S3["S3-compatible storage"]
+  API --> S3
+```
+
+仓库提供三个独立入口：
+
+| 进程 | 职责 |
+| --- | --- |
+| `cmd/forge-server` | 启动 Echo HTTP API、自动迁移数据库、维护飞书会话和发布路由 |
+| `cmd/forge-worker` | 从 PostgreSQL 抢占待构建任务，执行 Git、Docker 和 S3 上传 |
+| `cmd/forge-migrate` | 仅执行 PostgreSQL 数据库迁移 |
+
+## 核心能力
+
+- 应用、成员、环境、模块管理，以及基于全局角色和应用成员的权限校验
+- GitHub App Manifest 创建、安装授权和仓库搜索
+- RN Bundle 构建记录、执行状态和产物树管理
+- S3 兼容对象存储配置与连通性检查
+- 全量、比例灰度和定向灰度发布
+- 面向客户端的应用 manifest 与单文件产物下载
+- 飞书 OAuth 登录、用户搜索和 session 管理
+- OpenAPI 3.0 文档、健康检查和 OpenTelemetry 导出
+
+## 本地运行
+
+### 环境要求
+
+- Go 1.25 或更高版本
+- PostgreSQL
+- Redis
+- 飞书开放平台应用
+- 运行 `forge-worker` 时还需要 Git、可用的 Docker daemon 和 S3 兼容对象存储
+
+### 准备配置
+
+```bash
+cp .env.example .env
+```
+
+默认配置连接：
+
+```text
+PostgreSQL  postgres://postgres:postgres@127.0.0.1:5432/forge_server?sslmode=disable
+Redis       127.0.0.1:6379
+HTTP        http://127.0.0.1:8080
+```
+
+PostgreSQL 中需要提前创建 `forge_server` 数据库。API 启动时会连接并检查 PostgreSQL、Redis；任一依赖不可用都会导致初始化失败。
+
+至少填写飞书应用凭证：
+
+```dotenv
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_REDIRECT_URI=http://127.0.0.1:5173/login/feishu/callback
+```
+
+飞书开放平台必须配置同一个回调地址。与本地 `forge-console` 联调时同时保持：
+
+```dotenv
+HTTP_CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
+HTTP_CORS_ALLOW_CREDENTIALS=true
+```
+
+`FEISHU_OAUTH_SCOPE` 默认留空并使用飞书应用已配置的权限。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
+
+### 启动 API
 
 ```bash
 go run ./cmd/forge-server
 ```
 
-构建执行进程独立部署：
-
-```bash
-go run ./cmd/forge-worker
-```
-
-本地启动后，可以在 Apifox 导入：
-
-```text
-http://localhost:8080/openapi.json
-```
-
-## 主要接口
-
-- `GET /healthz`：进程存活检查。
-- `GET /readyz`：PostgreSQL 和 Redis 就绪检查。
-- `GET /api/v1/ping`：API 连通性检查。
-- `GET /api/v1/enums`：全局枚举选项。
-- `GET /api/v1/environments`：环境列表。
-- `GET /api/v1/environments/:code`：环境详情。
-- `GET /api/v1/applications`：应用列表。
-- `GET /api/v1/applications/options`：应用表单选项。
-- `GET /api/v1/applications/:slug`：应用详情。
-- `POST /api/v1/applications`：创建应用。
-- `PATCH /api/v1/applications/:slug`：更新应用。
-- `PATCH /api/v1/applications/:slug/status`：上线或下线应用。
-- `GET /api/v1/applications/:slug/delete-check`：检查应用是否可删除。
-- `DELETE /api/v1/applications/:slug`：依赖检查通过后彻底删除应用。
-- `GET /api/v1/code-sources`：代码源应用安装状态。
-- `GET /api/v1/code-sources/:provider/manifest`：获取 GitHub App Manifest 创建参数。
-- `GET /api/v1/code-sources/:provider/manifest/callback`：接收 GitHub App Manifest 创建回调并保存 App 凭据。
-- `GET /api/v1/code-sources/:provider/install-url`：获取 GitHub App 安装地址。
-- `GET /api/v1/code-sources/:provider/install/callback`：接收 GitHub App 安装完成回调。
-- `DELETE /api/v1/code-sources/:provider/installations`：删除当前登录用户的 GitHub App 安装授权和仓库缓存。
-- `GET /api/v1/code-sources/:provider/repositories/search`：搜索 GitHub App 已授权仓库。
-- `GET /api/v1/builds`：查询 RN JS bundle 构建记录列表。
-- `GET /api/v1/builds/:id`：查询 RN JS bundle 构建记录详情和产物树。
-- `POST /api/v1/builds`：传入模块 id、环境和可选分支，创建 RN JS bundle 构建记录。
-- `GET /api/v1/artifacts/applications/:applicationSlug/modules/:moduleId/environments/:environment/builds/:buildId/file?path=...`：下载指定构建产物中的单个文件，支持控制台 session 或 `Authorization: Bearer <token>`。
-- `GET /api/v1/artifacts/applications/:applicationSlug/environments/:environment/manifest`：查询应用在指定环境下的模块 manifest 配置，可传 `identifier` 命中定向灰度，可传 `userId` 命中比例灰度；客户端需携带平台「访问令牌」配置的 `Authorization: Bearer <token>`。
-- `GET /api/v1/storage/configurations`：存储配置列表。
-- `GET /api/v1/storage/configurations/:id`：存储配置详情。
-- `POST /api/v1/storage/configurations/test`：测试存储配置连通性。
-- `POST /api/v1/storage/configurations`：创建存储配置。
-- `PATCH /api/v1/storage/configurations/:id`：更新存储配置。
-- `DELETE /api/v1/storage/configurations/:id`：删除存储配置。
-- `GET /api/v1/feishu/users/search`：搜索飞书用户，用于负责人选择。
-- `GET /api/v1/auth/feishu/authorize`：跳转飞书 OAuth 授权页。
-- `GET /api/v1/auth/feishu/callback`：交换飞书 OAuth code，获取用户信息并写入 `feishu_users`。
-- `GET /api/v1/auth/session`：从服务端 session cookie 返回当前飞书登录会话。
-- `POST /api/v1/auth/logout`：删除当前飞书登录会话。
-- `GET /openapi.json`：OpenAPI 3.0 文档。
-
-## 数据库迁移
-
-服务启动时会自动执行 `migrations/` 下的 PostgreSQL 迁移文件。也可以手动执行：
+服务和 worker 启动时都会自动执行 `migrations/`。只需要手动迁移时运行：
 
 ```bash
 go run ./cmd/forge-migrate
 ```
 
-## 配置
-
-配置从环境变量读取。启动时如果仓库根目录存在 `.env`，服务会自动加载；`.env.example` 只作为模板，不会被默认加载。
-
-如需指定其他 dotenv 文件：
+### 启动构建 Worker
 
 ```bash
-ENV_FILE=/path/to/file go run ./cmd/forge-server
+go run ./cmd/forge-worker
 ```
 
-已存在的进程环境变量优先级高于 dotenv 文件中的值。常用配置见 `.env.example`，主要包括：
+API 与 worker 使用同一个 PostgreSQL。worker 通过 `FOR UPDATE SKIP LOCKED` 抢占任务，可以独立部署和水平扩容。
 
-- `APP_ENV`、`APP_SHUTDOWN_TIMEOUT`：应用运行环境与关闭超时。
-- `HTTP_ADDR`、`HTTP_CORS_ALLOW_*`：HTTP 监听地址和 CORS 配置。
-- `POSTGRES_*`：PostgreSQL 连接和连接池配置。
-- `REDIS_*`：Redis 连接配置。
-- `FEISHU_*`：飞书应用凭证、回调地址、授权范围和调试开关。
-- `GITHUB_*`：GitHub App 安装、授权和仓库搜索配置。
-- `FORGE_WORKER_*`：构建 worker 的工作目录、轮询间隔、租约、Dockerfile 和产物对象前缀。
-- `OTEL_*`：OpenTelemetry 追踪和日志导出配置。
+## 配置
 
-飞书 OAuth 至少需要配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URI`，并且需要在飞书开放平台中配置相同的回调地址。配合 `forge-console` 本地开发时，回调地址使用：
+配置来自进程环境变量。仓库根目录存在 `.env` 时会自动加载，也可显式指定其他文件：
 
-```text
-http://127.0.0.1:5173/login/feishu/callback
+```bash
+ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 ```
 
-同时保持：
+已存在的进程环境变量优先于 dotenv 文件。完整字段与默认值见 [`.env.example`](.env.example)。
 
-```text
-HTTP_CORS_ALLOW_CREDENTIALS=true
-```
+| 前缀 | 用途 |
+| --- | --- |
+| `APP_*` | 运行环境和优雅关闭超时 |
+| `HTTP_*` | 监听地址、CORS origin、header 和 credentials |
+| `POSTGRES_*` | PostgreSQL DSN 和连接池 |
+| `REDIS_*` | Redis 地址、密码和 DB |
+| `FEISHU_*` | 飞书应用凭证、OAuth 回调、scope 和调试开关 |
+| `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
+| `FORGE_WORKER_*` | worker ID、轮询、租约、构建超时、工作目录和产物前缀 |
+| `OTEL_*` | OTLP trace 与 log 导出 |
 
-`FEISHU_OAUTH_SCOPE` 默认保持为空，使用飞书应用已配置的权限；只有需要显式收窄授权范围时再设置。飞书用户搜索使用当前登录用户的 `user_access_token`，需要在飞书开放平台为应用开启对应通讯录权限。搜索结果中的邮箱来自飞书批量获取用户信息接口，应用需要具备 `contact:user.email:readonly` 字段权限才会返回该字段。
+## GitHub 代码源
 
-飞书开放平台的固定接口地址不通过环境变量暴露，由 `internal/config/feishu.go` 统一管理。
+代码源管理使用 GitHub App Manifest：
 
-代码源管理采用 GitHub App Manifest 流程：页面点击创建后跳转 GitHub，GitHub 创建 App 后回调 `GITHUB_APP_MANIFEST_CALLBACK_URL`，服务端会换取并保存 App ID、slug、private key 和 webhook secret；随后自动跳转到 GitHub App 安装页。默认本地回调地址为：
+1. Forge Console 请求 manifest 并跳转 GitHub 创建 App。
+2. GitHub 回调服务端，服务端保存 App ID、slug、private key 和 webhook secret。
+3. 用户安装 GitHub App 并选择授权仓库。
+4. 服务端使用 App JWT 换取 installation access token，搜索仓库或供 worker 拉取代码。
+
+Manifest 默认申请 `Contents: Read-only` 和 `Metadata: Read-only` 仓库权限。安装 App 时必须把构建所需仓库纳入授权范围。
+
+本地默认回调为：
 
 ```text
 http://127.0.0.1:8080/api/v1/code-sources/github/manifest/callback
+http://127.0.0.1:8080/api/v1/code-sources/github/install/callback
 ```
 
-GitHub App 安装完成后，GitHub 会回调 `GITHUB_APP_INSTALL_CALLBACK_URL`，服务端记录 installation 元信息；搜索仓库时会用已保存的 GitHub App 私钥签 JWT，换取 installation access token，并读取该 installation 已授权的仓库。
+线上部署必须把 `GITHUB_APP_HOMEPAGE_URL`、`GITHUB_APP_MANIFEST_CALLBACK_URL`、`GITHUB_APP_INSTALL_CALLBACK_URL` 和 `GITHUB_APP_INSTALL_REDIRECT_URL` 改成公网可访问地址。
 
-线上部署时需要把以下地址改成公网可访问域名：
+`GITHUB_APP_ID`、`GITHUB_APP_SLUG` 和 `GITHUB_APP_PRIVATE_KEY` 仅用于兼容手动创建的 GitHub App；默认流程会从数据库读取页面创建的 App 配置。
+
+## 构建与发布链路
+
+1. `POST /api/v1/builds` 创建 `pending` 构建记录。
+2. worker 使用模块绑定的 GitHub installation ID 申请临时 token，并按指定分支浅克隆仓库。
+3. worker 在仓库根目录执行 Dockerfile。默认从最终镜像的 `/app/dist` 导出产物；最终镜像为 `scratch` 且把 `/app/dist` 复制到根目录时，改用 `docker build --output` 导出。
+4. worker 生成文件 manifest，将产物上传到环境绑定的 S3 存储，并回写构建状态和产物摘要。
+5. 控制台基于成功构建创建全量或灰度发布；客户端携带访问令牌请求应用 manifest，服务端按环境、标识和灰度比例解析当前版本。
+
+默认对象路径：
 
 ```text
-GITHUB_APP_HOMEPAGE_URL
-GITHUB_APP_MANIFEST_CALLBACK_URL
-GITHUB_APP_INSTALL_CALLBACK_URL
-GITHUB_APP_INSTALL_REDIRECT_URL
+rn-bundles/{应用名}/{模块名}/{环境名}/{构建记录ID}/{dist内相对路径}
 ```
 
-`GITHUB_APP_ID`、`GITHUB_APP_SLUG` 和 `GITHUB_APP_PRIVATE_KEY` 只作为兼容手动创建 GitHub App 的可选兜底配置；默认不需要手动填写。`GITHUB_API_BASE_URL`、`GITHUB_WEB_URL` 和 `GITHUB_API_VERSION` 默认使用 github.com，可按 GitHub Enterprise 环境覆盖。
+构建失败时优先查看构建详情中的 `workerId` 和 `errorMessage`。GitHub clone 认证由 worker 动态申请 installation token，与平台“访问令牌”不是同一套凭证。
 
-## 构建 worker
+## 鉴权边界
 
-`forge-server` 只负责通过 `POST /api/v1/builds` 创建 `pending` 构建记录；`forge-worker` 通过 PostgreSQL 轮询并用 `FOR UPDATE SKIP LOCKED` 抢占记录，因此可以和 HTTP 服务独立部署，也可以水平扩容多个 worker。
+| 请求类型 | 鉴权方式 |
+| --- | --- |
+| Forge Console 管理接口 | 飞书登录 session cookie，并叠加全局角色或应用成员权限 |
+| 客户端应用 manifest | `Authorization: Bearer <artifact-access-token>` |
+| 单文件产物下载 | 控制台 session 或 artifact access token |
+| Worker 拉取 GitHub 仓库 | GitHub App installation access token |
 
-worker 执行流程：
+系统中首位完成飞书登录的用户会被初始化为 `SuperAdmin`。后续权限由全局角色和应用成员角色共同决定。
 
-1. 使用模块绑定的 GitHub App installation id 换取 installation access token。
-2. 构建记录 id 使用创建时间 `yyyyMMddHHmmss`，按构建记录里的 `branch` 拉取模块 Git 仓库；API 未传分支时回落到模块记录里的 `default_branch`。
-3. 在仓库根目录执行 Dockerfile 构建镜像，推荐 Dockerfile 把产物写入最终镜像内 `/app/dist`。
-4. 导出构建产物到 worker 临时目录，并上传到环境绑定的 S3 存储配置。worker 默认从临时容器复制 `/app/dist`；也兼容 `FROM scratch` 产物镜像里通过 `COPY --from=<stage> /app/dist/ /` 暴露到根目录的写法，这类镜像会通过 `docker build --output` 直接导出最终产物层。上传时递归上传产物 `dist` 下的文件和目录；对象路径为 `rn-bundles/{应用名}/{模块名}/{环境名}/{yyyyMMddHHmmss}/{dist 内相对路径}`。
-5. 回写构建记录状态、错误信息、`artifactKey` 和 `artifactUrl`。
+## API 与健康检查
 
-worker 常用配置：
+启动后可访问：
 
-- `FORGE_WORKER_ID`：worker 实例标识，默认使用主机名。
-- `FORGE_WORKER_WORK_DIR`：构建临时目录，默认 `/tmp/forge-worker`。
-- `FORGE_WORKER_POLL_INTERVAL`：轮询间隔，默认 `5s`。
-- `FORGE_WORKER_LEASE_DURATION`：任务租约，默认 `30m`；运行时不会短于构建超时。
-- `FORGE_WORKER_BUILD_TIMEOUT`：单次构建超时，默认 `30m`。
-- `FORGE_WORKER_DOCKERFILE`：仓库内 Dockerfile 路径，默认 `Dockerfile`。
-- `FORGE_WORKER_ARTIFACT_PREFIX`：S3 对象前缀，默认 `rn-bundles`。
+| 地址 | 说明 |
+| --- | --- |
+| `GET /healthz` | 进程存活检查 |
+| `GET /readyz` | PostgreSQL 与 Redis 就绪检查 |
+| `GET /api/v1/ping` | API 连通性检查 |
+| `GET /openapi.json` | 完整 OpenAPI 3.0 文档，可直接导入 Apifox |
+
+业务接口统一位于 `/api/v1`。接口字段、查询参数、响应结构和状态码以运行时生成的 `/openapi.json` 为准。
 
 ## 可观测性
 
-OpenTelemetry 默认关闭。导出追踪到本地 OpenTelemetry Collector：
+OpenTelemetry 默认关闭。启用 OTLP HTTP 导出：
 
-```bash
-OTEL_ENABLED=true
-OTEL_SERVICE_NAME=forge-server
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-```
-
-导出追踪和结构化 HTTP 交换日志到 ClickStack 时，将导出地址指向 ClickStack OpenTelemetry Collector。ClickStack Open Source 的采集密钥可在 HyperDX 应用的 Team Settings / API Keys 中获取：
-
-```bash
+```dotenv
 OTEL_ENABLED=true
 OTEL_SERVICE_NAME=forge-server
 OTEL_SERVICE_VERSION=local
 OTEL_DEPLOYMENT_ENVIRONMENT=local
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-OTEL_EXPORTER_OTLP_HEADERS=authorization=<your-clickstack-ingestion-key>
 ```
 
-启用可观测性后，Echo 入站请求和飞书出站 HTTP 调用都会写入追踪。每个入站 HTTP 端点还会发送一条结构化 `http.exchange` OTLP 日志，包含原始查询参数、请求头、请求体、响应头和响应体；这些内容不会做脱敏。日志会携带请求上下文，便于通过 trace ID 和 span ID 关联 HTTP span。
+可使用 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 和 `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` 分别覆盖 trace 与 log 地址，使用对应的 `*_HEADERS` 传递采集密钥。
 
-## 目录结构
+启用后会采集 Echo 入站请求、飞书出站请求和结构化 `http.exchange` 日志。当前 HTTP exchange 日志包含原始查询参数、header、请求体和响应体，**不会自动脱敏**；生产环境启用前必须评估敏感信息暴露风险。
+
+## 项目结构
 
 ```text
 .
 ├── cmd/
-│   ├── forge-migrate/   # 手动执行数据库迁移的入口
-│   ├── forge-server/    # HTTP 服务启动入口
-│   └── forge-worker/    # RN JS bundle 构建 worker 入口
+│   ├── forge-server/     # HTTP API 入口
+│   ├── forge-worker/     # 构建 worker 入口
+│   └── forge-migrate/    # 手动数据库迁移入口
 ├── internal/
-│   ├── app/             # 应用装配，连接配置、基础设施、服务和 HTTP 服务
-│   ├── config/          # 运行时配置解析与校验
-│   ├── domain/          # 领域模型、领域错误和领域规则
-│   ├── infra/           # 外部基础设施适配
-│   │   ├── feishu/      # 飞书 HTTP 客户端
-│   │   ├── otel/        # OpenTelemetry 初始化
-│   │   ├── postgres/    # PostgreSQL 连接、迁移和仓储实现
-│   │   ├── redis/       # Redis 客户端初始化
-│   │   └── s3/          # S3 兼容对象存储客户端
-│   ├── server/
-│   │   └── http/        # Echo 路由、中间件、处理器和 OpenAPI 文档
-│   ├── service/         # 业务用例和仓储接口
-│   └── worker/          # 构建任务轮询和 git/docker/S3 执行器
-├── migrations/          # PostgreSQL 迁移文件
-├── AGENTS.md            # 项目开发约束
-├── README.md            # 项目说明
-├── go.mod               # Go module 定义
-└── go.sum               # Go 依赖校验文件
+│   ├── app/              # 应用装配和进程生命周期
+│   ├── config/           # 环境变量解析与校验
+│   ├── domain/           # 领域模型、错误和规则
+│   ├── infra/            # PostgreSQL、Redis、GitHub、飞书、S3、OTel 适配
+│   ├── server/http/      # Echo handler、中间件、路由和 OpenAPI
+│   ├── service/          # 业务用例和仓储接口
+│   └── worker/           # 任务轮询、Git、Docker 和 S3 执行器
+├── migrations/           # 当前完整 PostgreSQL schema
+├── .env.example          # 本地配置模板
+├── AGENTS.md             # 开发与分层约束
+└── README.md             # 项目入口文档
 ```
 
-目录分层和代码约束以 `AGENTS.md` 为准。新增代码时优先放入现有分层，不为单个文件创建过深目录。
+## 验证
+
+```bash
+go fmt ./...
+go test ./...
+go vet ./...
+```
+
+目录分层与提交规范以 [`AGENTS.md`](AGENTS.md) 为准。项目上线前数据库只维护 `migrations/000001_init_schema.sql` 这一份最新完整 schema；修改结构时还需要同步当前开发数据库。

@@ -63,10 +63,11 @@ type ApplicationSummary struct {
 }
 
 type ApplicationListFilters struct {
-	Platform string
-	Status   ApplicationStatus
-	Owner    string
-	Keyword  string
+	Pagination Pagination
+	Platform   string
+	Status     ApplicationStatus
+	Owner      string
+	Keyword    string
 }
 
 type ApplicationDetailMetric struct {

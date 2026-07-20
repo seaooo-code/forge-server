@@ -16,6 +16,7 @@ type storageHandler struct {
 
 type storageConfigurationsResponse struct {
 	Configurations []storageConfigurationResponse `json:"configurations"`
+	Pagination     paginationResponse             `json:"pagination"`
 }
 
 type storageConfigurationDetailResponse struct {
@@ -78,13 +79,19 @@ func (h storageHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "storage service unavailable"})
 	}
 
-	configurations, err := h.service.ListStorageConfigurations(c.Request().Context())
+	pagination, ok := requestPagination(c)
+	if !ok {
+		return storageErrorResponse(c, domain.ErrInvalidStorageConfigurationInput)
+	}
+
+	configurations, total, err := h.service.ListStorageConfigurations(c.Request().Context(), pagination)
 	if err != nil {
 		return storageErrorResponse(c, err)
 	}
 
 	return c.JSON(http.StatusOK, storageConfigurationsResponse{
 		Configurations: newStorageConfigurationResponses(configurations),
+		Pagination:     newPaginationResponse(pagination, total),
 	})
 }
 

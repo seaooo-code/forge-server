@@ -12,7 +12,7 @@ type ReleaseRepository interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	ExpireTargetedGrayReleases(ctx context.Context) (int64, error)
 	InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
-	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error)
+	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 }
@@ -38,10 +38,10 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, input domain.Release
 	return s.repository.CreateRelease(ctx, normalized)
 }
 
-func (s *ReleaseService) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
+func (s *ReleaseService) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
 	normalized, err := normalizeReleaseRecordFilters(filters)
 	if err != nil {
-		return nil, err
+		return nil, domain.ReleaseRecordSummary{}, err
 	}
 	return s.repository.ListReleases(ctx, normalized)
 }
@@ -138,10 +138,11 @@ func normalizeReleaseRecordFilters(filters domain.ReleaseRecordFilters) (domain.
 		ApplicationID: strings.TrimSpace(filters.ApplicationID),
 		Environment:   strings.TrimSpace(filters.Environment),
 		ModuleID:      strings.TrimSpace(filters.ModuleID),
+		Pagination:    filters.Pagination,
 		ReleaseType:   domain.ReleaseType(strings.TrimSpace(string(filters.ReleaseType))),
 		Status:        domain.ReleaseStatus(strings.TrimSpace(string(filters.Status))),
 	}
-	if normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
+	if !normalized.Pagination.IsValid() || normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
 		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
 	}
 	if normalized.ReleaseType != "" && !domain.IsValidReleaseType(normalized.ReleaseType) {

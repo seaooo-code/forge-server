@@ -76,7 +76,7 @@ func TestListBuildRecords(t *testing.T) {
 		BuildService: service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds?applicationId=app-main&status=pending&moduleId=module-profile&environment=qa&triggerType=pipeline", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/builds?applicationId=app-main&status=pending&moduleId=module-profile&environment=qa&triggerType=pipeline&page=2&pageSize=50", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -98,11 +98,15 @@ func TestListBuildRecords(t *testing.T) {
 	if response.Summary.Total != 10 || response.Summary.Succeeded != 4 {
 		t.Fatalf("unexpected build summary response: %#v", response.Summary)
 	}
+	if response.Pagination.Page != 2 || response.Pagination.PageSize != 50 || response.Pagination.Total != 10 {
+		t.Fatalf("unexpected pagination: %+v", response.Pagination)
+	}
 	if service.lastListFilters.ApplicationID != "app-main" ||
 		service.lastListFilters.Status != domain.BuildStatusPending ||
 		service.lastListFilters.ModuleID != "module-profile" ||
 		service.lastListFilters.Environment != "qa" ||
-		service.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline {
+		service.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline ||
+		service.lastListFilters.Pagination != (domain.Pagination{Page: 2, PageSize: 50}) {
 		t.Fatalf("unexpected list filters: %+v", service.lastListFilters)
 	}
 	if strings.Contains(rec.Body.String(), "secret") {

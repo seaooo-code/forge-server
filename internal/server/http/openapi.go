@@ -629,10 +629,15 @@ func openAPIDocument() *openapi3.T {
 				}(),
 			}),
 			openapi3.WithPath("/api/v1/storage/configurations", &openapi3.PathItem{
-				Get: operation("listStorageConfigurations", "List storage configurations", []string{"Storage"}, responses(
-					response(http.StatusOK, "Storage configuration list.", schemaRef("StorageConfigurationsResponse")),
-					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
-				)),
+				Get: func() *openapi3.Operation {
+					op := operation("listStorageConfigurations", "List storage configurations", []string{"Storage"}, responses(
+						response(http.StatusOK, "Storage configuration list.", schemaRef("StorageConfigurationsResponse")),
+						response(http.StatusBadRequest, "Invalid pagination.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = paginationParameters()
+					return op
+				}(),
 				Post: func() *openapi3.Operation {
 					op := operation("createStorageConfiguration", "Create storage configuration", []string{"Storage"}, responses(
 						response(http.StatusCreated, "Storage configuration created.", schemaRef("StorageConfigurationDetailResponse")),
@@ -807,6 +812,7 @@ func openAPIDocument() *openapi3.T {
 				"EnvironmentUpdateRequest":             schemaValue(environmentCreateRequestSchema()),
 				"EnvironmentsResponse":                 schemaValue(environmentsResponseSchema()),
 				"EnvironmentDetailResponse":            schemaValue(environmentDetailResponseSchema()),
+				"Pagination":                           schemaValue(paginationSchema()),
 				"Application":                          schemaValue(applicationSchema()),
 				"ApplicationOption":                    schemaValue(applicationOptionSchema()),
 				"ApplicationOptions":                   schemaValue(applicationOptionsSchema()),
@@ -852,6 +858,7 @@ func openAPIDocument() *openapi3.T {
 				"ArtifactManifestFile":                 schemaValue(artifactManifestFileSchema()),
 				"ArtifactMissingModule":                schemaValue(artifactMissingModuleSchema()),
 				"ReleaseRecord":                        schemaValue(releaseRecordSchema()),
+				"ReleaseRecordSummary":                 schemaValue(releaseRecordSummarySchema()),
 				"ReleaseRoute":                         schemaValue(releaseRouteSchema()),
 				"ReleaseCreateRequest":                 schemaValue(releaseCreateRequestSchema()),
 				"ReleaseGrayPercentageUpdateRequest":   schemaValue(releaseGrayPercentageUpdateRequestSchema()),
@@ -1280,7 +1287,7 @@ func codeSourceRepositorySearchParameters() openapi3.Parameters {
 }
 
 func applicationListParameters() openapi3.Parameters {
-	return openapi3.Parameters{
+	parameters := openapi3.Parameters{
 		{
 			Value: openapi3.NewQueryParameter("platform").
 				WithDescription("Platform filter. Matches a supported platform token, such as iOS or Android.").
@@ -1302,10 +1309,11 @@ func applicationListParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Application name keyword.")),
 		},
 	}
+	return append(parameters, paginationParameters()...)
 }
 
 func moduleListParameters() openapi3.Parameters {
-	return openapi3.Parameters{
+	parameters := openapi3.Parameters{
 		{
 			Value: openapi3.NewQueryParameter("applicationId").
 				WithDescription("Linked application id filter.").
@@ -1327,10 +1335,11 @@ func moduleListParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Module keyword.")),
 		},
 	}
+	return append(parameters, paginationParameters()...)
 }
 
 func buildListParameters() openapi3.Parameters {
-	return openapi3.Parameters{
+	parameters := openapi3.Parameters{
 		{
 			Value: openapi3.NewQueryParameter("applicationId").
 				WithDescription("Linked application id filter.").
@@ -1357,10 +1366,11 @@ func buildListParameters() openapi3.Parameters {
 				WithSchema(enumStringSchema("Build trigger type filter.", "manual", "pipeline")),
 		},
 	}
+	return append(parameters, paginationParameters()...)
 }
 
 func releaseListParameters() openapi3.Parameters {
-	return openapi3.Parameters{
+	parameters := openapi3.Parameters{
 		{
 			Value: openapi3.NewQueryParameter("applicationId").
 				WithDescription("Linked application id filter.").
@@ -1385,6 +1395,22 @@ func releaseListParameters() openapi3.Parameters {
 			Value: openapi3.NewQueryParameter("releaseType").
 				WithDescription("Release type filter.").
 				WithSchema(enumStringSchema("Release type filter.", "full", "gray")),
+		},
+	}
+	return append(parameters, paginationParameters()...)
+}
+
+func paginationParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("page").
+				WithDescription("One-based page number. Defaults to 1.").
+				WithSchema(int32Schema("Page number.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("pageSize").
+				WithDescription("Rows per page, from 1 to 100. Defaults to 20.").
+				WithSchema(int32Schema("Page size.")),
 		},
 	}
 }
@@ -1586,8 +1612,9 @@ func applicationDetailSchema() *openapi3.Schema {
 }
 
 func applicationsResponseSchema() *openapi3.Schema {
-	return objectSchema("applications", "summary").
+	return objectSchema("applications", "pagination", "summary").
 		WithPropertyRef("applications", arraySchemaRef("Application")).
+		WithPropertyRef("pagination", schemaRef("Pagination")).
 		WithPropertyRef("summary", schemaRef("ApplicationSummary"))
 }
 
@@ -1668,8 +1695,9 @@ func applicationMemberRoleUpdateRequestSchema() *openapi3.Schema {
 }
 
 func modulesResponseSchema() *openapi3.Schema {
-	return objectSchema("modules", "summary").
+	return objectSchema("modules", "pagination", "summary").
 		WithPropertyRef("modules", arraySchemaRef("Module")).
+		WithPropertyRef("pagination", schemaRef("Pagination")).
 		WithPropertyRef("summary", schemaRef("ModuleSummary"))
 }
 
@@ -1783,8 +1811,9 @@ func buildRecordDetailResponseSchema() *openapi3.Schema {
 }
 
 func buildRecordsResponseSchema() *openapi3.Schema {
-	return objectSchema("builds", "summary").
+	return objectSchema("builds", "pagination", "summary").
 		WithPropertyRef("builds", arraySchemaRef("BuildRecord")).
+		WithPropertyRef("pagination", schemaRef("Pagination")).
 		WithPropertyRef("summary", schemaRef("BuildRecordSummary"))
 }
 
@@ -1949,8 +1978,17 @@ func releaseDetailResponseSchema() *openapi3.Schema {
 }
 
 func releasesResponseSchema() *openapi3.Schema {
-	return objectSchema("releases").
-		WithPropertyRef("releases", arraySchemaRef("ReleaseRecord"))
+	return objectSchema("releases", "pagination", "summary").
+		WithPropertyRef("releases", arraySchemaRef("ReleaseRecord")).
+		WithPropertyRef("pagination", schemaRef("Pagination")).
+		WithPropertyRef("summary", schemaRef("ReleaseRecordSummary"))
+}
+
+func releaseRecordSummarySchema() *openapi3.Schema {
+	return objectSchema("active", "inactive", "total").
+		WithProperty("active", int32Schema("Active release count.")).
+		WithProperty("inactive", int32Schema("Inactive release count.")).
+		WithProperty("total", int32Schema("Total release count."))
 }
 
 func releaseResolveResponseSchema() *openapi3.Schema {
@@ -2157,8 +2195,16 @@ func storageConfigurationSchema() *openapi3.Schema {
 }
 
 func storageConfigurationsResponseSchema() *openapi3.Schema {
-	return objectSchema("configurations").
-		WithPropertyRef("configurations", arraySchemaRef("StorageConfiguration"))
+	return objectSchema("configurations", "pagination").
+		WithPropertyRef("configurations", arraySchemaRef("StorageConfiguration")).
+		WithPropertyRef("pagination", schemaRef("Pagination"))
+}
+
+func paginationSchema() *openapi3.Schema {
+	return objectSchema("page", "pageSize", "total").
+		WithProperty("page", int32Schema("One-based page number.")).
+		WithProperty("pageSize", int32Schema("Rows per page.")).
+		WithProperty("total", int32Schema("Total rows matching the filters."))
 }
 
 func storageConfigurationDetailResponseSchema() *openapi3.Schema {

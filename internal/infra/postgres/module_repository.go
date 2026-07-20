@@ -24,7 +24,12 @@ func NewModuleRepository(pool *pgxpool.Pool) *ModuleRepository {
 	return &ModuleRepository{pool: pool}
 }
 
-func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, error) {
+func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
+	summary, err := r.moduleSummary(ctx, filters)
+	if err != nil {
+		return nil, domain.ModuleSummary{}, err
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		select
 			m.id,
@@ -66,10 +71,11 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 				or a.name ilike '%' || $4 || '%'
 				or cm.name ilike '%' || $4 || '%'
 			)
-		order by m.sort_order asc, m.created_at asc
-	`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword)
+			order by m.sort_order asc, m.created_at asc
+			limit nullif($5, 0) offset $6
+		`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword, filters.Pagination.Limit(), filters.Pagination.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("query modules: %w", err)
+		return nil, domain.ModuleSummary{}, fmt.Errorf("query modules: %w", err)
 	}
 	defer rows.Close()
 
@@ -77,14 +83,46 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 	for rows.Next() {
 		module, err := scanModule(rows)
 		if err != nil {
-			return nil, err
+			return nil, domain.ModuleSummary{}, err
 		}
 		modules = append(modules, module)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate modules: %w", err)
+		return nil, domain.ModuleSummary{}, fmt.Errorf("iterate modules: %w", err)
 	}
-	return modules, nil
+	return modules, summary, nil
+}
+
+func (r *ModuleRepository) moduleSummary(ctx context.Context, filters domain.ModuleListFilters) (domain.ModuleSummary, error) {
+	var summary domain.ModuleSummary
+	if err := r.pool.QueryRow(ctx, `
+		select
+			count(*)::integer,
+			count(*) filter (where m.kind = 'Common')::integer,
+			count(*) filter (where m.kind = 'Feature')::integer
+		from modules m
+		join applications a on a.id = m.application_id
+		left join modules cm on cm.id = m.common_module_id
+		where
+			($1 = '' or m.kind = $1)
+			and ($2 = '' or m.owner_user_id = $2)
+			and ($3 = '' or m.application_id = $3)
+			and (
+				$4 = ''
+				or m.id ilike '%' || $4 || '%'
+				or m.name ilike '%' || $4 || '%'
+				or m.repository_full_name ilike '%' || $4 || '%'
+				or a.name ilike '%' || $4 || '%'
+				or cm.name ilike '%' || $4 || '%'
+			)
+	`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword).Scan(
+		&summary.Total,
+		&summary.Common,
+		&summary.Feature,
+	); err != nil {
+		return domain.ModuleSummary{}, fmt.Errorf("summarize modules: %w", err)
+	}
+	return summary, nil
 }
 
 func (r *ModuleRepository) GetModule(ctx context.Context, id string) (domain.Module, error) {

@@ -17,8 +17,9 @@ type moduleHandler struct {
 }
 
 type modulesResponse struct {
-	Modules []moduleResponse      `json:"modules"`
-	Summary moduleSummaryResponse `json:"summary"`
+	Modules    []moduleResponse      `json:"modules"`
+	Pagination paginationResponse    `json:"pagination"`
+	Summary    moduleSummaryResponse `json:"summary"`
 }
 
 type moduleDetailResponse struct {
@@ -100,19 +101,26 @@ func (h moduleHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "module service unavailable"})
 	}
 
+	pagination, ok := requestPagination(c)
+	if !ok {
+		return moduleErrorResponse(c, domain.ErrInvalidModuleInput)
+	}
+
 	modules, summary, err := h.service.ListModules(c.Request().Context(), domain.ModuleListFilters{
 		ApplicationID: strings.TrimSpace(c.QueryParam("applicationId")),
 		Kind:          domain.ModuleKind(strings.TrimSpace(c.QueryParam("kind"))),
 		Keyword:       strings.TrimSpace(c.QueryParam("keyword")),
 		Owner:         strings.TrimSpace(c.QueryParam("owner")),
+		Pagination:    pagination,
 	})
 	if err != nil {
 		return moduleErrorResponse(c, err)
 	}
 
 	return c.JSON(http.StatusOK, modulesResponse{
-		Modules: newModuleResponses(modules),
-		Summary: newModuleSummaryResponse(summary),
+		Modules:    newModuleResponses(modules),
+		Pagination: newPaginationResponse(pagination, summary.Total),
+		Summary:    newModuleSummaryResponse(summary),
 	})
 }
 

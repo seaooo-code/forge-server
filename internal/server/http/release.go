@@ -34,7 +34,15 @@ type releaseDetailResponse struct {
 }
 
 type releasesResponse struct {
-	Releases []releaseRecordResponse `json:"releases"`
+	Pagination paginationResponse      `json:"pagination"`
+	Releases   []releaseRecordResponse `json:"releases"`
+	Summary    releaseSummaryResponse  `json:"summary"`
+}
+
+type releaseSummaryResponse struct {
+	Active   int `json:"active"`
+	Inactive int `json:"inactive"`
+	Total    int `json:"total"`
 }
 
 type releaseResolveResponse struct {
@@ -101,10 +109,16 @@ func (h releaseHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
 	}
 
-	records, err := h.service.ListReleases(c.Request().Context(), domain.ReleaseRecordFilters{
+	pagination, ok := requestPagination(c)
+	if !ok {
+		return releaseErrorResponse(c, domain.ErrInvalidReleaseInput)
+	}
+
+	records, summary, err := h.service.ListReleases(c.Request().Context(), domain.ReleaseRecordFilters{
 		ApplicationID: c.QueryParam("applicationId"),
 		Environment:   c.QueryParam("environment"),
 		ModuleID:      c.QueryParam("moduleId"),
+		Pagination:    pagination,
 		ReleaseType:   domain.ReleaseType(c.QueryParam("releaseType")),
 		Status:        domain.ReleaseStatus(c.QueryParam("status")),
 	})
@@ -112,7 +126,13 @@ func (h releaseHandler) list(c echo.Context) error {
 		return releaseErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusOK, releasesResponse{Releases: newReleaseRecordResponses(records)})
+	return c.JSON(http.StatusOK, releasesResponse{
+		Pagination: newPaginationResponse(pagination, summary.Total),
+		Releases:   newReleaseRecordResponses(records),
+		Summary: releaseSummaryResponse{
+			Active: summary.Active, Inactive: summary.Inactive, Total: summary.Total,
+		},
+	})
 }
 
 func (h releaseHandler) create(c echo.Context) error {

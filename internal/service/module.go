@@ -11,7 +11,7 @@ type ModuleRepository interface {
 	CreateModule(ctx context.Context, input domain.ModuleInput) (domain.Module, error)
 	DeleteModule(ctx context.Context, id string) error
 	GetModule(ctx context.Context, id string) (domain.Module, error)
-	ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, error)
+	ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error)
 	UpdateModule(ctx context.Context, id string, input domain.ModuleInput) (domain.Module, error)
 }
 
@@ -29,12 +29,7 @@ func (s *ModuleService) ListModules(ctx context.Context, filters domain.ModuleLi
 		return nil, domain.ModuleSummary{}, err
 	}
 
-	modules, err := s.repository.ListModules(ctx, normalized)
-	if err != nil {
-		return nil, domain.ModuleSummary{}, err
-	}
-
-	return modules, summarizeModules(modules), nil
+	return s.repository.ListModules(ctx, normalized)
 }
 
 func (s *ModuleService) GetModule(ctx context.Context, id string) (domain.Module, error) {
@@ -150,22 +145,10 @@ func normalizeModuleListFilters(filters domain.ModuleListFilters) (domain.Module
 		Kind:          filters.Kind,
 		Keyword:       strings.TrimSpace(filters.Keyword),
 		Owner:         strings.TrimSpace(filters.Owner),
+		Pagination:    filters.Pagination,
 	}
-	if normalized.Kind != "" && !domain.IsValidModuleKind(normalized.Kind) {
+	if !normalized.Pagination.IsValid() || normalized.Kind != "" && !domain.IsValidModuleKind(normalized.Kind) {
 		return domain.ModuleListFilters{}, domain.ErrInvalidModuleInput
 	}
 	return normalized, nil
-}
-
-func summarizeModules(modules []domain.Module) domain.ModuleSummary {
-	summary := domain.ModuleSummary{Total: len(modules)}
-	for _, module := range modules {
-		switch module.Kind {
-		case domain.ModuleKindCommon:
-			summary.Common++
-		case domain.ModuleKindFeature:
-			summary.Feature++
-		}
-	}
-	return summary
 }

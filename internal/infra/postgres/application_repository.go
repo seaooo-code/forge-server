@@ -20,7 +20,12 @@ func NewApplicationRepository(pool *pgxpool.Pool) *ApplicationRepository {
 	return &ApplicationRepository{pool: pool}
 }
 
-func (r *ApplicationRepository) ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, error) {
+func (r *ApplicationRepository) ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error) {
+	summary, err := r.applicationSummary(ctx, filters)
+	if err != nil {
+		return nil, domain.ApplicationSummary{}, err
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		select
 			a.id,
@@ -62,10 +67,11 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			a.created_at,
 			a.status,
 			a.sort_order
-		order by a.sort_order asc, a.created_at asc
-	`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword)
+			order by a.sort_order asc, a.created_at asc
+			limit nullif($5, 0) offset $6
+		`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword, filters.Pagination.Limit(), filters.Pagination.Offset())
 	if err != nil {
-		return nil, fmt.Errorf("query applications: %w", err)
+		return nil, domain.ApplicationSummary{}, fmt.Errorf("query applications: %w", err)
 	}
 	defer rows.Close()
 
@@ -87,16 +93,45 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			&application.CreatedAt,
 			&application.Status,
 		); err != nil {
-			return nil, fmt.Errorf("scan application: %w", err)
+			return nil, domain.ApplicationSummary{}, fmt.Errorf("scan application: %w", err)
 		}
 		applications = append(applications, application)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate applications: %w", err)
+		return nil, domain.ApplicationSummary{}, fmt.Errorf("iterate applications: %w", err)
 	}
 
-	return applications, nil
+	return applications, summary, nil
+}
+
+func (r *ApplicationRepository) applicationSummary(ctx context.Context, filters domain.ApplicationListFilters) (domain.ApplicationSummary, error) {
+	var summary domain.ApplicationSummary
+	if err := r.pool.QueryRow(ctx, `
+		select
+			count(*)::integer,
+			count(*) filter (where a.status = 'running')::integer,
+			count(*) filter (where a.status = 'maintenance')::integer,
+			count(*) filter (where a.status = 'offline')::integer
+		from applications a
+		where
+			($1 = '' or exists (
+				select 1
+				from unnest(string_to_array(a.platform, '/')) as platform_part(value)
+				where btrim(platform_part.value) = $1
+			))
+			and ($2 = '' or a.status = $2)
+			and ($3 = '' or a.owner_user_id = $3)
+			and ($4 = '' or a.name ilike '%' || $4 || '%')
+	`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword).Scan(
+		&summary.Total,
+		&summary.Running,
+		&summary.Maintenance,
+		&summary.Offline,
+	); err != nil {
+		return domain.ApplicationSummary{}, fmt.Errorf("summarize applications: %w", err)
+	}
+	return summary, nil
 }
 
 func (r *ApplicationRepository) GetApplicationDetail(ctx context.Context, slug string) (domain.ApplicationDetail, error) {

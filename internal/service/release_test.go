@@ -292,7 +292,7 @@ func TestReleaseServiceListReleasesNormalizesFilters(t *testing.T) {
 	repository := fakeReleaseRepository{}
 	service := NewReleaseService(&repository)
 
-	_, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{
+	_, _, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{
 		ApplicationID: " app-main ",
 		Environment:   " qa ",
 		ModuleID:      " module-profile ",
@@ -322,7 +322,7 @@ func TestReleaseServiceListReleasesRejectsInvalidFilters(t *testing.T) {
 		repository := fakeReleaseRepository{}
 		service := NewReleaseService(&repository)
 
-		_, err := service.ListReleases(context.Background(), filters)
+		_, _, err := service.ListReleases(context.Background(), filters)
 		if !errors.Is(err, domain.ErrInvalidReleaseInput) {
 			t.Fatalf("expected invalid release input for %+v, got %v", filters, err)
 		}
@@ -336,7 +336,7 @@ func TestReleaseServiceListReleasesRejectsInvalidModuleFilter(t *testing.T) {
 	repository := fakeReleaseRepository{}
 	service := NewReleaseService(&repository)
 
-	_, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{ModuleID: "bad module"})
+	_, _, err := service.ListReleases(context.Background(), domain.ReleaseRecordFilters{ModuleID: "bad module"})
 	if !errors.Is(err, domain.ErrInvalidReleaseInput) {
 		t.Fatalf("expected invalid release input, got %v", err)
 	}
@@ -395,10 +395,18 @@ func (r *fakeReleaseRepository) ExpireTargetedGrayReleases(context.Context) (int
 	return 0, nil
 }
 
-func (r *fakeReleaseRepository) ListReleases(_ context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, error) {
+func (r *fakeReleaseRepository) ListReleases(_ context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
 	r.listCalls++
 	r.lastListFilters = filters
-	return r.records, nil
+	summary := domain.ReleaseRecordSummary{Total: len(r.records)}
+	for _, record := range r.records {
+		if record.Status == domain.ReleaseStatusActive {
+			summary.Active++
+		} else if record.Status == domain.ReleaseStatusInactive {
+			summary.Inactive++
+		}
+	}
+	return r.records, summary, nil
 }
 
 func (r *fakeReleaseRepository) ResolveReleaseRoute(_ context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error) {

@@ -13,16 +13,17 @@ import (
 )
 
 func TestListStorageConfigurations(t *testing.T) {
-	e := New(config.Config{}, Dependencies{
-		StorageService: &fakeStorageService{
-			configurations: []domain.StorageConfiguration{
-				testHTTPStorageConfiguration("storage-prod", domain.StorageStatusHealthy),
-				testHTTPStorageConfiguration("storage-minio", domain.StorageStatusError),
-			},
+	service := &fakeStorageService{
+		configurations: []domain.StorageConfiguration{
+			testHTTPStorageConfiguration("storage-prod", domain.StorageStatusHealthy),
+			testHTTPStorageConfiguration("storage-minio", domain.StorageStatusError),
 		},
+	}
+	e := New(config.Config{}, Dependencies{
+		StorageService: service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/storage/configurations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/storage/configurations?page=2&pageSize=50", nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -49,6 +50,9 @@ func TestListStorageConfigurations(t *testing.T) {
 	}
 	if response.Configurations[0].OwnerUserID != "ou-rn-platform" || response.Configurations[0].OwnerEmail == "" || response.Configurations[0].OwnerAvatarURL == "" {
 		t.Fatalf("expected owner profile fields, got %#v", response.Configurations[0])
+	}
+	if response.Pagination.Page != 2 || response.Pagination.PageSize != 50 || response.Pagination.Total != 2 || service.lastPagination != (domain.Pagination{Page: 2, PageSize: 50}) {
+		t.Fatalf("unexpected pagination: response=%+v service=%+v", response.Pagination, service.lastPagination)
 	}
 }
 
@@ -274,13 +278,15 @@ type fakeStorageService struct {
 	lastUpdateInput domain.StorageConfigurationInput
 	lastDeleteID    string
 	lastTestInput   domain.StorageConfigurationInput
+	lastPagination  domain.Pagination
 }
 
-func (s fakeStorageService) ListStorageConfigurations(context.Context) ([]domain.StorageConfiguration, error) {
+func (s *fakeStorageService) ListStorageConfigurations(_ context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error) {
+	s.lastPagination = pagination
 	if s.err != nil {
-		return nil, s.err
+		return nil, 0, s.err
 	}
-	return s.configurations, nil
+	return s.configurations, len(s.configurations), nil
 }
 
 func (s fakeStorageService) GetStorageConfiguration(context.Context, string) (domain.StorageConfiguration, error) {

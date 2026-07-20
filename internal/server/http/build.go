@@ -27,8 +27,9 @@ type buildRecordDetailResponse struct {
 }
 
 type buildRecordsResponse struct {
-	Builds  []buildRecordResponse      `json:"builds"`
-	Summary buildRecordSummaryResponse `json:"summary"`
+	Builds     []buildRecordResponse      `json:"builds"`
+	Pagination paginationResponse         `json:"pagination"`
+	Summary    buildRecordSummaryResponse `json:"summary"`
 }
 
 type buildRecordResponse struct {
@@ -102,10 +103,16 @@ func (h buildHandler) list(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "build service unavailable"})
 	}
 
+	pagination, ok := requestPagination(c)
+	if !ok {
+		return buildErrorResponse(c, domain.ErrInvalidBuildInput)
+	}
+
 	records, summary, err := h.service.ListBuildRecords(c.Request().Context(), domain.BuildRecordFilters{
 		ApplicationID: c.QueryParam("applicationId"),
 		Environment:   c.QueryParam("environment"),
 		ModuleID:      c.QueryParam("moduleId"),
+		Pagination:    pagination,
 		Status:        domain.BuildStatus(c.QueryParam("status")),
 		TriggerType:   domain.BuildTriggerType(c.QueryParam("triggerType")),
 	})
@@ -114,8 +121,9 @@ func (h buildHandler) list(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, buildRecordsResponse{
-		Builds:  newBuildRecordResponses(records),
-		Summary: newBuildRecordSummaryResponse(summary),
+		Builds:     newBuildRecordResponses(records),
+		Pagination: newPaginationResponse(pagination, summary.Total),
+		Summary:    newBuildRecordSummaryResponse(summary),
 	})
 }
 

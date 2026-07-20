@@ -45,6 +45,9 @@ func TestListModules(t *testing.T) {
 	if response.Summary.Total != 2 || response.Summary.Common != 1 || response.Summary.Feature != 1 {
 		t.Fatalf("unexpected summary: %+v", response.Summary)
 	}
+	if response.Pagination.Page != 1 || response.Pagination.PageSize != 20 || response.Pagination.Total != 2 {
+		t.Fatalf("unexpected pagination: %+v", response.Pagination)
+	}
 }
 
 func TestListModulesWithFilters(t *testing.T) {
