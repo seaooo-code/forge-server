@@ -424,36 +424,36 @@ func (r *fakeReleaseRepository) UpdateReleaseGrayPercentage(_ context.Context, i
 	r.updateCalls++
 	r.lastUpdateInput = input
 	return domain.ReleaseRecord{
-			ID:             input.ID,
-			ReleaseType:    domain.ReleaseTypeGray,
-			GrayStrategy:   domain.ReleaseGrayStrategyPercentage,
-			GrayPercentage: input.GrayPercentage,
-			ArtifactKey:    "rn-bundles/app/profile/qa/build-1",
-		}, domain.ReleaseRoute{
-			ID:             "route-1",
-			ReleaseID:      input.ID,
-			RouteType:      domain.ReleaseRouteTypePercentage,
-			GrayStrategy:   domain.ReleaseGrayStrategyPercentage,
-			GrayPercentage: input.GrayPercentage,
-			ArtifactKey:    "rn-bundles/app/profile/qa/build-1",
-		}, nil
+		ID:             input.ID,
+		ReleaseType:    domain.ReleaseTypeGray,
+		GrayStrategy:   domain.ReleaseGrayStrategyPercentage,
+		GrayPercentage: input.GrayPercentage,
+		ArtifactKey:    "rn-bundles/app/profile/qa/build-1",
+	}, domain.ReleaseRoute{
+		ID:             "route-1",
+		ReleaseID:      input.ID,
+		RouteType:      domain.ReleaseRouteTypePercentage,
+		GrayStrategy:   domain.ReleaseGrayStrategyPercentage,
+		GrayPercentage: input.GrayPercentage,
+		ArtifactKey:    "rn-bundles/app/profile/qa/build-1",
+	}, nil
 }
 
 func (r *fakeReleaseRepository) InactivateTargetedGrayRelease(_ context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
 	r.inactivateCalls++
 	r.lastInactivateInput = input
 	return domain.ReleaseRecord{
-			ID:           input.ID,
-			ReleaseType:  domain.ReleaseTypeGray,
-			GrayStrategy: domain.ReleaseGrayStrategyTargeted,
-			Status:       domain.ReleaseStatusInactive,
-			ArtifactKey:  "rn-bundles/app/profile/qa/build-1",
-		}, domain.ReleaseRoute{
-			ID:           "route-1",
-			ReleaseID:    input.ID,
-			RouteType:    domain.ReleaseRouteTypeIdentifier,
-			GrayStrategy: domain.ReleaseGrayStrategyTargeted,
-			Status:       domain.ReleaseRouteStatusInactive,
-			ArtifactKey:  "rn-bundles/app/profile/qa/build-1",
-		}, nil
+		ID:           input.ID,
+		ReleaseType:  domain.ReleaseTypeGray,
+		GrayStrategy: domain.ReleaseGrayStrategyTargeted,
+		Status:       domain.ReleaseStatusInactive,
+		ArtifactKey:  "rn-bundles/app/profile/qa/build-1",
+	}, domain.ReleaseRoute{
+		ID:           "route-1",
+		ReleaseID:    input.ID,
+		RouteType:    domain.ReleaseRouteTypeIdentifier,
+		GrayStrategy: domain.ReleaseGrayStrategyTargeted,
+		Status:       domain.ReleaseRouteStatusInactive,
+		ArtifactKey:  "rn-bundles/app/profile/qa/build-1",
+	}, nil
 }
