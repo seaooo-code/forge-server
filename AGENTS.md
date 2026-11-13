@@ -7,6 +7,13 @@
 - `type` 使用常见约定：`feat`、`fix`、`docs`、`refactor`、`test`、`style`、`perf`、`chore`。
 - 常用 gitmoji 映射：`✨ feat`、`🐛 fix`、`📝 docs`、`♻️ refactor`、`✅ test`、`🎨 style`、`⚡️ perf`、`🔧 chore`。
 - `scope` 使用改动所属模块或目录名，例如 `api`、`config`、`infra`、`http`。
+- 提交标题不加 Markdown 标记（如 `**`）。
+
+## 改动校验
+
+- 代码改动后至少运行 `gofmt -l .`（输出必须为空）、`go build ./...`、`go vet ./...` 与 `go test ./...`，全部通过后再提交。
+- `docs/openapi.json` 是 `internal/server/http/openapi.go` 的快照，前端据此生成接口类型。修改接口或 OpenAPI 定义后运行 `UPDATE_OPENAPI_SNAPSHOT=1 go test ./internal/server/http -run TestOpenAPISnapshot` 更新快照，不要手改；快照过期时 `go test` 会失败。
+- 本仓库与前端仓库 `../forge-console` 属于同一项目；接口字段或行为变更时，同步检查前端调用方，前端改动遵守 `forge-console/AGENTS.md`。
 
 ## 目录规范
 

@@ -183,6 +183,12 @@ rn-bundles/{应用名}/{模块名}/{环境名}/{构建记录ID}/{dist内相对�
 
 业务接口统一位于 `/api/v1`。接口字段、查询参数、响应结构和状态码以运行时生成的 `/openapi.json` 为准。
 
+仓库内 [`docs/openapi.json`](docs/openapi.json) 是同一文档的快照，供 `forge-console` 通过 `bun run gen:api` 生成接口类型。修改接口后运行以下命令更新快照：
+
+```bash
+UPDATE_OPENAPI_SNAPSHOT=1 go test ./internal/server/http -run TestOpenAPISnapshot
+```
+
 ## 可观测性
 
 OpenTelemetry 默认关闭。启用 OTLP HTTP 导出：
