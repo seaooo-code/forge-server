@@ -100,6 +100,67 @@ func TestStorageServiceUpdatesWithCompleteSecrets(t *testing.T) {
 	}
 }
 
+func TestStorageServiceUpdateKeepsStoredSecretsWhenEmpty(t *testing.T) {
+	repository := fakeStorageRepository{
+		configuration: testStorageConfiguration("storage-prod"),
+		credentials:   domain.StorageCredentials{AccessKeyID: "stored-key", SecretAccessKey: "stored-secret"},
+	}
+	service := NewStorageService(&repository, nil)
+
+	_, err := service.UpdateStorageConfiguration(context.Background(), "storage-prod", validStorageInput())
+	if err != nil {
+		t.Fatalf("update storage configuration: %v", err)
+	}
+	if repository.lastUpdateInput.AccessKeyID != "stored-key" || repository.lastUpdateInput.SecretAccessKey != "stored-secret" {
+		t.Fatalf("expected stored secrets, got %#v", repository.lastUpdateInput)
+	}
+}
+
+func TestStorageServiceUpdateReturnsNotFoundForMissingCredentials(t *testing.T) {
+	repository := fakeStorageRepository{credentialsErr: domain.ErrStorageConfigurationNotFound}
+	service := NewStorageService(&repository, nil)
+
+	_, err := service.UpdateStorageConfiguration(context.Background(), "storage-missing", validStorageInput())
+	if !errors.Is(err, domain.ErrStorageConfigurationNotFound) {
+		t.Fatalf("expected storage configuration not found, got %v", err)
+	}
+	if repository.updateCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d calls", repository.updateCalls)
+	}
+}
+
+func TestStorageServiceTestsExistingConfigurationWithStoredSecrets(t *testing.T) {
+	repository := fakeStorageRepository{
+		credentials: domain.StorageCredentials{AccessKeyID: "stored-key", SecretAccessKey: "stored-secret"},
+	}
+	tester := fakeStorageConnectivityTester{}
+	service := NewStorageService(&repository, &tester)
+
+	_, err := service.TestStorageConfiguration(context.Background(), " storage-prod ", validStorageInput())
+	if err != nil {
+		t.Fatalf("test storage configuration: %v", err)
+	}
+	if tester.lastInput.AccessKeyID != "stored-key" || tester.lastInput.SecretAccessKey != "stored-secret" {
+		t.Fatalf("expected stored secrets, got %#v", tester.lastInput)
+	}
+}
+
+func TestStorageServiceTestWithoutIDRequiresSecrets(t *testing.T) {
+	repository := fakeStorageRepository{
+		credentials: domain.StorageCredentials{AccessKeyID: "stored-key", SecretAccessKey: "stored-secret"},
+	}
+	tester := fakeStorageConnectivityTester{}
+	service := NewStorageService(&repository, &tester)
+
+	_, err := service.TestStorageConfiguration(context.Background(), "", validStorageInput())
+	if !errors.Is(err, domain.ErrInvalidStorageConfigurationInput) {
+		t.Fatalf("expected invalid storage configuration input, got %v", err)
+	}
+	if repository.credentialCalls != 0 || tester.calls != 0 {
+		t.Fatalf("expected no credential lookup or test, got %d lookups and %d tests", repository.credentialCalls, tester.calls)
+	}
+}
+
 func TestStorageServiceRejectsPartialSecretUpdate(t *testing.T) {
 	repository := fakeStorageRepository{}
 	service := NewStorageService(&repository, nil)
@@ -125,7 +186,7 @@ func TestStorageServiceTestsProvidedConfiguration(t *testing.T) {
 	input.AccessKeyID = " access-key "
 	input.SecretAccessKey = " secret-key "
 
-	result, err := service.TestStorageConfiguration(context.Background(), input)
+	result, err := service.TestStorageConfiguration(context.Background(), "", input)
 	if err != nil {
 		t.Fatalf("test storage configuration: %v", err)
 	}
@@ -150,7 +211,7 @@ func TestStorageServiceReturnsTestFailure(t *testing.T) {
 	input.AccessKeyID = "access-key"
 	input.SecretAccessKey = "secret-key"
 
-	_, err := service.TestStorageConfiguration(context.Background(), input)
+	_, err := service.TestStorageConfiguration(context.Background(), "", input)
 	if !errors.Is(err, domain.ErrStorageConfigurationTestFailed) {
 		t.Fatalf("expected storage configuration test failure, got %v", err)
 	}
@@ -179,6 +240,9 @@ type fakeStorageRepository struct {
 	lastUpdateInput domain.StorageConfigurationInput
 	lastDeleteID    string
 	deleteErr       error
+	credentials     domain.StorageCredentials
+	credentialsErr  error
+	credentialCalls int
 	createCalls     int
 	updateCalls     int
 }
@@ -189,6 +253,11 @@ func (r *fakeStorageRepository) ListStorageConfigurations(context.Context, domai
 
 func (r *fakeStorageRepository) GetStorageConfiguration(context.Context, string) (domain.StorageConfiguration, error) {
 	return r.configuration, nil
+}
+
+func (r *fakeStorageRepository) GetStorageCredentials(context.Context, string) (domain.StorageCredentials, error) {
+	r.credentialCalls++
+	return r.credentials, r.credentialsErr
 }
 
 func (r *fakeStorageRepository) CreateStorageConfiguration(_ context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error) {

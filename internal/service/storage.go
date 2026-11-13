@@ -13,6 +13,7 @@ type StorageRepository interface {
 	CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 	DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
+	GetStorageCredentials(ctx context.Context, id string) (domain.StorageCredentials, error)
 	ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error)
 	UpdateStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 }
@@ -59,6 +60,9 @@ func (s *StorageService) UpdateStorageConfiguration(ctx context.Context, id stri
 		return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
 	}
 
+	if err := s.fillStoredCredentials(ctx, normalizedID, &input); err != nil {
+		return domain.StorageConfiguration{}, err
+	}
 	normalized, err := validateStorageConfigurationInput(input)
 	if err != nil {
 		return domain.StorageConfiguration{}, err
@@ -74,7 +78,14 @@ func (s *StorageService) DeleteStorageConfiguration(ctx context.Context, id stri
 	return s.repository.DeleteStorageConfiguration(ctx, normalizedID)
 }
 
-func (s *StorageService) TestStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
+// TestStorageConfiguration 测试连通性；id 非空表示测试已有配置，留空的密钥沿用已保存值。
+func (s *StorageService) TestStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
+	if normalizedID := strings.TrimSpace(id); normalizedID != "" {
+		if err := s.fillStoredCredentials(ctx, normalizedID, &input); err != nil {
+			return domain.StorageConfigurationTestResult{}, err
+		}
+	}
+
 	normalized, err := validateStorageConfigurationInput(input)
 	if err != nil {
 		return domain.StorageConfigurationTestResult{}, err
@@ -91,6 +102,21 @@ func (s *StorageService) TestStorageConfiguration(ctx context.Context, input dom
 		OK:       true,
 		TestedAt: time.Now().UTC(),
 	}, nil
+}
+
+// fillStoredCredentials 在编辑已有配置时，两个密钥都留空则沿用已保存的密钥；只填一个仍按非法输入处理。
+func (s *StorageService) fillStoredCredentials(ctx context.Context, id string, input *domain.StorageConfigurationInput) error {
+	if strings.TrimSpace(input.AccessKeyID) != "" || strings.TrimSpace(input.SecretAccessKey) != "" {
+		return nil
+	}
+
+	stored, err := s.repository.GetStorageCredentials(ctx, id)
+	if err != nil {
+		return err
+	}
+	input.AccessKeyID = stored.AccessKeyID
+	input.SecretAccessKey = stored.SecretAccessKey
+	return nil
 }
 
 func validateStorageConfigurationInput(input domain.StorageConfigurationInput) (domain.StorageConfigurationInput, error) {

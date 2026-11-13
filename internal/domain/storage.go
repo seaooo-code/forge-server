@@ -44,6 +44,12 @@ type StorageConfiguration struct {
 	UpdatedAt      time.Time
 }
 
+// StorageCredentials 是已保存的对象存储访问密钥，只在服务端内部使用，不通过读接口返回。
+type StorageCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+}
+
 type StorageConfigurationInput struct {
 	Name               string
 	Adapter            StorageAdapter

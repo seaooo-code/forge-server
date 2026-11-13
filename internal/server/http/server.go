@@ -133,7 +133,7 @@ type StorageService interface {
 	DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error)
 	ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error)
-	TestStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error)
+	TestStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error)
 	UpdateStorageConfiguration(ctx context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error)
 }
 

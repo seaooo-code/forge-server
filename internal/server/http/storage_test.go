@@ -216,6 +216,31 @@ func TestTestStorageConfiguration(t *testing.T) {
 	}
 }
 
+func TestTestStorageConfigurationBindsExistingID(t *testing.T) {
+	service := &fakeStorageService{
+		testResult: domain.StorageConfigurationTestResult{OK: true, TestedAt: time.Date(2026, 6, 12, 11, 20, 0, 0, time.UTC)},
+	}
+	e := newAuthorizedTestServer(Dependencies{StorageService: service})
+
+	request := storageRequest()
+	request["accessKeyId"] = ""
+	request["secretAccessKey"] = ""
+	request["id"] = "storage-prod"
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations/test", jsonBody(request))
+	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if service.lastTestID != "storage-prod" {
+		t.Fatalf("expected storage id to be bound, got %q", service.lastTestID)
+	}
+}
+
 func TestTestStorageConfigurationFailure(t *testing.T) {
 	e := newAuthorizedTestServer(Dependencies{
 		StorageService: &fakeStorageService{
@@ -278,6 +303,7 @@ type fakeStorageService struct {
 	lastUpdateInput domain.StorageConfigurationInput
 	lastDeleteID    string
 	lastTestInput   domain.StorageConfigurationInput
+	lastTestID      string
 	lastPagination  domain.Pagination
 }
 
@@ -321,7 +347,8 @@ func (s *fakeStorageService) DeleteStorageConfiguration(_ context.Context, id st
 	return s.configuration, nil
 }
 
-func (s *fakeStorageService) TestStorageConfiguration(_ context.Context, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
+func (s *fakeStorageService) TestStorageConfiguration(_ context.Context, id string, input domain.StorageConfigurationInput) (domain.StorageConfigurationTestResult, error) {
+	s.lastTestID = id
 	s.lastTestInput = input
 	if s.err != nil {
 		return domain.StorageConfigurationTestResult{}, s.err

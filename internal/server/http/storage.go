@@ -63,6 +63,11 @@ type storageConfigurationRequest struct {
 	Status             string `json:"status"`
 }
 
+type storageConfigurationTestRequest struct {
+	storageConfigurationRequest
+	ID string `json:"id"`
+}
+
 func registerStorageRoutes(group *echo.Group, service StorageService, authService AuthorizationService) {
 	handler := storageHandler{authService: authService, service: service}
 
@@ -179,7 +184,7 @@ func (h storageHandler) test(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "storage service unavailable"})
 	}
 
-	input, ok := bindStorageConfigurationTestRequest(c)
+	id, input, ok := bindStorageConfigurationTestRequest(c)
 	if !ok {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid storage configuration request"})
 	}
@@ -187,7 +192,7 @@ func (h storageHandler) test(c echo.Context) error {
 		return err
 	}
 
-	result, err := h.service.TestStorageConfiguration(c.Request().Context(), input)
+	result, err := h.service.TestStorageConfiguration(c.Request().Context(), id, input)
 	if err != nil {
 		return storageErrorResponse(c, err)
 	}
@@ -208,14 +213,14 @@ func bindStorageConfigurationRequest(c echo.Context) (domain.StorageConfiguratio
 	return input, ok
 }
 
-func bindStorageConfigurationTestRequest(c echo.Context) (domain.StorageConfigurationInput, bool) {
-	var request storageConfigurationRequest
+func bindStorageConfigurationTestRequest(c echo.Context) (string, domain.StorageConfigurationInput, bool) {
+	var request storageConfigurationTestRequest
 	if err := c.Bind(&request); err != nil {
-		return domain.StorageConfigurationInput{}, false
+		return "", domain.StorageConfigurationInput{}, false
 	}
 
-	input, ok := newStorageConfigurationInput(request)
-	return input, ok
+	input, ok := newStorageConfigurationInput(request.storageConfigurationRequest)
+	return request.ID, input, ok
 }
 
 func newStorageConfigurationInput(request storageConfigurationRequest) (domain.StorageConfigurationInput, bool) {

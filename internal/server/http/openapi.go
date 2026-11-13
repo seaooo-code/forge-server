@@ -881,8 +881,8 @@ func openAPIDocument() *openapi3.T {
 				"StorageConfiguration":                 schemaValue(storageConfigurationSchema()),
 				"StorageConfigurationsResponse":        schemaValue(storageConfigurationsResponseSchema()),
 				"StorageConfigurationDetailResponse":   schemaValue(storageConfigurationDetailResponseSchema()),
-				"StorageConfigurationCreateRequest":    schemaValue(storageConfigurationRequestSchema()),
-				"StorageConfigurationUpdateRequest":    schemaValue(storageConfigurationRequestSchema()),
+				"StorageConfigurationCreateRequest":    schemaValue(storageConfigurationRequestSchema(true)),
+				"StorageConfigurationUpdateRequest":    schemaValue(storageConfigurationRequestSchema(false)),
 				"StorageConfigurationTestRequest":      schemaValue(storageConfigurationTestRequestSchema()),
 				"StorageConfigurationTestResponse":     schemaValue(storageConfigurationTestResponseSchema()),
 				"GlobalCapabilities":                   schemaValue(globalCapabilitiesSchema()),
@@ -2212,8 +2212,13 @@ func storageConfigurationDetailResponseSchema() *openapi3.Schema {
 		WithPropertyRef("configuration", schemaRef("StorageConfiguration"))
 }
 
-func storageConfigurationRequestSchema() *openapi3.Schema {
-	required := []string{"name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner", "accessKeyId", "secretAccessKey"}
+func storageConfigurationRequestSchema(requireCredentials bool) *openapi3.Schema {
+	required := []string{"name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner"}
+	credentialNote := " Leave both credentials empty to keep the stored pair."
+	if requireCredentials {
+		required = append(required, "accessKeyId", "secretAccessKey")
+		credentialNote = ""
+	}
 
 	return objectSchema(required...).
 		WithProperty("name", stringSchema("Storage configuration display name.")).
@@ -2230,12 +2235,13 @@ func storageConfigurationRequestSchema() *openapi3.Schema {
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
 		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled")).
-		WithProperty("accessKeyId", stringSchema("Access key id. Not returned by read APIs.")).
-		WithProperty("secretAccessKey", stringSchema("Secret access key. Not returned by read APIs."))
+		WithProperty("accessKeyId", stringSchema("Access key id. Not returned by read APIs."+credentialNote)).
+		WithProperty("secretAccessKey", stringSchema("Secret access key. Not returned by read APIs."+credentialNote))
 }
 
 func storageConfigurationTestRequestSchema() *openapi3.Schema {
-	return objectSchema("name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner", "accessKeyId", "secretAccessKey").
+	return objectSchema("name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner").
+		WithProperty("id", stringSchema("Existing storage configuration id. When set and both credentials are empty, the stored pair is used.")).
 		WithProperty("name", stringSchema("Storage configuration display name.")).
 		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
@@ -2250,8 +2256,8 @@ func storageConfigurationTestRequestSchema() *openapi3.Schema {
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
 		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled")).
-		WithProperty("accessKeyId", stringSchema("Access key id.")).
-		WithProperty("secretAccessKey", stringSchema("Secret access key."))
+		WithProperty("accessKeyId", stringSchema("Access key id. Required unless id is set and both credentials are empty.")).
+		WithProperty("secretAccessKey", stringSchema("Secret access key. Required unless id is set and both credentials are empty."))
 }
 
 func storageConfigurationTestResponseSchema() *openapi3.Schema {

@@ -103,6 +103,21 @@ func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id stri
 	return configuration, nil
 }
 
+func (r *StorageRepository) GetStorageCredentials(ctx context.Context, id string) (domain.StorageCredentials, error) {
+	var credentials domain.StorageCredentials
+	if err := r.pool.QueryRow(ctx, `
+		select access_key_id, secret_access_key
+		from storage_configurations
+		where id = $1
+	`, id).Scan(&credentials.AccessKeyID, &credentials.SecretAccessKey); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.StorageCredentials{}, domain.ErrStorageConfigurationNotFound
+		}
+		return domain.StorageCredentials{}, fmt.Errorf("get storage credentials: %w", err)
+	}
+	return credentials, nil
+}
+
 func (r *StorageRepository) CreateStorageConfiguration(ctx context.Context, input domain.StorageConfigurationInput) (domain.StorageConfiguration, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		configuration, err := r.createStorageConfiguration(ctx, newStorageConfigurationID(), input)
