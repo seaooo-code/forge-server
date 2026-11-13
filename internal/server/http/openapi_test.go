@@ -1,10 +1,13 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"forge-server/internal/config"
@@ -82,5 +85,35 @@ func TestOpenAPIJSON(t *testing.T) {
 		if _, ok := paths[path]; !ok {
 			t.Fatalf("expected OpenAPI path %q", path)
 		}
+	}
+}
+
+// TestOpenAPISnapshot 保证 docs/openapi.json 与代码中的 OpenAPI 文档一致，前端据此生成接口类型。
+// 更新快照：UPDATE_OPENAPI_SNAPSHOT=1 go test ./internal/server/http -run TestOpenAPISnapshot
+func TestOpenAPISnapshot(t *testing.T) {
+	const snapshotPath = "../../../docs/openapi.json"
+
+	actual, err := json.MarshalIndent(openAPIDocument(), "", "  ")
+	if err != nil {
+		t.Fatalf("marshal OpenAPI document: %v", err)
+	}
+	actual = append(actual, '\n')
+
+	if os.Getenv("UPDATE_OPENAPI_SNAPSHOT") == "1" {
+		if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o755); err != nil {
+			t.Fatalf("create snapshot dir: %v", err)
+		}
+		if err := os.WriteFile(snapshotPath, actual, 0o644); err != nil {
+			t.Fatalf("write snapshot: %v", err)
+		}
+		return
+	}
+
+	expected, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("read snapshot %s: %v；运行 UPDATE_OPENAPI_SNAPSHOT=1 go test ./internal/server/http -run TestOpenAPISnapshot 生成", snapshotPath, err)
+	}
+	if !bytes.Equal(expected, actual) {
+		t.Fatalf("docs/openapi.json 已过期；运行 UPDATE_OPENAPI_SNAPSHOT=1 go test ./internal/server/http -run TestOpenAPISnapshot 更新，并在前端执行 bun run gen:api")
 	}
 }
