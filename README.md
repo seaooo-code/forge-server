@@ -78,7 +78,7 @@ HTTP_CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 HTTP_CORS_ALLOW_CREDENTIALS=true
 ```
 
-`FEISHU_OAUTH_SCOPE` 为空格分隔的权限列表，必须包含 `offline_access`：飞书只有在授权请求显式申请该权限时才返回 refresh token，缺少时登录态会在 access token 过期（约 2 小时）后失效。应用后台也需要开通「持续访问已授权数据」（`offline_access`）。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
+`FEISHU_OAUTH_SCOPE` 为空格分隔的权限列表，必须包含 `offline_access`：飞书只有在授权请求显式申请该权限时才返回 refresh token，缺少时登录态会在 access token 过期（约 2 小时）后失效。应用后台也需要开通「持续访问已授权数据」（`offline_access`）。负责人搜索还需要 `contact:user:search`（「搜索用户」）；缺少时飞书返回 `99991679`。邮箱通过批量获取用户信息补全，需要 `contact:contact.base:readonly` 和 `contact:user.email:readonly`，属于可选信息：权限缺失时，搜索结果照常返回，只是不带邮箱。注意：应用后台开通了权限，并不代表登录时会申请；权限必须同时写进 `FEISHU_OAUTH_SCOPE`，用户重新授权后才会生效。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
 
 ### 启动 API
 
@@ -154,7 +154,7 @@ http://127.0.0.1:8080/api/v1/code-sources/github/install/callback
 默认对象路径：
 
 ```text
-rn-bundles/{应用名}/{模块名}/{环境名}/{构建记录ID}/{dist内相对路径}
+rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内相对路径}
 ```
 
 构建失败时优先查看构建详情中的 `workerId` 和 `errorMessage`。GitHub clone 认证由 worker 动态申请 installation token，与平台“访问令牌”不是同一套凭证。

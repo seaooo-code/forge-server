@@ -27,16 +27,29 @@
 
 ## 3. 对象存储：FDS
 
-FDS 兼容 S3 API，可以直接使用 Forge 的 S3 存储配置，不需要新增存储适配器。
+FDS 兼容 S3 API，可以直接用 Forge 的 S3 存储配置接入，不需要新增存储适配器。权限流程参见 FDS 文档《FDS IAM / 团队管理 / 创建桶 / 授权》。
 
-1. 在 [FDS 控制台](https://cloud.d.xiaomi.net/fds/buckets?regionType=overseas&regionId=cnbj3-fusion&projectId=521002)（北京4 `cnbj3-fusion`，IAM 节点 `micar-ai`）中创建一个测试环境专用的 Bucket，并获取团队的 AK/SK。
-2. 在 Forge 的「存储管理」中新建 S3 存储：
-   - Endpoint：S3 兼容域名 `s3-{region}.mi-fds.net`（参见 FDS 文档《8. API 参考》）。`cnbj3-fusion` 对应的具体域名以控制台展示为准。
-   - Region：`cnbj3-fusion`；Bucket、AK/SK 填第 1 步的值。
-   - 先点「测试连接」，通过后再保存。
-3. 下载链接：如果测试设备可以直接访问 FDS 内网域名，可以把 `publicBaseUrl` 配置为 Bucket 的访问地址，客户端直接从 FDS 下载。否则留空，由 Forge 的下载接口代理下载。
+**集群必须支持 S3 协议**。FDS 的 S3 兼容域名见文档《接入方式 → 兼容域名》，国内可用的集群有：武清测试、北京2（c3）、北京3（武清）、北京4（c4）。**北京6（cnbj6）不在列表中**，在那里建 bucket 无法通过 S3 接入。
 
-**待验证**：Forge 使用的 aws-sdk-go-v2 较新版本，默认会附带 CRC32 校验头。部分 S3 兼容服务不支持这个头，会导致上传失败。如果对接 FDS 时遇到这种情况，需要在存储配置中增加一个通用开关"仅在必需时计算校验和"。这个开关属于 S3 适配器的通用能力，不是针对 FDS 的特殊处理。
+测试环境当前配置如下（2026-11-16 创建）：
+
+| 项 | 值 |
+| --- | --- |
+| 集群 | 北京4（C4）`cnbj3-fusion` |
+| Bucket | `micar-forge-test`，标准存储，不开放外网访问 |
+| Org / IAM 节点 | `App-fe`（CL3085638）/ `xiaomi.car.micar-vip.micar-fe.cl3085638` |
+| 程序用户组 | `App-fe / rn`（CI3085642），授予 Read、Write、Read Objects，不授予 Full Control |
+| S3 Endpoint | `https://s3-cnbj3-fusion.mi-fds.net`，path-style 和 virtual-hosted 两种访问方式都可用 |
+| 原生内网域名 | `cnbj3-fusion-fds.api.xiaomi.net`，Forge 不使用 |
+
+在 Forge 的「存储管理」中新建 S3 存储：Endpoint 和 Bucket 按上表填写，**Endpoint 必须是 S3 兼容域名并带 `https://`，不能填原生域名**。Region 填 `us-east-1`，2026-11-16 已用它完成测试连接以及真实构建的上传和下载。AK/SK 必须使用用户组 **CI3085642** 的密钥，不能用个人默认 org 的密钥。先点「测试连接」，通过后再保存，然后把测试环境绑定到这份存储配置。
+
+注意事项：
+
+- **AK/SK 不会过期，也不会自动轮换**。密钥只能保存在 Forge 的存储配置中，不能写进代码、文档或客户端。
+- **生命周期**：建议给 bucket 添加按天过期的规则，例如 60 天，自动清理旧的测试构建产物。
+- **下载方式**：bucket 不开外网，对象也是私有的。P0 阶段由 Forge 的下载接口代理下载，`publicBaseUrl` 留空。
+- **校验头兼容**：Forge 使用较新的 aws-sdk-go-v2，默认附带 CRC32 校验头。2026-11-16 的实测中上传正常，FDS 可以接受这些校验头，不需要额外开关。
 
 ## 4. runtimeVersion 约定
 
