@@ -99,3 +99,16 @@ func IsValidStorageStatus(status StorageStatus) bool {
 func IsValidStorageAdapter(adapter StorageAdapter) bool {
 	return adapter == StorageAdapterS3
 }
+
+// StorageConfigurationTestError 是连通性测试失败的原因，Detail 面向用户展示，不得包含密钥。
+type StorageConfigurationTestError struct {
+	Detail string
+}
+
+func (e *StorageConfigurationTestError) Error() string {
+	return ErrStorageConfigurationTestFailed.Error() + ": " + e.Detail
+}
+
+func (e *StorageConfigurationTestError) Unwrap() error {
+	return ErrStorageConfigurationTestFailed
+}

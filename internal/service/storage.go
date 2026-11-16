@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -95,6 +96,10 @@ func (s *StorageService) TestStorageConfiguration(ctx context.Context, id string
 		return domain.StorageConfigurationTestResult{}, domain.ErrStorageConfigurationTestFailed
 	}
 	if err := s.tester.TestStorageConfiguration(ctx, normalized); err != nil {
+		var testErr *domain.StorageConfigurationTestError
+		if errors.As(err, &testErr) {
+			return domain.StorageConfigurationTestResult{}, testErr
+		}
 		return domain.StorageConfigurationTestResult{}, fmt.Errorf("%w: %v", domain.ErrStorageConfigurationTestFailed, err)
 	}
 

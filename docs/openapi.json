@@ -4373,6 +4373,22 @@
         ],
         "type": "object"
       },
+      "StorageConfigurationTestFailedResponse": {
+        "properties": {
+          "detail": {
+            "description": "Human readable failure reason, e.g. HTTP status and S3 error code. Never contains credentials.",
+            "type": "string"
+          },
+          "error": {
+            "description": "Error message.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "StorageConfigurationTestRequest": {
         "properties": {
           "accessKeyId": {
@@ -10122,11 +10138,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/StorageConfigurationTestFailedResponse"
                 }
               }
             },
-            "description": "Storage backend could not be reached."
+            "description": "Storage connectivity test failed; detail explains the reason without secrets."
           }
         },
         "summary": "Test storage configuration connectivity",

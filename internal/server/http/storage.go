@@ -258,7 +258,12 @@ func storageErrorResponse(c echo.Context, err error) error {
 	case errors.Is(err, domain.ErrStorageConfigurationInUse):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "storage configuration is referenced by environments"})
 	case errors.Is(err, domain.ErrStorageConfigurationTestFailed):
-		return c.JSON(http.StatusBadGateway, map[string]string{"error": "storage configuration test failed"})
+		response := map[string]string{"error": "storage configuration test failed"}
+		var testErr *domain.StorageConfigurationTestError
+		if errors.As(err, &testErr) {
+			response["detail"] = testErr.Detail
+		}
+		return c.JSON(http.StatusBadGateway, response)
 	case errors.Is(err, domain.ErrForbidden):
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
