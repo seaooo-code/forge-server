@@ -45,6 +45,10 @@ type buildRecordResponse struct {
 	ErrorMessage             string                `json:"errorMessage"`
 	FinishedAt               string                `json:"finishedAt"`
 	ID                       string                `json:"id"`
+	Number                   int64                 `json:"number"`
+	BuildAdapterID           string                `json:"buildAdapterId"`
+	BuildAdapterVersion      *int                  `json:"buildAdapterVersion"`
+	RenderedDockerfileSHA256 string                `json:"renderedDockerfileSha256"`
 	ModuleID                 string                `json:"moduleId"`
 	ModuleName               string                `json:"moduleName"`
 	ManifestKey              string                `json:"manifestKey"`
@@ -190,6 +194,8 @@ func buildErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "environment not found"})
 	case errors.Is(err, domain.ErrStorageConfigurationNotFound):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "storage configuration not found"})
+	case errors.Is(err, domain.ErrBuildAdapterDisabled):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "build adapter is disabled"})
 	case errors.Is(err, domain.ErrBuildRecordNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "build record not found"})
 	case errors.Is(err, domain.ErrForbidden):
@@ -228,6 +234,10 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		ErrorMessage:             record.ErrorMessage,
 		FinishedAt:               formatOptionalTime(record.FinishedAt),
 		ID:                       record.ID,
+		Number:                   record.Number,
+		BuildAdapterID:           record.BuildAdapterID,
+		BuildAdapterVersion:      record.BuildAdapterVersion,
+		RenderedDockerfileSHA256: record.RenderedDockerfileSHA256,
 		ModuleID:                 record.ModuleID,
 		ModuleName:               record.ModuleName,
 		ManifestKey:              record.ManifestKey,

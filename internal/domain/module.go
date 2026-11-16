@@ -32,6 +32,11 @@ const (
 
 // ModuleBuildConfig 是模块的构建与自动触发配置。
 type ModuleBuildConfig struct {
+	// BuildMode 为空时按 dockerfile 处理；DockerfilePath 只在 dockerfile 模式下生效。
+	BuildMode            BuildMode
+	BuildAdapterID       string
+	BuildAdapterName     string
+	BuildAdapterParams   map[string]string
 	DockerfilePath       string
 	BuildContext         string
 	AutoBuildBranches    []string

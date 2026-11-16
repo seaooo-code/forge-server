@@ -79,8 +79,8 @@ func (s *AuthorizationService) Authorize(ctx context.Context, userID string, act
 		return err
 	}
 	if applicationID == "" {
-		// 平台级资源（例如代码源连接）没有所属应用时，只要用户在任一应用里具备该动作即可。
-		if action != domain.ActionCodeSourceUse {
+		// 平台级资源（例如代码源连接、构建适配器）没有所属应用时，只要用户在任一应用里具备该动作即可。
+		if action != domain.ActionCodeSourceUse && action != domain.ActionBuildAdapterUse {
 			return domain.ErrForbidden
 		}
 		appRoles, err := s.repository.ListApplicationRoles(ctx, normalizedUserID)
@@ -144,7 +144,9 @@ func globalActionAllowed(roles []domain.GlobalRole, action domain.AuthorizationA
 				domain.ActionCodeSourceUse,
 				domain.ActionStorageManage,
 				domain.ActionEnvironmentManage,
-				domain.ActionAccessTokenManage:
+				domain.ActionAccessTokenManage,
+				domain.ActionBuildAdapterManage,
+				domain.ActionBuildAdapterUse:
 				return true
 			}
 		case domain.GlobalRoleReleaseAdmin:
@@ -168,6 +170,7 @@ func applicationActionAllowed(role domain.ApplicationMemberRole, action domain.A
 			domain.ActionModuleUpdate,
 			domain.ActionModuleDelete,
 			domain.ActionCodeSourceUse,
+			domain.ActionBuildAdapterUse,
 			domain.ActionBuildCreate,
 			domain.ActionReleaseCreate,
 			domain.ActionReleaseRollback:

@@ -33,6 +33,10 @@ const (
 	ActionStorageManage     AuthorizationAction = "storage:manage"
 	ActionEnvironmentManage AuthorizationAction = "environment:manage"
 	ActionAccessTokenManage AuthorizationAction = "access_token:manage"
+	// ActionBuildAdapterManage 表示新增、编辑、停用构建适配器，只授予 PlatformAdmin 与 SuperAdmin。
+	ActionBuildAdapterManage AuthorizationAction = "build_adapter:manage"
+	// ActionBuildAdapterUse 表示读取、预览并为模块选用构建适配器，授予能管理模块的人。
+	ActionBuildAdapterUse AuthorizationAction = "build_adapter:use"
 )
 
 type AuthorizationResource struct {
@@ -44,15 +48,16 @@ type AuthorizationResource struct {
 }
 
 type GlobalCapabilities struct {
-	CanCreateApplication  bool `json:"canCreateApplication"`
-	CanManageApplications bool `json:"canManageApplications"`
-	CanManageModules      bool `json:"canManageModules"`
-	CanCreateBuild        bool `json:"canCreateBuild"`
-	CanCreateRelease      bool `json:"canCreateRelease"`
-	CanManageCodeSources  bool `json:"canManageCodeSources"`
-	CanManageStorage      bool `json:"canManageStorage"`
-	CanManageEnvironments bool `json:"canManageEnvironments"`
-	CanManageAccessTokens bool `json:"canManageAccessTokens"`
+	CanCreateApplication   bool `json:"canCreateApplication"`
+	CanManageApplications  bool `json:"canManageApplications"`
+	CanManageModules       bool `json:"canManageModules"`
+	CanCreateBuild         bool `json:"canCreateBuild"`
+	CanCreateRelease       bool `json:"canCreateRelease"`
+	CanManageCodeSources   bool `json:"canManageCodeSources"`
+	CanManageStorage       bool `json:"canManageStorage"`
+	CanManageEnvironments  bool `json:"canManageEnvironments"`
+	CanManageAccessTokens  bool `json:"canManageAccessTokens"`
+	CanManageBuildAdapters bool `json:"canManageBuildAdapters"`
 }
 
 type ApplicationCapabilities struct {
@@ -78,15 +83,16 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 		switch role {
 		case GlobalRoleSuperAdmin:
 			return GlobalCapabilities{
-				CanCreateApplication:  true,
-				CanManageApplications: true,
-				CanManageModules:      true,
-				CanCreateBuild:        true,
-				CanCreateRelease:      true,
-				CanManageCodeSources:  true,
-				CanManageStorage:      true,
-				CanManageEnvironments: true,
-				CanManageAccessTokens: true,
+				CanCreateApplication:   true,
+				CanManageApplications:  true,
+				CanManageModules:       true,
+				CanCreateBuild:         true,
+				CanCreateRelease:       true,
+				CanManageCodeSources:   true,
+				CanManageStorage:       true,
+				CanManageEnvironments:  true,
+				CanManageAccessTokens:  true,
+				CanManageBuildAdapters: true,
 			}
 		case GlobalRolePlatformAdmin:
 			capabilities.CanCreateApplication = true
@@ -97,6 +103,7 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 			capabilities.CanManageStorage = true
 			capabilities.CanManageEnvironments = true
 			capabilities.CanManageAccessTokens = true
+			capabilities.CanManageBuildAdapters = true
 		case GlobalRoleReleaseAdmin:
 			capabilities.CanCreateBuild = true
 			capabilities.CanCreateRelease = true

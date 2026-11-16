@@ -27,6 +27,7 @@ type Dependencies struct {
 	ArtifactService            ArtifactService
 	ArtifactAccessTokenService ArtifactAccessTokenService
 	BuildService               BuildService
+	BuildAdapterService        BuildAdapterService
 	BuildLogService            BuildLogService
 	BuildVariableService       BuildVariableService
 	DashboardService           DashboardService
@@ -194,6 +195,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerApplicationRoutes(protectedAPI, deps.ApplicationService, deps.AuthorizationService)
 	registerBuildRoutes(protectedAPI, deps.BuildService, deps.AuthorizationService)
 	registerBuildLogRoutes(protectedAPI, deps.BuildLogService)
+	registerBuildAdapterRoutes(protectedAPI, deps.BuildAdapterService, deps.AuthorizationService)
 	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, deps.AuthorizationService, cfg.GitHub.InstallRedirectURL)
 	registerDashboardRoutes(protectedAPI, deps.DashboardService)
 	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService, deps.AuthorizationService)

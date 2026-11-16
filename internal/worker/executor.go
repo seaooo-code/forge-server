@@ -21,6 +21,7 @@ import (
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
 	s3infra "forge-server/internal/infra/s3"
+	"forge-server/internal/service"
 )
 
 // RepositoryCredentialsProvider 通过代码源 provider 获取 clone 凭证，由 service.CodeSourceService 实现。
@@ -33,9 +34,19 @@ type BuildVariableResolver interface {
 	ResolveBuildVariables(ctx context.Context, moduleID string, environmentCode string) ([]domain.ModuleBuildVariable, error)
 }
 
+// BuildAdapterProvider 读取构建适配器并把实际使用的版本写回构建记录，由 service.BuildAdapterService 实现。
+type BuildAdapterProvider interface {
+	GetBuildAdapter(ctx context.Context, id string) (domain.BuildAdapter, error)
+	RecordBuildAdapterUsage(ctx context.Context, buildID string, usage domain.BuildAdapterUsage) error
+}
+
 const dockerBuildArtifactDir = "/app/dist"
 
+// renderedDockerfileName 是适配器渲染出的 Dockerfile 文件名，写在构建工作目录（仓库之外）。
+const renderedDockerfileName = "Dockerfile.adapter"
+
 type Executor struct {
+	adapters    BuildAdapterProvider
 	cfg         config.WorkerConfig
 	credentials RepositoryCredentialsProvider
 	variables   BuildVariableResolver
@@ -48,6 +59,7 @@ type Executor struct {
 }
 
 type ExecutorDependencies struct {
+	Adapters    BuildAdapterProvider
 	Credentials RepositoryCredentialsProvider
 	Logs        BuildLogStore
 	Variables   BuildVariableResolver
@@ -61,6 +73,7 @@ type buildWorkspace struct {
 
 func NewExecutor(cfg config.WorkerConfig, deps ExecutorDependencies, logger *slog.Logger) *Executor {
 	return &Executor{
+		adapters:    deps.Adapters,
 		cfg:         cfg,
 		credentials: deps.Credentials,
 		variables:   deps.Variables,
@@ -97,7 +110,18 @@ func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (doma
 
 // execute 按检出、docker 构建、产物校验、生成清单、上传的顺序串行执行，每一步的输出都进入构建日志。
 func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs *buildLogStream) (domain.BuildRecordCompletion, error) {
-	logs.Linef("开始构建 %s：模块 %s，环境 %s，分支 %s", record.ID, record.ModuleID, record.Environment, record.Branch)
+	logs.Linef("开始构建 %s（#%d）：模块 %s，环境 %s，分支 %s", record.ID, record.Number, record.ModuleID, record.Environment, record.Branch)
+
+	// 适配器在构建开始时读取，整个构建使用这一刻的版本；停用的适配器直接失败。
+	var adapter *domain.BuildAdapter
+	if record.BuildMode == domain.BuildModeAdapter {
+		loaded, err := e.loadBuildAdapter(ctx, record)
+		if err != nil {
+			return domain.BuildRecordCompletion{}, err
+		}
+		adapter = &loaded
+		logs.Linef("构建适配器：%s（%s），版本 %d", adapter.Name, adapter.ID, adapter.Version)
+	}
 
 	credentials, err := e.credentials.CloneCredentials(ctx, record.Repository)
 	if err != nil {
@@ -128,6 +152,10 @@ func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs 
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
+	if adapter != nil {
+		// adapter 模式不使用仓库内的 Dockerfile，检出后改为渲染结果。
+		paths.dockerfile = ""
+	}
 
 	commitSHA, err := e.checkoutRepository(ctx, record, credentials, workspace.repoDir, logs)
 	if err != nil {
@@ -137,6 +165,12 @@ func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs 
 
 	if err := verifyDockerBuildPaths(workspace.repoDir, paths); err != nil {
 		return domain.BuildRecordCompletion{}, err
+	}
+	if adapter != nil {
+		paths.dockerfile, err = e.prepareBuildAdapter(ctx, record, *adapter, commitSHA, workspace.rootDir, paths.context, logs)
+		if err != nil {
+			return domain.BuildRecordCompletion{}, err
+		}
 	}
 	buildOptions, buildEnv := dockerBuildVariableOptions(record, commitSHA, variables)
 	if err := e.exportDockerArtifact(ctx, record.ID+"-"+filepath.Base(workspace.rootDir), paths, buildOptions, buildEnv, workspace.outputDir, logs); err != nil {
@@ -175,6 +209,89 @@ func (e *Executor) validateBuildTask(record domain.BuildRecord) error {
 	}
 	if e.credentials == nil {
 		return domain.ErrCodeSourceAuthNotConfigured
+	}
+	if record.BuildMode == domain.BuildModeAdapter && (e.adapters == nil || record.ModuleBuildAdapterID == "") {
+		return domain.ErrInvalidBuildInput
+	}
+	return nil
+}
+
+func (e *Executor) loadBuildAdapter(ctx context.Context, record domain.BuildRecord) (domain.BuildAdapter, error) {
+	adapter, err := e.adapters.GetBuildAdapter(ctx, record.ModuleBuildAdapterID)
+	if err != nil {
+		return domain.BuildAdapter{}, fmt.Errorf("读取构建适配器 %s 失败：%w", record.ModuleBuildAdapterID, err)
+	}
+	if adapter.Status != domain.BuildAdapterStatusActive {
+		return domain.BuildAdapter{}, fmt.Errorf("构建适配器 %s（%s）已停用", adapter.Name, adapter.ID)
+	}
+	return adapter, nil
+}
+
+// prepareBuildAdapter 渲染适配器：Dockerfile 写到仓库之外的工作目录，辅助文件写到 {构建上下文}/.forge/，
+// 并把适配器版本和渲染结果 sha256 写回构建记录。模板上下文不包含构建变量和密钥。返回渲染后 Dockerfile 的绝对路径。
+func (e *Executor) prepareBuildAdapter(ctx context.Context, record domain.BuildRecord, adapter domain.BuildAdapter, commitSHA string, workDir string, contextDir string, logs *buildLogStream) (string, error) {
+	params, err := service.ResolveBuildAdapterParams(adapter.Parameters, record.ModuleBuildAdapterParams, true)
+	if err != nil {
+		return "", fmt.Errorf("构建适配器参数无效：%w", err)
+	}
+	buildTime := time.Now().UTC()
+	if record.StartedAt != nil {
+		buildTime = record.StartedAt.UTC()
+	}
+	rendered, err := service.RenderBuildAdapter(adapter, domain.BuildAdapterRenderContext{
+		Module:      domain.BuildAdapterRenderModule{ID: record.ModuleID, Name: record.ModuleName},
+		Environment: record.Environment,
+		Branch:      record.Branch,
+		CommitSHA:   commitSHA,
+		Build:       domain.BuildAdapterRenderBuild{ID: record.ID, Number: record.Number, Time: buildTime.Format(time.RFC3339)},
+		Params:      params,
+	})
+	if err != nil {
+		return "", fmt.Errorf("渲染构建适配器失败：%w", err)
+	}
+	logs.Linef("构建适配器渲染完成：Dockerfile sha256 %s，辅助文件 %d 个", rendered.DockerfileSHA256, len(rendered.Files))
+
+	if err := e.adapters.RecordBuildAdapterUsage(ctx, record.ID, domain.BuildAdapterUsage{
+		AdapterID:                adapter.ID,
+		AdapterVersion:           adapter.Version,
+		RenderedDockerfileSHA256: rendered.DockerfileSHA256,
+	}); err != nil {
+		return "", fmt.Errorf("记录构建适配器版本失败：%w", err)
+	}
+
+	if err := writeBuildAdapterFiles(contextDir, rendered.Files); err != nil {
+		return "", err
+	}
+	dockerfile := filepath.Join(workDir, renderedDockerfileName)
+	if err := os.WriteFile(dockerfile, []byte(rendered.Dockerfile), 0o644); err != nil {
+		return "", fmt.Errorf("写入渲染后的 Dockerfile 失败：%w", err)
+	}
+	return dockerfile, nil
+}
+
+// writeBuildAdapterFiles 把辅助文件写到 {构建上下文}/.forge/。仓库里已有 .forge（包括同名文件或软链）时失败，
+// 避免覆盖仓库内容；.forge 由 worker 新建，内部不会有仓库带来的软链。适配器没有辅助文件时不创建目录。
+func writeBuildAdapterFiles(contextDir string, files map[string]string) error {
+	if len(files) == 0 {
+		return nil
+	}
+	forgeDir := filepath.Join(contextDir, domain.BuildAdapterFilesDir)
+	if _, err := os.Lstat(forgeDir); err == nil {
+		return fmt.Errorf("构建上下文中已存在 %s，构建适配器的辅助文件不能覆盖仓库内容", domain.BuildAdapterFilesDir)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("检查 %s 目录失败：%w", domain.BuildAdapterFilesDir, err)
+	}
+	for filePath, content := range files {
+		if !domain.IsValidBuildAdapterFilePath(filePath) {
+			return fmt.Errorf("构建适配器辅助文件路径 %q 无效", filePath)
+		}
+		target := filepath.Join(forgeDir, filepath.FromSlash(filePath))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("创建辅助文件目录失败：%w", err)
+		}
+		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("写入辅助文件 %s 失败：%w", filePath, err)
+		}
 	}
 	return nil
 }

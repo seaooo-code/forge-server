@@ -13,12 +13,12 @@ var (
 
 // 构建产物平台，即 dist/ 下的一级目录名。新增平台只需要在这里追加常量和列表。
 const (
-	PlatformAndroid = "android"
-	PlatformIOS     = "ios"
-	PlatformHarmony = "harmony"
+	PlatformAndroid   = "android"
+	PlatformIOS       = "ios"
+	PlatformHarmonyOS = "harmonyos"
 )
 
-var BuildPlatforms = []string{PlatformAndroid, PlatformIOS, PlatformHarmony}
+var BuildPlatforms = []string{PlatformAndroid, PlatformIOS, PlatformHarmonyOS}
 
 const (
 	ForgeManifestFileName   = "forge.json"

@@ -53,12 +53,16 @@ type moduleResponse struct {
 }
 
 type moduleBuildConfigResponse struct {
-	AutoBuildBranches    []string `json:"autoBuildBranches"`
-	AutoBuildEnvironment string   `json:"autoBuildEnvironment"`
-	AutoPreviewRelease   bool     `json:"autoPreviewRelease"`
-	AutoPreviewTTLHours  int      `json:"autoPreviewTtlHours"`
-	BuildContext         string   `json:"buildContext"`
-	DockerfilePath       string   `json:"dockerfilePath"`
+	BuildMode            string            `json:"buildMode"`
+	BuildAdapterID       string            `json:"buildAdapterId"`
+	BuildAdapterName     string            `json:"buildAdapterName"`
+	BuildAdapterParams   map[string]string `json:"buildAdapterParams"`
+	AutoBuildBranches    []string          `json:"autoBuildBranches"`
+	AutoBuildEnvironment string            `json:"autoBuildEnvironment"`
+	AutoPreviewRelease   bool              `json:"autoPreviewRelease"`
+	AutoPreviewTTLHours  int               `json:"autoPreviewTtlHours"`
+	BuildContext         string            `json:"buildContext"`
+	DockerfilePath       string            `json:"dockerfilePath"`
 }
 
 type moduleSummaryResponse struct {
@@ -92,12 +96,15 @@ type moduleRepositoryRequest struct {
 }
 
 type moduleBuildConfigRequest struct {
-	AutoBuildBranches    []string `json:"autoBuildBranches"`
-	AutoBuildEnvironment string   `json:"autoBuildEnvironment"`
-	AutoPreviewRelease   bool     `json:"autoPreviewRelease"`
-	AutoPreviewTTLHours  int      `json:"autoPreviewTtlHours"`
-	BuildContext         string   `json:"buildContext"`
-	DockerfilePath       string   `json:"dockerfilePath"`
+	BuildMode            string            `json:"buildMode"`
+	BuildAdapterID       string            `json:"buildAdapterId"`
+	BuildAdapterParams   map[string]string `json:"buildAdapterParams"`
+	AutoBuildBranches    []string          `json:"autoBuildBranches"`
+	AutoBuildEnvironment string            `json:"autoBuildEnvironment"`
+	AutoPreviewRelease   bool              `json:"autoPreviewRelease"`
+	AutoPreviewTTLHours  int               `json:"autoPreviewTtlHours"`
+	BuildContext         string            `json:"buildContext"`
+	DockerfilePath       string            `json:"dockerfilePath"`
 }
 
 func registerModuleRoutes(group *echo.Group, service ModuleService, authService AuthorizationService) {
@@ -232,6 +239,9 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 			ExternalRepositoryID: request.Repository.ExternalRepositoryID,
 		},
 		BuildConfig: domain.ModuleBuildConfig{
+			BuildMode:            domain.BuildMode(request.BuildConfig.BuildMode),
+			BuildAdapterID:       request.BuildConfig.BuildAdapterID,
+			BuildAdapterParams:   request.BuildConfig.BuildAdapterParams,
 			AutoBuildBranches:    request.BuildConfig.AutoBuildBranches,
 			AutoBuildEnvironment: request.BuildConfig.AutoBuildEnvironment,
 			AutoPreviewRelease:   request.BuildConfig.AutoPreviewRelease,
@@ -265,6 +275,11 @@ func moduleErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "common module must belong to same application"})
 	case errors.Is(err, domain.ErrInvalidModuleInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid module request"})
+	case errors.Is(err, domain.ErrBuildAdapterDisabled):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "build adapter is disabled"})
+	case errors.Is(err, domain.ErrInvalidBuildAdapterInput):
+		// 参数校验错误带有具体原因（缺少必填、未声明参数、key 非法），直接返回给控制台。
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case errors.Is(err, domain.ErrCodeSourceConnectionInactive):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "code source connection is not active"})
 	case errors.Is(err, domain.ErrForbidden):
@@ -288,6 +303,10 @@ func newModuleResponse(module domain.Module) moduleResponse {
 		ApplicationName: module.ApplicationName,
 		ApplicationSlug: module.ApplicationSlug,
 		BuildConfig: moduleBuildConfigResponse{
+			BuildMode:            string(moduleBuildMode(module.BuildConfig.BuildMode)),
+			BuildAdapterID:       module.BuildConfig.BuildAdapterID,
+			BuildAdapterName:     module.BuildConfig.BuildAdapterName,
+			BuildAdapterParams:   nonNilStringMap(module.BuildConfig.BuildAdapterParams),
 			AutoBuildBranches:    nonNilStrings(module.BuildConfig.AutoBuildBranches),
 			AutoBuildEnvironment: module.BuildConfig.AutoBuildEnvironment,
 			AutoPreviewRelease:   module.BuildConfig.AutoPreviewRelease,
@@ -324,4 +343,19 @@ func newModuleSummaryResponse(summary domain.ModuleSummary) moduleSummaryRespons
 		Feature: summary.Feature,
 		Total:   summary.Total,
 	}
+}
+
+func moduleBuildMode(mode domain.BuildMode) domain.BuildMode {
+	if mode == "" {
+		return domain.BuildModeDockerfile
+	}
+	return mode
+}
+
+// nonNilStringMap 让空 map 序列化为 {} 而不是 null。
+func nonNilStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }

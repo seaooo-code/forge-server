@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -24,7 +25,7 @@ func NewBuildRepository(pool *pgxpool.Pool) *BuildRepository {
 
 func (r *BuildRepository) CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
 	for attempt := 0; attempt < 3; attempt++ {
-		record, err := r.createBuildRecord(ctx, r.pool, newBuildRecordID(), input)
+		record, err := r.createBuildRecordInTx(ctx, newBuildRecordID(), input)
 		if err == nil {
 			return record, nil
 		}
@@ -34,6 +35,43 @@ func (r *BuildRepository) CreateBuildRecord(ctx context.Context, input domain.Bu
 		return domain.BuildRecord{}, err
 	}
 	return domain.BuildRecord{}, fmt.Errorf("insert build record: id conflict")
+}
+
+// createBuildRecordInTx 在独立事务里创建构建记录：构建号分配用的 advisory lock 是事务级的，必须包在事务里。
+func (r *BuildRepository) createBuildRecordInTx(ctx context.Context, id string, input domain.BuildRecordInput) (domain.BuildRecord, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("begin create build record: %w", err)
+	}
+	defer rollbackMigration(ctx, tx)
+
+	record, err := r.createBuildRecord(ctx, tx, id, input)
+	if err != nil {
+		return domain.BuildRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("commit create build record: %w", err)
+	}
+	return record, nil
+}
+
+// RecordBuildAdapterUsage 由 worker 在渲染适配器后写回所用适配器版本和渲染后 Dockerfile 的 sha256。
+func (r *BuildRepository) RecordBuildAdapterUsage(ctx context.Context, id string, usage domain.BuildAdapterUsage) error {
+	tag, err := r.pool.Exec(ctx, `
+		update build_records set
+			build_adapter_id = $2,
+			build_adapter_version = $3,
+			rendered_dockerfile_sha256 = $4,
+			updated_at = now()
+		where id = $1
+	`, id, usage.AdapterID, usage.AdapterVersion, usage.RenderedDockerfileSHA256)
+	if err != nil {
+		return fmt.Errorf("record build adapter usage: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrBuildRecordNotFound
+	}
+	return nil
 }
 
 // CreateBuildRecordUnlessActive 用于 webhook 幂等创建构建：同一 (module_id, environment_code, commit_sha)
@@ -88,12 +126,37 @@ func (r *BuildRepository) CreateBuildRecordUnlessActive(ctx context.Context, inp
 	return record, true, nil
 }
 
-type buildRecordQuerier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
+// createBuildRecord 必须在事务内调用：
+//  1. 模块使用已停用的构建适配器时拒绝创建（ErrBuildAdapterDisabled），覆盖手动与 webhook 构建；
+//  2. 以模块为粒度取事务级 advisory lock，再用 max(number)+1 分配构建号。锁在提交后释放，
+//     下一个事务的 insert 语句快照晚于上一个事务提交，能看到已分配的构建号；(module_id, number) 唯一约束兜底。
+//
+// 与 CreateBuildRecordUnlessActive 一起使用时，先取 commit 锁再取构建号锁，所有路径加锁顺序一致，不会死锁。
+func (r *BuildRepository) createBuildRecord(ctx context.Context, tx pgx.Tx, id string, input domain.BuildRecordInput) (domain.BuildRecord, error) {
+	var buildMode domain.BuildMode
+	var adapterStatus string
+	err := tx.QueryRow(ctx, `
+		select m.build_mode, coalesce(ba.status, '')
+		from modules m
+		left join build_adapters ba on ba.id = m.build_adapter_id
+		where m.id = $1
+	`, input.ModuleID).Scan(&buildMode, &adapterStatus)
+	switch {
+	case err == nil:
+		if buildMode == domain.BuildModeAdapter && adapterStatus != string(domain.BuildAdapterStatusActive) {
+			return domain.BuildRecord{}, domain.ErrBuildAdapterDisabled
+		}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return domain.BuildRecord{}, fmt.Errorf("query module build mode: %w", err)
+	}
 
-func (r *BuildRepository) createBuildRecord(ctx context.Context, querier buildRecordQuerier, id string, input domain.BuildRecordInput) (domain.BuildRecord, error) {
-	record, err := scanBuildRecord(querier.QueryRow(ctx, `
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(hashtextextended('build_records:number:' || $1, 0))
+	`, input.ModuleID); err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("lock build record number: %w", err)
+	}
+
+	record, err := scanBuildRecord(tx.QueryRow(ctx, `
 		with selected_module as (
 			select m.*
 			from modules m
@@ -108,6 +171,7 @@ func (r *BuildRepository) createBuildRecord(ctx context.Context, querier buildRe
 			insert into build_records (
 				id,
 				module_id,
+				number,
 				environment_code,
 				storage_configuration_id,
 				branch,
@@ -120,6 +184,7 @@ func (r *BuildRepository) createBuildRecord(ctx context.Context, querier buildRe
 			select
 				$1,
 				m.id,
+				(select coalesce(max(existing.number), 0) + 1 from build_records existing where existing.module_id = m.id),
 				e.code,
 				e.storage_configuration_id,
 				coalesce(nullif($4, ''), m.default_branch),
@@ -361,6 +426,7 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 	return `
 		select
 			br.id,
+			br.number,
 			a.name as application_name,
 			br.module_id,
 			m.name as module_name,
@@ -374,6 +440,12 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			m.repository_clone_url,
 			m.dockerfile_path,
 			m.build_context,
+			m.build_mode,
+			coalesce(m.build_adapter_id, ''),
+			m.build_adapter_params,
+			coalesce(br.build_adapter_id, ''),
+			br.build_adapter_version,
+			br.rendered_dockerfile_sha256,
 			br.branch,
 			br.commit_sha,
 			br.runtime_version,
@@ -415,8 +487,10 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	var startedAt sql.NullTime
 	var finishedAt sql.NullTime
 	var createdByName, createdByAvatarURL string
+	var moduleAdapterParams []byte
 	if err := row.Scan(
 		&record.ID,
+		&record.Number,
 		&record.ApplicationName,
 		&record.ModuleID,
 		&record.ModuleName,
@@ -430,6 +504,12 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.Repository.CloneURL,
 		&record.DockerfilePath,
 		&record.BuildContext,
+		&record.BuildMode,
+		&record.ModuleBuildAdapterID,
+		&moduleAdapterParams,
+		&record.BuildAdapterID,
+		&record.BuildAdapterVersion,
+		&record.RenderedDockerfileSHA256,
 		&record.Branch,
 		&record.CommitSHA,
 		&record.RuntimeVersion,
@@ -468,6 +548,10 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		return domain.BuildRecord{}, fmt.Errorf("scan build record: %w", err)
 	}
 	record.Repository.DefaultBranch = record.DefaultBranch
+	record.ModuleBuildAdapterParams = map[string]string{}
+	if err := json.Unmarshal(moduleAdapterParams, &record.ModuleBuildAdapterParams); err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("decode module build adapter params: %w", err)
+	}
 	if record.CreatedByUserID != "" {
 		record.CreatedBy = &domain.UserSummary{ID: record.CreatedByUserID, Name: createdByName, AvatarURL: createdByAvatarURL}
 	}

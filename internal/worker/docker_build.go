@@ -60,7 +60,7 @@ func resolveDockerBuildPaths(repoDir string, dockerfilePath string, buildContext
 }
 
 // verifyDockerBuildPaths 在检出后确认 Dockerfile 是文件、构建上下文是目录，并且解析软链后仍在仓库内，
-// 防止仓库用软链把宿主机目录作为构建上下文发送给 docker。
+// 防止仓库用软链把宿主机目录作为构建上下文发送给 docker。dockerfile 为空（adapter 模式）时只校验构建上下文。
 func verifyDockerBuildPaths(repoDir string, paths dockerBuildPaths) error {
 	realRepo, err := filepath.EvalSymlinks(repoDir)
 	if err != nil {
@@ -74,6 +74,9 @@ func verifyDockerBuildPaths(repoDir string, paths dockerBuildPaths) error {
 		{label: "Dockerfile", path: paths.dockerfile},
 		{label: "构建上下文", path: paths.context, wantDir: true},
 	} {
+		if item.path == "" {
+			continue
+		}
 		relative, _ := filepath.Rel(repoDir, item.path)
 		realPath, err := filepath.EvalSymlinks(item.path)
 		if err != nil {

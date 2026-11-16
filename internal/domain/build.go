@@ -27,16 +27,26 @@ const (
 )
 
 type BuildRecord struct {
-	ID                       string
-	ApplicationName          string
-	ModuleID                 string
-	ModuleName               string
-	Environment              string
-	EnvironmentName          string
-	CodeSourceProvider       CodeSourceProvider
-	Repository               ModuleRepository
-	DockerfilePath           string
-	BuildContext             string
+	ID string
+	// Number 是模块内单调递增的构建号。
+	Number             int64
+	ApplicationName    string
+	ModuleID           string
+	ModuleName         string
+	Environment        string
+	EnvironmentName    string
+	CodeSourceProvider CodeSourceProvider
+	Repository         ModuleRepository
+	DockerfilePath     string
+	BuildContext       string
+	// BuildMode、ModuleBuildAdapterID、ModuleBuildAdapterParams 来自模块当前配置，worker 据此选择构建方式。
+	BuildMode                BuildMode
+	ModuleBuildAdapterID     string
+	ModuleBuildAdapterParams map[string]string
+	// BuildAdapterID、BuildAdapterVersion、RenderedDockerfileSHA256 是 worker 实际使用的适配器版本与渲染结果，Dockerfile 构建为空。
+	BuildAdapterID           string
+	BuildAdapterVersion      *int
+	RenderedDockerfileSHA256 string
 	Branch                   string
 	CommitSHA                string
 	RuntimeVersion           string

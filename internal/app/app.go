@@ -95,7 +95,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	buildVariableService := service.NewBuildVariableService(postgres.NewBuildVariableRepository(postgresPool), buildVariableSecrets)
 	buildLogService := service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool))
 	moduleRepository := postgres.NewModuleRepository(postgresPool)
-	moduleService := service.NewModuleService(moduleRepository, codeSourceRepository, cfg.Worker.Dockerfile)
+	buildAdapterRepository := postgres.NewBuildAdapterRepository(postgresPool)
+	moduleService := service.NewModuleService(moduleRepository, codeSourceRepository, cfg.Worker.Dockerfile).
+		WithBuildAdapters(buildAdapterRepository)
+	buildAdapterService := service.NewBuildAdapterService(service.BuildAdapterServiceDependencies{
+		Modules:    moduleRepository,
+		Repository: buildAdapterRepository,
+	})
 	artifactManifestReader := s3infra.NewManifestReader()
 	artifactObjectReader := s3infra.NewObjectReader()
 	buildService := service.NewBuildServiceWithManifestReader(buildRepository, artifactManifestReader).WithSucceededHook(buildTriggerService)
@@ -128,6 +134,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ArtifactAccessTokenService: artifactAccessTokenService,
 		AuthorizationService:       authorizationService,
 		BuildService:               buildService,
+		BuildAdapterService:        buildAdapterService,
 		BuildLogService:            buildLogService,
 		BuildVariableService:       buildVariableService,
 		DashboardService:           dashboardService,

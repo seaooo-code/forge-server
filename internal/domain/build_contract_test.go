@@ -19,12 +19,12 @@ func TestIsValidRuntimeVersion(t *testing.T) {
 }
 
 func TestIsValidPlatform(t *testing.T) {
-	for _, platform := range []string{"android", "ios", "harmony"} {
+	for _, platform := range []string{"android", "ios", "harmonyos"} {
 		if !IsValidPlatform(platform) {
 			t.Fatalf("expected %q to be valid", platform)
 		}
 	}
-	for _, platform := range []string{"", "Android", "iOS", "web", "harmonyos"} {
+	for _, platform := range []string{"", "Android", "iOS", "web", "harmony", "HarmonyOS"} {
 		if IsValidPlatform(platform) {
 			t.Fatalf("expected %q to be invalid", platform)
 		}

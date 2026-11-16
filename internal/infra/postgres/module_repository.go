@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -136,9 +137,12 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 			auto_build_environment_code,
 			auto_preview_release,
 			auto_preview_ttl_hours,
+			build_mode,
+			build_adapter_id,
+			build_adapter_params,
 			sort_order
 		) values (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb,
 			coalesce((select max(sort_order) + 10 from modules), 10)
 		)
 	`, moduleWriteArgs(input.ID, input)...); err != nil {
@@ -219,6 +223,9 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 			auto_build_environment_code = $16,
 			auto_preview_release = $17,
 			auto_preview_ttl_hours = $18,
+			build_mode = $19,
+			build_adapter_id = $20,
+			build_adapter_params = $21::jsonb,
 			updated_at = now()
 		where id = $1
 	`, moduleWriteArgs(id, input)...); err != nil {
@@ -328,19 +335,25 @@ func moduleSelectSQL() string {
 			coalesce(m.auto_build_environment_code, '') as auto_build_environment_code,
 			m.auto_preview_release,
 			m.auto_preview_ttl_hours,
+			m.build_mode,
+			coalesce(m.build_adapter_id, ''),
+			coalesce(ba.name, ''),
+			m.build_adapter_params,
 			m.created_at,
 			m.updated_at
 		from modules m
 		join applications a on a.id = m.application_id
 		join users u on u.id = m.owner_user_id
 		join code_source_connections csc on csc.id = m.code_source_connection_id
-		left join modules cm on cm.id = m.common_module_id`
+		left join modules cm on cm.id = m.common_module_id
+		left join build_adapters ba on ba.id = m.build_adapter_id`
 }
 
 func scanModule(row moduleRow) (domain.Module, error) {
 	var module domain.Module
 	var commonModuleID *string
 	var commonModuleName *string
+	var buildAdapterParams []byte
 	if err := row.Scan(
 		&module.ID,
 		&module.Name,
@@ -369,6 +382,10 @@ func scanModule(row moduleRow) (domain.Module, error) {
 		&module.BuildConfig.AutoBuildEnvironment,
 		&module.BuildConfig.AutoPreviewRelease,
 		&module.BuildConfig.AutoPreviewTTLHours,
+		&module.BuildConfig.BuildMode,
+		&module.BuildConfig.BuildAdapterID,
+		&module.BuildConfig.BuildAdapterName,
+		&buildAdapterParams,
 		&module.CreatedAt,
 		&module.UpdatedAt,
 	); err != nil {
@@ -376,6 +393,10 @@ func scanModule(row moduleRow) (domain.Module, error) {
 			return domain.Module{}, domain.ErrModuleNotFound
 		}
 		return domain.Module{}, fmt.Errorf("scan module: %w", err)
+	}
+	module.BuildConfig.BuildAdapterParams = map[string]string{}
+	if err := json.Unmarshal(buildAdapterParams, &module.BuildConfig.BuildAdapterParams); err != nil {
+		return domain.Module{}, fmt.Errorf("decode module build adapter params: %w", err)
 	}
 	if commonModuleID != nil {
 		module.CommonModuleID = *commonModuleID
@@ -399,8 +420,22 @@ func moduleOwnerUser(input domain.ModuleInput) domain.UserInput {
 	}
 }
 
-// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$18）组织参数。
+// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$21）组织参数。
 func moduleWriteArgs(id string, input domain.ModuleInput) []any {
+	buildMode := input.BuildConfig.BuildMode
+	if buildMode == "" {
+		buildMode = domain.BuildModeDockerfile
+	}
+	var buildAdapterID *string
+	if input.BuildConfig.BuildAdapterID != "" {
+		buildAdapterID = &input.BuildConfig.BuildAdapterID
+	}
+	buildAdapterParams := input.BuildConfig.BuildAdapterParams
+	if buildAdapterParams == nil {
+		buildAdapterParams = map[string]string{}
+	}
+	// map[string]string 编码不会失败。
+	buildAdapterParamsJSON, _ := json.Marshal(buildAdapterParams)
 	var autoBuildEnvironment *string
 	if input.BuildConfig.AutoBuildEnvironment != "" {
 		autoBuildEnvironment = &input.BuildConfig.AutoBuildEnvironment
@@ -428,6 +463,9 @@ func moduleWriteArgs(id string, input domain.ModuleInput) []any {
 		autoBuildEnvironment,
 		input.BuildConfig.AutoPreviewRelease,
 		input.BuildConfig.AutoPreviewTTLHours,
+		string(buildMode),
+		buildAdapterID,
+		string(buildAdapterParamsJSON),
 	}
 }
 

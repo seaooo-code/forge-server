@@ -64,6 +64,11 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 		return nil, fmt.Errorf("initialize secretbox: %w", err)
 	}
 	executor := worker.NewExecutor(cfg.Worker, worker.ExecutorDependencies{
+		// 构建适配器：读取适配器，渲染后把版本和 sha256 写回构建记录。
+		Adapters: service.NewBuildAdapterService(service.BuildAdapterServiceDependencies{
+			Repository: postgres.NewBuildAdapterRepository(postgresPool),
+			Usage:      buildRepository,
+		}),
 		Credentials: codeSourceService,
 		Logs:        service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool)),
 		Variables:   service.NewBuildVariableService(postgres.NewBuildVariableRepository(postgresPool), buildVariableSecrets),

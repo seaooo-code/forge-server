@@ -143,7 +143,8 @@ func TestBuildTriggerCreatesPreviewReleaseAfterWebhookBuild(t *testing.T) {
 	modules := &fakeAutoBuildModuleRepository{modules: []domain.Module{module}}
 	releases := &fakePreviewReleaseCreator{}
 	trigger := newTestBuildTriggerService(modules, newFakeWebhookBuildRepository(), releases)
-	now := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	// 预览有效期由发布服务按真实时间校验，这里不能写死日期，否则测试会随日历过期。
+	now := time.Now().UTC().Truncate(time.Second)
 	trigger.now = func() time.Time { return now }
 
 	trigger.HandleBuildSucceeded(context.Background(), testSucceededWebhookBuild())
@@ -335,4 +336,21 @@ type succeededBuildRepository struct {
 
 func (r *succeededBuildRepository) CompleteBuildRecord(context.Context, string, domain.BuildRecordCompletion) (domain.BuildRecord, error) {
 	return r.record, nil
+}
+
+func TestBuildTriggerSkipsModulesWithDisabledAdapter(t *testing.T) {
+	modules := &fakeAutoBuildModuleRepository{modules: []domain.Module{
+		testAutoBuildModule("module-disabled-adapter", []string{"main"}, "qa"),
+	}}
+	builds := newFakeWebhookBuildRepository()
+	builds.failModules = map[string]error{"module-disabled-adapter": domain.ErrBuildAdapterDisabled}
+	trigger := newTestBuildTriggerService(modules, builds, nil)
+
+	result, err := trigger.HandlePushEvent(context.Background(), testPushEvent("main", "abc123"))
+	if err != nil {
+		t.Fatalf("expected disabled adapter to be skipped without webhook retry, got %v", err)
+	}
+	if len(result.CreatedBuildIDs) != 0 || len(result.DuplicateBuildIDs) != 0 {
+		t.Fatalf("expected no builds, got %#v", result)
+	}
 }

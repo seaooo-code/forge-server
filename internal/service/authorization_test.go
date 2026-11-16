@@ -176,3 +176,30 @@ func TestAuthorizationServiceCodeSourceUseWithoutApplication(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthorizationServiceBuildAdapterActions(t *testing.T) {
+	tests := []struct {
+		name    string
+		roles   []domain.GlobalRole
+		appRole domain.ApplicationMemberRole
+		action  domain.AuthorizationAction
+		wantErr error
+	}{
+		{name: "super admin can manage adapters", roles: []domain.GlobalRole{domain.GlobalRoleSuperAdmin}, action: domain.ActionBuildAdapterManage},
+		{name: "platform admin can manage adapters", roles: []domain.GlobalRole{domain.GlobalRolePlatformAdmin}, action: domain.ActionBuildAdapterManage},
+		{name: "release admin cannot manage adapters", roles: []domain.GlobalRole{domain.GlobalRoleReleaseAdmin}, action: domain.ActionBuildAdapterManage, wantErr: domain.ErrForbidden},
+		{name: "owner cannot manage adapters", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionBuildAdapterManage, wantErr: domain.ErrForbidden},
+		{name: "owner can use adapters", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionBuildAdapterUse},
+		{name: "developer cannot use adapters", appRole: domain.ApplicationMemberRoleDeveloper, action: domain.ActionBuildAdapterUse, wantErr: domain.ErrForbidden},
+		{name: "plain user cannot use adapters", action: domain.ActionBuildAdapterUse, wantErr: domain.ErrForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewAuthorizationService(&fakeAuthorizationRepository{appRole: tt.appRole, globalRoles: tt.roles})
+			err := service.Authorize(context.Background(), "ou-user-1", tt.action, domain.AuthorizationResource{})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}

@@ -1215,7 +1215,7 @@
             "enum": [
               "android",
               "ios",
-              "harmony"
+              "harmonyos"
             ],
             "type": "string"
           },
@@ -1270,6 +1270,373 @@
           "name",
           "kind",
           "reason"
+        ],
+        "type": "object"
+      },
+      "BuildAdapter": {
+        "properties": {
+          "createdAt": {
+            "description": "Creation time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserSummary"
+              }
+            ],
+            "description": "Creator.",
+            "nullable": true
+          },
+          "createdByUserId": {
+            "description": "Creator user id.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Build adapter description.",
+            "type": "string"
+          },
+          "dockerfileTemplate": {
+            "description": "Dockerfile template using Go text/template syntax.",
+            "type": "string"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Helper file templates keyed by path relative to the .forge/ directory of the build context.",
+            "type": "object"
+          },
+          "id": {
+            "description": "Build adapter id.",
+            "type": "string"
+          },
+          "moduleCount": {
+            "description": "Number of modules referencing this adapter.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Build adapter display name.",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/BuildAdapterParameter"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "Build adapter status. Disabled adapters cannot be selected and referencing modules cannot start new builds.",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last update time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "updatedBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserSummary"
+              }
+            ],
+            "description": "Last updater.",
+            "nullable": true
+          },
+          "updatedByUserId": {
+            "description": "Last updater user id.",
+            "type": "string"
+          },
+          "version": {
+            "description": "Version, incremented by every update.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "dockerfileTemplate",
+          "files",
+          "parameters",
+          "version",
+          "status",
+          "moduleCount",
+          "createdByUserId",
+          "createdBy",
+          "updatedByUserId",
+          "updatedBy",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterCreateRequest": {
+        "properties": {
+          "description": {
+            "description": "Description, at most 2000 characters.",
+            "type": "string"
+          },
+          "dockerfileTemplate": {
+            "description": "Dockerfile template, at most 64 KiB. Only default, quote, join, lower, upper, trim, replace and the and/or/not/eq/ne/lt/le/gt/ge builtins are allowed; define/template/block are rejected and range only accepts context fields or variables.",
+            "type": "string"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Helper file templates, at most 20 files of 64 KiB each. Keys are clean relative paths without .. and are written under .forge/ of the build context. Replaces all files when provided.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Display name, at most 100 characters.",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/BuildAdapterParameter"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "dockerfileTemplate"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterDetailResponse": {
+        "properties": {
+          "buildAdapter": {
+            "$ref": "#/components/schemas/BuildAdapter"
+          }
+        },
+        "required": [
+          "buildAdapter"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterDraftRenderPreviewRequest": {
+        "properties": {
+          "dockerfileTemplate": {
+            "description": "Draft Dockerfile template. Validated with the same rules as saving.",
+            "type": "string"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Draft helper file templates keyed by path relative to .forge/.",
+            "type": "object"
+          },
+          "moduleId": {
+            "description": "Module used for the render context. Omit to use a sample context.",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/BuildAdapterParameter"
+            },
+            "type": "array"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Parameter values, validated strictly against the draft parameters. Omit to use the parameters saved on the module; keys not declared in the draft are ignored.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "dockerfileTemplate"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterErrorResponse": {
+        "properties": {
+          "error": {
+            "description": "Error message.",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based template line of the error.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "template": {
+            "description": "Template that failed: Dockerfile or a helper file path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterParameter": {
+        "properties": {
+          "default": {
+            "description": "Default value used when the module leaves the parameter empty.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Parameter description.",
+            "type": "string"
+          },
+          "key": {
+            "description": "Parameter key, matching ^[a-zA-Z][a-zA-Z0-9_]{0,63}$. Referenced in templates as .Params.\u003ckey\u003e.",
+            "type": "string"
+          },
+          "label": {
+            "description": "Display label. Defaults to the key.",
+            "type": "string"
+          },
+          "required": {
+            "description": "Whether modules must provide a non-empty value (or the default is non-empty).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "description",
+          "required",
+          "default"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterRenderError": {
+        "properties": {
+          "line": {
+            "description": "1-based template line. 0 when unknown.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "message": {
+            "description": "Error message.",
+            "type": "string"
+          },
+          "template": {
+            "description": "Template that failed: Dockerfile or a helper file path. Empty for parameter errors.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "template",
+          "line"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterRenderPreviewRequest": {
+        "properties": {
+          "moduleId": {
+            "description": "Module used for the render context. Omit to use a sample context.",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Parameter values. Omit to use the parameters saved on the module (when it references this adapter).",
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "BuildAdapterRenderPreviewResponse": {
+        "properties": {
+          "dockerfile": {
+            "description": "Rendered Dockerfile.",
+            "type": "string"
+          },
+          "dockerfileSha256": {
+            "description": "SHA-256 of the rendered Dockerfile.",
+            "type": "string"
+          },
+          "error": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BuildAdapterRenderError"
+              }
+            ],
+            "description": "Render or parameter error. Null on success.",
+            "nullable": true
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Rendered helper files keyed by path relative to .forge/.",
+            "type": "object"
+          },
+          "ok": {
+            "description": "Whether rendering succeeded.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "dockerfile",
+          "dockerfileSha256",
+          "files",
+          "error"
+        ],
+        "type": "object"
+      },
+      "BuildAdapterUpdateRequest": {
+        "properties": {
+          "description": {
+            "description": "Description, at most 2000 characters.",
+            "type": "string"
+          },
+          "dockerfileTemplate": {
+            "description": "Dockerfile template, at most 64 KiB. Only default, quote, join, lower, upper, trim, replace and the and/or/not/eq/ne/lt/le/gt/ge builtins are allowed; define/template/block are rejected and range only accepts context fields or variables.",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "description": "Version the editor loaded. When set and different from the current version, the update is rejected with 409.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Helper file templates, at most 20 files of 64 KiB each. Keys are clean relative paths without .. and are written under .forge/ of the build context. Replaces all files when provided.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Display name, at most 100 characters.",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/BuildAdapterParameter"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "BuildAdaptersResponse": {
+        "properties": {
+          "buildAdapters": {
+            "items": {
+              "$ref": "#/components/schemas/BuildAdapter"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "buildAdapters"
         ],
         "type": "object"
       },
@@ -1407,6 +1774,16 @@
             "description": "Git branch selected for this build record.",
             "type": "string"
           },
+          "buildAdapterId": {
+            "description": "Build adapter used by an adapter build. Empty for Dockerfile builds or before rendering.",
+            "type": "string"
+          },
+          "buildAdapterVersion": {
+            "description": "Build adapter version used by an adapter build.",
+            "format": "int32",
+            "nullable": true,
+            "type": "integer"
+          },
           "codeSourceConnectionId": {
             "description": "Code source connection id of the module repository.",
             "type": "string"
@@ -1471,8 +1848,13 @@
             "description": "Module display name.",
             "type": "string"
           },
+          "number": {
+            "description": "Build number, increasing within the module.",
+            "format": "int64",
+            "type": "integer"
+          },
           "platforms": {
-            "description": "Platform directories produced by the build: android, ios, harmony.",
+            "description": "Platform directories produced by the build: android, ios, harmonyos.",
             "items": {
               "type": "string"
             },
@@ -1481,6 +1863,10 @@
           "queuedAt": {
             "description": "Build queue time.",
             "format": "date-time",
+            "type": "string"
+          },
+          "renderedDockerfileSha256": {
+            "description": "SHA-256 of the rendered Dockerfile for adapter builds. Empty for Dockerfile builds.",
             "type": "string"
           },
           "repositoryFullName": {
@@ -1559,6 +1945,7 @@
         },
         "required": [
           "id",
+          "number",
           "applicationName",
           "moduleId",
           "moduleName",
@@ -2913,6 +3300,10 @@
             "description": "Whether current user can manage applications globally.",
             "type": "boolean"
           },
+          "canManageBuildAdapters": {
+            "description": "Whether current user can create, edit, disable and enable build adapters.",
+            "type": "boolean"
+          },
           "canManageCodeSources": {
             "description": "Whether current user can manage code source integrations.",
             "type": "boolean"
@@ -2939,7 +3330,8 @@
           "canManageCodeSources",
           "canManageStorage",
           "canManageEnvironments",
-          "canManageAccessTokens"
+          "canManageAccessTokens",
+          "canManageBuildAdapters"
         ],
         "type": "object"
       },
@@ -3102,12 +3494,35 @@
             "format": "int32",
             "type": "integer"
           },
+          "buildAdapterId": {
+            "description": "Build adapter id. Required in adapter mode and must be empty in dockerfile mode. A newly selected adapter must be active.",
+            "type": "string"
+          },
+          "buildAdapterName": {
+            "description": "Build adapter display name. Read only.",
+            "type": "string"
+          },
+          "buildAdapterParams": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Build adapter parameter values keyed by parameter key. Validated against the adapter parameter definitions: required parameters need a value and undeclared keys are rejected. Must be empty in dockerfile mode. Do not put secrets here; use build variables.",
+            "type": "object"
+          },
           "buildContext": {
             "description": "Docker build context relative to the repository root, default \".\".",
             "type": "string"
           },
+          "buildMode": {
+            "description": "Build mode. dockerfile uses the repository Dockerfile (default); adapter uses a platform build adapter.",
+            "enum": [
+              "dockerfile",
+              "adapter"
+            ],
+            "type": "string"
+          },
           "dockerfilePath": {
-            "description": "Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE.",
+            "description": "Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE. Only used in dockerfile mode.",
             "type": "string"
           }
         },
@@ -5423,7 +5838,7 @@
               "enum": [
                 "android",
                 "ios",
-                "harmony"
+                "harmonyos"
               ],
               "type": "string"
             }
@@ -5573,7 +5988,7 @@
               "enum": [
                 "android",
                 "ios",
-                "harmony"
+                "harmonyos"
               ],
               "type": "string"
             }
@@ -5864,6 +6279,569 @@
         "summary": "Get current auth session and refresh token when needed",
         "tags": [
           "Auth"
+        ]
+      }
+    },
+    "/api/v1/build-adapters": {
+      "get": {
+        "operationId": "listBuildAdapters",
+        "parameters": [
+          {
+            "description": "Status filter.",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "Build adapter status.",
+              "enum": [
+                "active",
+                "disabled"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdaptersResponse"
+                }
+              }
+            },
+            "description": "Build adapter list with referencing module counts."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid status filter."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage modules in any application."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List build adapters",
+        "tags": [
+          "BuildAdapters"
+        ]
+      },
+      "post": {
+        "operationId": "createBuildAdapter",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAdapterCreateRequest"
+              }
+            }
+          },
+          "description": "Build adapter create payload.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterDetailResponse"
+                }
+              }
+            },
+            "description": "Build adapter created with version 1."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid build adapter. Template errors include the template name and line."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only PlatformAdmin or SuperAdmin can manage build adapters."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Create build adapter",
+        "tags": [
+          "BuildAdapters"
+        ]
+      }
+    },
+    "/api/v1/build-adapters/render-preview": {
+      "post": {
+        "operationId": "previewBuildAdapterDraft",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAdapterDraftRenderPreviewRequest"
+              }
+            }
+          },
+          "description": "Draft render preview payload.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterRenderPreviewResponse"
+                }
+              }
+            },
+            "description": "Render result. Invalid drafts, template errors and parameter errors return ok=false with error details."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only PlatformAdmin or SuperAdmin can preview drafts."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Render an unsaved build adapter draft with sample context or a module, without building",
+        "tags": [
+          "BuildAdapters"
+        ]
+      }
+    },
+    "/api/v1/build-adapters/{id}": {
+      "get": {
+        "operationId": "getBuildAdapter",
+        "parameters": [
+          {
+            "description": "Build adapter id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Build adapter id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterDetailResponse"
+                }
+              }
+            },
+            "description": "Build adapter detail."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage modules in any application."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build adapter not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Get build adapter",
+        "tags": [
+          "BuildAdapters"
+        ]
+      },
+      "patch": {
+        "operationId": "updateBuildAdapter",
+        "parameters": [
+          {
+            "description": "Build adapter id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Build adapter id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAdapterUpdateRequest"
+              }
+            }
+          },
+          "description": "Build adapter update payload. Omitted fields are unchanged; files and parameters replace the whole value.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterDetailResponse"
+                }
+              }
+            },
+            "description": "Build adapter updated."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid build adapter. Template errors include the template name and line."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only PlatformAdmin or SuperAdmin can manage build adapters."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build adapter not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build adapter was modified concurrently."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Update build adapter. Each update increments version",
+        "tags": [
+          "BuildAdapters"
+        ]
+      }
+    },
+    "/api/v1/build-adapters/{id}/disable": {
+      "post": {
+        "operationId": "disableBuildAdapter",
+        "parameters": [
+          {
+            "description": "Build adapter id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Build adapter id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterDetailResponse"
+                }
+              }
+            },
+            "description": "Build adapter disabled."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only PlatformAdmin or SuperAdmin can manage build adapters."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build adapter not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Disable build adapter. Referencing modules cannot start new builds",
+        "tags": [
+          "BuildAdapters"
+        ]
+      }
+    },
+    "/api/v1/build-adapters/{id}/enable": {
+      "post": {
+        "operationId": "enableBuildAdapter",
+        "parameters": [
+          {
+            "description": "Build adapter id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Build adapter id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterDetailResponse"
+                }
+              }
+            },
+            "description": "Build adapter enabled."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only PlatformAdmin or SuperAdmin can manage build adapters."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build adapter not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Enable build adapter",
+        "tags": [
+          "BuildAdapters"
+        ]
+      }
+    },
+    "/api/v1/build-adapters/{id}/render-preview": {
+      "post": {
+        "operationId": "previewBuildAdapter",
+        "parameters": [
+          {
+            "description": "Build adapter id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Build adapter id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAdapterRenderPreviewRequest"
+              }
+            }
+          },
+          "description": "Render preview payload. Both fields are optional.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterRenderPreviewResponse"
+                }
+              }
+            },
+            "description": "Render result. Template and parameter errors return ok=false with error details."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAdapterErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage modules in any application."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build adapter or module not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Render build adapter with sample context or a module, without building",
+        "tags": [
+          "BuildAdapters"
         ]
       }
     },
@@ -9692,6 +10670,10 @@
     {
       "description": "RN JS bundle build record management.",
       "name": "Builds"
+    },
+    {
+      "description": "Platform managed build adapters: reusable Dockerfile templates, helper files and parameter definitions.",
+      "name": "BuildAdapters"
     },
     {
       "description": "RN JS bundle artifact download and application manifest APIs.",

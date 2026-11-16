@@ -236,6 +236,31 @@ create table code_source_repositories (
 create index idx_code_source_repositories_full_name
     on code_source_repositories(connection_id, full_name);
 
+create table build_adapters (
+    id text primary key,
+    name text not null,
+    description text not null default '',
+    dockerfile_template text not null,
+    -- {相对路径: 模板内容}，渲染后放入构建上下文的 .forge/ 目录。
+    files jsonb not null default '{}',
+    -- [{key, label, description, required, default}]
+    parameters jsonb not null default '[]',
+    -- 每次修改模板、文件或参数定义时 +1，构建记录据此追溯所用版本。
+    version integer not null default 1 check (version > 0),
+    status text not null check (status in ('active', 'disabled')),
+    created_by_user_id text not null references users(id) on delete restrict,
+    updated_by_user_id text not null references users(id) on delete restrict,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index idx_build_adapters_status
+    on build_adapters(status);
+create index idx_build_adapters_created_by
+    on build_adapters(created_by_user_id);
+create index idx_build_adapters_updated_by
+    on build_adapters(updated_by_user_id);
+
 create table modules (
     id text primary key,
     name text not null,
@@ -251,6 +276,9 @@ create table modules (
     default_branch text not null default '',
     dockerfile_path text not null default 'Dockerfile',
     build_context text not null default '.',
+    build_mode text not null default 'dockerfile' check (build_mode in ('dockerfile', 'adapter')),
+    build_adapter_id text references build_adapters(id) on delete restrict,
+    build_adapter_params jsonb not null default '{}',
     auto_build_branches text[] not null default '{}',
     auto_build_environment_code text references environments(code) on delete set null,
     auto_preview_release boolean not null default false,
@@ -262,12 +290,19 @@ create table modules (
         (kind = 'Common' and common_module_id is null)
         or (kind = 'Feature' and common_module_id is not null and common_module_id <> id)
     ),
-    constraint modules_repository_dockerfile_unique
-        unique (code_source_connection_id, external_repository_id, dockerfile_path)
+    constraint modules_build_adapter_check check (
+        (build_mode = 'dockerfile' and build_adapter_id is null)
+        or (build_mode = 'adapter' and build_adapter_id is not null)
+    )
 );
 
 create index idx_modules_application
     on modules(application_id);
+
+-- 只约束 dockerfile 模式：adapter 模式下同一仓库可以用不同适配器参数绑定多个模块。
+create unique index modules_repository_dockerfile_unique
+    on modules(code_source_connection_id, external_repository_id, dockerfile_path)
+    where build_mode = 'dockerfile';
 
 create unique index idx_modules_common_application_unique
     on modules(application_id)
@@ -284,6 +319,10 @@ create index idx_modules_kind
 
 create index idx_modules_repository_full_name
     on modules(repository_full_name);
+
+create index idx_modules_build_adapter
+    on modules(build_adapter_id)
+    where build_adapter_id is not null;
 
 create index idx_modules_auto_build_environment
     on modules(auto_build_environment_code)
@@ -310,6 +349,8 @@ create index idx_module_build_variables_updated_by
 create table build_records (
     id uuid primary key,
     module_id text not null references modules(id) on delete restrict,
+    -- 模块内单调递增的构建号，创建构建记录时在事务内按模块加锁分配。
+    number bigint not null check (number > 0),
     environment_code text not null references environments(code) on delete restrict,
     storage_configuration_id text not null references storage_configurations(id) on delete restrict,
     branch text not null default '',
@@ -321,6 +362,10 @@ create table build_records (
     created_by_user_id text references users(id) on delete set null,
     runtime_version text not null default '',
     platforms text[] not null default '{}',
+    -- 适配器构建记录所用适配器、版本与渲染后 Dockerfile 的 sha256；Dockerfile 构建为空。
+    build_adapter_id text,
+    build_adapter_version integer,
+    rendered_dockerfile_sha256 text not null default '',
     worker_id text not null default '',
     lease_expires_at timestamptz,
     artifact_key text not null default '',
@@ -334,7 +379,8 @@ create table build_records (
     finished_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    check (status <> 'succeeded' or (commit_sha <> '' and runtime_version <> '' and cardinality(platforms) > 0))
+    check (status <> 'succeeded' or (commit_sha <> '' and runtime_version <> '' and cardinality(platforms) > 0)),
+    constraint build_records_module_number_unique unique (module_id, number)
 );
 
 create index idx_build_records_status_queue

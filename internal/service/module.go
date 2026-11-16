@@ -30,7 +30,13 @@ type ModuleCodeSourceStore interface {
 	GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error)
 }
 
+// ModuleBuildAdapterReader 用于在模块选用构建适配器时校验适配器状态和参数定义。
+type ModuleBuildAdapterReader interface {
+	GetBuildAdapter(ctx context.Context, id string) (domain.BuildAdapter, error)
+}
+
 type ModuleService struct {
+	buildAdapters         ModuleBuildAdapterReader
 	codeSources           ModuleCodeSourceStore
 	defaultDockerfilePath string
 	repository            ModuleRepository
@@ -47,6 +53,12 @@ func NewModuleService(repository ModuleRepository, codeSources ModuleCodeSourceS
 		defaultDockerfilePath: defaultDockerfilePath,
 		repository:            repository,
 	}
+}
+
+// WithBuildAdapters 注入构建适配器读取；未注入时模块不能选择 adapter 构建方式。
+func (s *ModuleService) WithBuildAdapters(reader ModuleBuildAdapterReader) *ModuleService {
+	s.buildAdapters = reader
+	return s
 }
 
 func (s *ModuleService) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
@@ -71,6 +83,9 @@ func (s *ModuleService) CreateModule(ctx context.Context, input domain.ModuleInp
 	if err != nil {
 		return domain.Module{}, err
 	}
+	if err := s.validateModuleBuildAdapter(ctx, normalized.BuildConfig, ""); err != nil {
+		return domain.Module{}, err
+	}
 	return s.repository.CreateModule(ctx, normalized)
 }
 
@@ -84,7 +99,41 @@ func (s *ModuleService) UpdateModule(ctx context.Context, id string, input domai
 	if err != nil {
 		return domain.Module{}, err
 	}
+	previousAdapterID := ""
+	if normalized.BuildConfig.BuildMode == domain.BuildModeAdapter {
+		previous, err := s.repository.GetModule(ctx, normalizedID)
+		if err != nil {
+			return domain.Module{}, err
+		}
+		previousAdapterID = previous.BuildConfig.BuildAdapterID
+	}
+	if err := s.validateModuleBuildAdapter(ctx, normalized.BuildConfig, previousAdapterID); err != nil {
+		return domain.Module{}, err
+	}
 	return s.repository.UpdateModule(ctx, normalizedID, normalized)
+}
+
+// validateModuleBuildAdapter 校验 adapter 构建方式：适配器必须存在；新选择的适配器必须处于启用状态
+// （模块继续沿用已停用的适配器时允许保存其他字段）；参数按适配器的参数定义校验。
+func (s *ModuleService) validateModuleBuildAdapter(ctx context.Context, config domain.ModuleBuildConfig, previousAdapterID string) error {
+	if config.BuildMode != domain.BuildModeAdapter {
+		return nil
+	}
+	if s.buildAdapters == nil {
+		return domain.ErrInvalidModuleInput
+	}
+	adapter, err := s.buildAdapters.GetBuildAdapter(ctx, config.BuildAdapterID)
+	if err != nil {
+		if errors.Is(err, domain.ErrBuildAdapterNotFound) {
+			return domain.ErrInvalidModuleInput
+		}
+		return err
+	}
+	if adapter.Status != domain.BuildAdapterStatusActive && adapter.ID != previousAdapterID {
+		return domain.ErrBuildAdapterDisabled
+	}
+	_, err = ResolveBuildAdapterParams(adapter.Parameters, config.BuildAdapterParams, false)
+	return err
 }
 
 func (s *ModuleService) DeleteModule(ctx context.Context, id string) error {
@@ -198,12 +247,31 @@ func validateModuleInput(input domain.ModuleInput, requireID bool, defaultDocker
 
 func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfilePath string) (domain.ModuleBuildConfig, bool) {
 	normalized := domain.ModuleBuildConfig{
+		BuildMode:            domain.BuildMode(strings.TrimSpace(string(config.BuildMode))),
+		BuildAdapterID:       strings.TrimSpace(config.BuildAdapterID),
+		BuildAdapterParams:   NormalizeBuildAdapterParamValues(config.BuildAdapterParams),
 		DockerfilePath:       strings.TrimSpace(config.DockerfilePath),
 		BuildContext:         strings.TrimSpace(config.BuildContext),
 		AutoBuildBranches:    []string{},
 		AutoBuildEnvironment: strings.TrimSpace(config.AutoBuildEnvironment),
 		AutoPreviewRelease:   config.AutoPreviewRelease,
 		AutoPreviewTTLHours:  config.AutoPreviewTTLHours,
+	}
+	if normalized.BuildMode == "" {
+		normalized.BuildMode = domain.BuildModeDockerfile
+	}
+	// dockerfile 模式不能带适配器；adapter 模式必须指定适配器。参数是否合法在 validateModuleBuildAdapter 中按参数定义校验。
+	switch normalized.BuildMode {
+	case domain.BuildModeDockerfile:
+		if normalized.BuildAdapterID != "" || len(normalized.BuildAdapterParams) > 0 {
+			return domain.ModuleBuildConfig{}, false
+		}
+	case domain.BuildModeAdapter:
+		if normalized.BuildAdapterID == "" {
+			return domain.ModuleBuildConfig{}, false
+		}
+	default:
+		return domain.ModuleBuildConfig{}, false
 	}
 	if normalized.DockerfilePath == "" {
 		normalized.DockerfilePath = defaultDockerfilePath

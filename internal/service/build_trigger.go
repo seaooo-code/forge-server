@@ -103,6 +103,11 @@ func (s *BuildTriggerService) HandlePushEvent(ctx context.Context, event domain.
 		if err == nil {
 			record, created, err = s.builds.CreateBuildRecordUnlessActive(ctx, input)
 		}
+		// 适配器已停用属于配置问题，重投 webhook 也无法恢复，只记日志，不让托管方重试。
+		if errors.Is(err, domain.ErrBuildAdapterDisabled) {
+			s.logger.Warn("skip webhook build: build adapter disabled", "module", module.ID, "environment", environment, "branch", branch, "commit", commitSHA)
+			continue
+		}
 		if err != nil {
 			s.logger.Error("create webhook build failed", "module", module.ID, "environment", environment, "branch", branch, "commit", commitSHA, "error", err)
 			failures = errors.Join(failures, fmt.Errorf("module %s: %w", module.ID, err))

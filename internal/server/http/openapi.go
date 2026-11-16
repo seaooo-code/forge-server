@@ -55,6 +55,10 @@ func openAPIDocument() *openapi3.T {
 				Description: "RN JS bundle build record management.",
 			},
 			{
+				Name:        "BuildAdapters",
+				Description: "Platform managed build adapters: reusable Dockerfile templates, helper files and parameter definitions.",
+			},
+			{
 				Name:        "Artifacts",
 				Description: "RN JS bundle artifact download and application manifest APIs.",
 			},
@@ -557,6 +561,110 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/build-adapters", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("listBuildAdapters", "List build adapters", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Build adapter list with referencing module counts.", schemaRef("BuildAdaptersResponse")),
+						response(http.StatusBadRequest, "Invalid status filter.", schemaRef("BuildAdapterErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage modules in any application.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = openapi3.Parameters{
+						{
+							Value: openapi3.NewQueryParameter("status").
+								WithDescription("Status filter.").
+								WithSchema(enumStringSchema("Build adapter status.", "active", "disabled")),
+						},
+					}
+					return op
+				}(),
+				Post: func() *openapi3.Operation {
+					op := operation("createBuildAdapter", "Create build adapter", []string{"BuildAdapters"}, responses(
+						response(http.StatusCreated, "Build adapter created with version 1.", schemaRef("BuildAdapterDetailResponse")),
+						response(http.StatusBadRequest, "Invalid build adapter. Template errors include the template name and line.", schemaRef("BuildAdapterErrorResponse")),
+						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Build adapter create payload.", schemaRef("BuildAdapterCreateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/build-adapters/render-preview", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("previewBuildAdapterDraft", "Render an unsaved build adapter draft with sample context or a module, without building", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Render result. Invalid drafts, template errors and parameter errors return ok=false with error details.", schemaRef("BuildAdapterRenderPreviewResponse")),
+						response(http.StatusBadRequest, "Invalid request body.", schemaRef("BuildAdapterErrorResponse")),
+						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can preview drafts.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Draft render preview payload.", schemaRef("BuildAdapterDraftRenderPreviewRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/build-adapters/{id}", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("getBuildAdapter", "Get build adapter", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Build adapter detail.", schemaRef("BuildAdapterDetailResponse")),
+						response(http.StatusForbidden, "Current user cannot manage modules in any application.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildAdapterIDParameters()
+					return op
+				}(),
+				Patch: func() *openapi3.Operation {
+					op := operation("updateBuildAdapter", "Update build adapter. Each update increments version", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Build adapter updated.", schemaRef("BuildAdapterDetailResponse")),
+						response(http.StatusBadRequest, "Invalid build adapter. Template errors include the template name and line.", schemaRef("BuildAdapterErrorResponse")),
+						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "Build adapter was modified concurrently.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildAdapterIDParameters()
+					op.RequestBody = requestBody("Build adapter update payload. Omitted fields are unchanged; files and parameters replace the whole value.", schemaRef("BuildAdapterUpdateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/build-adapters/{id}/disable", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("disableBuildAdapter", "Disable build adapter. Referencing modules cannot start new builds", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Build adapter disabled.", schemaRef("BuildAdapterDetailResponse")),
+						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildAdapterIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/build-adapters/{id}/enable", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("enableBuildAdapter", "Enable build adapter", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Build adapter enabled.", schemaRef("BuildAdapterDetailResponse")),
+						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildAdapterIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/build-adapters/{id}/render-preview", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("previewBuildAdapter", "Render build adapter with sample context or a module, without building", []string{"BuildAdapters"}, responses(
+						response(http.StatusOK, "Render result. Template and parameter errors return ok=false with error details.", schemaRef("BuildAdapterRenderPreviewResponse")),
+						response(http.StatusBadRequest, "Invalid request body.", schemaRef("BuildAdapterErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage modules in any application.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build adapter or module not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = buildAdapterIDParameters()
+					op.RequestBody = requestBody("Render preview payload. Both fields are optional.", schemaRef("BuildAdapterRenderPreviewRequest"))
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/code-sources/github/install-url", &openapi3.PathItem{
 				Get: operation("getCodeSourceInstallURL", "Get GitHub App installation URL", []string{"CodeSources"}, codeSourceResponses(
 					response(http.StatusOK, "GitHub App installation URL.", schemaRef("CodeSourceInstallURL")),
@@ -884,115 +992,126 @@ func openAPIDocument() *openapi3.T {
 				}},
 			},
 			Schemas: openapi3.Schemas{
-				"ErrorResponse":                        schemaValue(errorResponseSchema()),
-				"HealthResponse":                       schemaValue(healthResponseSchema()),
-				"ReadinessResponse":                    schemaValue(readinessResponseSchema()),
-				"PingResponse":                         schemaValue(pingResponseSchema()),
-				"EnumOption":                           schemaValue(enumOptionSchema()),
-				"EnumsResponse":                        schemaValue(enumsResponseSchema()),
-				"DashboardResponse":                    schemaValue(dashboardResponseSchema()),
-				"DashboardMetric":                      schemaValue(dashboardMetricSchema()),
-				"DashboardBuildTrendPoint":             schemaValue(dashboardBuildTrendPointSchema()),
-				"DashboardBuildRecord":                 schemaValue(dashboardBuildRecordSchema()),
-				"DashboardReleaseRecord":               schemaValue(dashboardReleaseRecordSchema()),
-				"DashboardResourceStatus":              schemaValue(dashboardResourceStatusSchema()),
-				"Environment":                          schemaValue(environmentSchema()),
-				"EnvironmentCreateRequest":             schemaValue(environmentCreateRequestSchema()),
-				"EnvironmentUpdateRequest":             schemaValue(environmentCreateRequestSchema()),
-				"EnvironmentsResponse":                 schemaValue(environmentsResponseSchema()),
-				"EnvironmentDetailResponse":            schemaValue(environmentDetailResponseSchema()),
-				"Pagination":                           schemaValue(paginationSchema()),
-				"Application":                          schemaValue(applicationSchema()),
-				"ApplicationOption":                    schemaValue(applicationOptionSchema()),
-				"ApplicationOptions":                   schemaValue(applicationOptionsSchema()),
-				"ApplicationSummary":                   schemaValue(applicationSummarySchema()),
-				"ApplicationMetric":                    schemaValue(applicationMetricSchema()),
-				"ApplicationEnvironment":               schemaValue(applicationEnvironmentSchema()),
-				"ApplicationModule":                    schemaValue(applicationModuleSchema()),
-				"ApplicationMember":                    schemaValue(applicationMemberSchema()),
-				"ApplicationMembersResponse":           schemaValue(applicationMembersResponseSchema()),
-				"ApplicationCapabilities":              schemaValue(applicationCapabilitiesSchema()),
-				"ApplicationClientIntegration":         schemaValue(applicationClientIntegrationSchema()),
-				"ApplicationClientIntegrationEndpoint": schemaValue(applicationClientIntegrationEndpointSchema()),
-				"ApplicationClientIntegrationField":    schemaValue(applicationClientIntegrationFieldSchema()),
-				"ApplicationDetail":                    schemaValue(applicationDetailSchema()),
-				"ApplicationsResponse":                 schemaValue(applicationsResponseSchema()),
-				"ApplicationDetailResponse":            schemaValue(applicationDetailResponseSchema()),
-				"ApplicationCreateRequest":             schemaValue(applicationRequestSchema(true)),
-				"ApplicationUpdateRequest":             schemaValue(applicationRequestSchema(false)),
-				"ApplicationStatusUpdateRequest":       schemaValue(applicationStatusUpdateRequestSchema()),
-				"ApplicationEnvironmentRequest":        schemaValue(applicationEnvironmentRequestSchema()),
-				"ApplicationMemberRequest":             schemaValue(applicationMemberRequestSchema()),
-				"ApplicationMemberRoleUpdateRequest":   schemaValue(applicationMemberRoleUpdateRequestSchema()),
-				"ApplicationDeleteCheck":               schemaValue(applicationDeleteCheckSchema()),
-				"ApplicationDeleteDependency":          schemaValue(applicationDeleteDependencySchema()),
-				"Module":                               schemaValue(moduleSchema()),
-				"ModuleSummary":                        schemaValue(moduleSummarySchema()),
-				"ModulesResponse":                      schemaValue(modulesResponseSchema()),
-				"ModuleDetailResponse":                 schemaValue(moduleDetailResponseSchema()),
-				"ModuleRepositoryRequest":              schemaValue(moduleRepositoryRequestSchema()),
-				"ModuleBuildConfig":                    schemaValue(moduleBuildConfigSchema()),
-				"ModuleCreateRequest":                  schemaValue(moduleRequestSchema(true)),
-				"ModuleUpdateRequest":                  schemaValue(moduleRequestSchema(false)),
-				"BuildRecord":                          schemaValue(buildRecordSchema()),
-				"UserSummary":                          schemaValue(userSummarySchema()),
-				"BuildArtifactTree":                    schemaValue(buildArtifactTreeSchema()),
-				"BuildArtifactTreeNode":                schemaValue(buildArtifactTreeNodeSchema()),
-				"BuildRecordCreateRequest":             schemaValue(buildRecordCreateRequestSchema()),
-				"BuildRecordDetailResponse":            schemaValue(buildRecordDetailResponseSchema()),
-				"BuildRecordSummary":                   schemaValue(buildRecordSummarySchema()),
-				"BuildRecordsResponse":                 schemaValue(buildRecordsResponseSchema()),
-				"BuildLogChunk":                        schemaValue(buildLogChunkSchema()),
-				"BuildLogsResponse":                    schemaValue(buildLogsResponseSchema()),
-				"BuildVariable":                        schemaValue(buildVariableSchema()),
-				"BuildVariablesResponse":               schemaValue(buildVariablesResponseSchema()),
-				"BuildVariableDetailResponse":          schemaValue(buildVariableDetailResponseSchema()),
-				"BuildVariableUpsertRequest":           schemaValue(buildVariableUpsertRequestSchema()),
-				"ArtifactManifestResponse":             schemaValue(artifactManifestResponseSchema()),
-				"ArtifactManifestApplication":          schemaValue(artifactManifestApplicationSchema()),
-				"ArtifactManifestEnvironment":          schemaValue(artifactManifestEnvironmentSchema()),
-				"ArtifactManifestModule":               schemaValue(artifactManifestModuleSchema()),
-				"ArtifactManifestFile":                 schemaValue(artifactManifestFileSchema()),
-				"ArtifactMissingModule":                schemaValue(artifactMissingModuleSchema()),
-				"ReleaseRecord":                        schemaValue(releaseRecordSchema()),
-				"ReleaseRecordSummary":                 schemaValue(releaseRecordSummarySchema()),
-				"ReleaseRoute":                         schemaValue(releaseRouteSchema()),
-				"ReleaseCreateRequest":                 schemaValue(releaseCreateRequestSchema()),
-				"ReleaseGrayPercentageUpdateRequest":   schemaValue(releaseGrayPercentageUpdateRequestSchema()),
-				"ReleaseDetailResponse":                schemaValue(releaseDetailResponseSchema()),
-				"ReleaseResolveResponse":               schemaValue(releaseResolveResponseSchema()),
-				"ReleasesResponse":                     schemaValue(releasesResponseSchema()),
-				"CodeSourceApp":                        schemaValue(codeSourceAppSchema()),
-				"CodeSourceAppManifest":                schemaValue(codeSourceAppManifestSchema()),
-				"CodeSourceInstallURL":                 schemaValue(codeSourceInstallURLSchema()),
-				"CodeSourceConnection":                 schemaValue(codeSourceConnectionSchema()),
-				"CodeSourceConnectionsResponse":        schemaValue(codeSourceConnectionsResponseSchema()),
-				"CodeSourceConnectionDetailResponse":   schemaValue(codeSourceConnectionDetailResponseSchema()),
-				"CodeSourceConnectionCreateRequest":    schemaValue(codeSourceConnectionCreateRequestSchema()),
-				"CodeSourceConnectionUpdateRequest":    schemaValue(codeSourceConnectionUpdateRequestSchema()),
-				"CodeSourceConnectionWebhook":          schemaValue(codeSourceConnectionWebhookSchema()),
-				"CodeSourceRepository":                 schemaValue(codeSourceRepositorySchema()),
-				"CodeSourceRepositorySearchResponse":   schemaValue(codeSourceRepositorySearchResponseSchema()),
-				"CodeSourcesResponse":                  schemaValue(codeSourcesResponseSchema()),
-				"ArtifactAccessToken":                  schemaValue(artifactAccessTokenSchema()),
-				"ArtifactAccessTokensResponse":         schemaValue(artifactAccessTokensResponseSchema()),
-				"ArtifactAccessTokenDetailResponse":    schemaValue(artifactAccessTokenDetailResponseSchema()),
-				"ArtifactAccessTokenGenerateResponse":  schemaValue(artifactAccessTokenGenerateResponseSchema()),
-				"ArtifactAccessTokenCreateRequest":     schemaValue(artifactAccessTokenCreateRequestSchema()),
-				"ArtifactAccessTokenUpdateRequest":     schemaValue(artifactAccessTokenUpdateRequestSchema()),
-				"StorageConfiguration":                 schemaValue(storageConfigurationSchema()),
-				"StorageConfigurationsResponse":        schemaValue(storageConfigurationsResponseSchema()),
-				"StorageConfigurationDetailResponse":   schemaValue(storageConfigurationDetailResponseSchema()),
-				"StorageConfigurationCreateRequest":    schemaValue(storageConfigurationRequestSchema(true)),
-				"StorageConfigurationUpdateRequest":    schemaValue(storageConfigurationRequestSchema(false)),
-				"StorageConfigurationTestRequest":      schemaValue(storageConfigurationTestRequestSchema()),
-				"StorageConfigurationTestResponse":     schemaValue(storageConfigurationTestResponseSchema()),
-				"GlobalCapabilities":                   schemaValue(globalCapabilitiesSchema()),
-				"FeishuAuthResponse":                   schemaValue(feishuAuthResponseSchema()),
-				"FeishuToken":                          schemaValue(feishuTokenSchema()),
-				"FeishuUser":                           schemaValue(feishuUserSchema()),
-				"FeishuUserSearchItem":                 schemaValue(feishuUserSearchItemSchema()),
-				"FeishuUserSearchResponse":             schemaValue(feishuUserSearchResponseSchema()),
+				"ErrorResponse":                         schemaValue(errorResponseSchema()),
+				"HealthResponse":                        schemaValue(healthResponseSchema()),
+				"ReadinessResponse":                     schemaValue(readinessResponseSchema()),
+				"PingResponse":                          schemaValue(pingResponseSchema()),
+				"EnumOption":                            schemaValue(enumOptionSchema()),
+				"EnumsResponse":                         schemaValue(enumsResponseSchema()),
+				"DashboardResponse":                     schemaValue(dashboardResponseSchema()),
+				"DashboardMetric":                       schemaValue(dashboardMetricSchema()),
+				"DashboardBuildTrendPoint":              schemaValue(dashboardBuildTrendPointSchema()),
+				"DashboardBuildRecord":                  schemaValue(dashboardBuildRecordSchema()),
+				"DashboardReleaseRecord":                schemaValue(dashboardReleaseRecordSchema()),
+				"DashboardResourceStatus":               schemaValue(dashboardResourceStatusSchema()),
+				"Environment":                           schemaValue(environmentSchema()),
+				"EnvironmentCreateRequest":              schemaValue(environmentCreateRequestSchema()),
+				"EnvironmentUpdateRequest":              schemaValue(environmentCreateRequestSchema()),
+				"EnvironmentsResponse":                  schemaValue(environmentsResponseSchema()),
+				"EnvironmentDetailResponse":             schemaValue(environmentDetailResponseSchema()),
+				"Pagination":                            schemaValue(paginationSchema()),
+				"Application":                           schemaValue(applicationSchema()),
+				"ApplicationOption":                     schemaValue(applicationOptionSchema()),
+				"ApplicationOptions":                    schemaValue(applicationOptionsSchema()),
+				"ApplicationSummary":                    schemaValue(applicationSummarySchema()),
+				"ApplicationMetric":                     schemaValue(applicationMetricSchema()),
+				"ApplicationEnvironment":                schemaValue(applicationEnvironmentSchema()),
+				"ApplicationModule":                     schemaValue(applicationModuleSchema()),
+				"ApplicationMember":                     schemaValue(applicationMemberSchema()),
+				"ApplicationMembersResponse":            schemaValue(applicationMembersResponseSchema()),
+				"ApplicationCapabilities":               schemaValue(applicationCapabilitiesSchema()),
+				"ApplicationClientIntegration":          schemaValue(applicationClientIntegrationSchema()),
+				"ApplicationClientIntegrationEndpoint":  schemaValue(applicationClientIntegrationEndpointSchema()),
+				"ApplicationClientIntegrationField":     schemaValue(applicationClientIntegrationFieldSchema()),
+				"ApplicationDetail":                     schemaValue(applicationDetailSchema()),
+				"ApplicationsResponse":                  schemaValue(applicationsResponseSchema()),
+				"ApplicationDetailResponse":             schemaValue(applicationDetailResponseSchema()),
+				"ApplicationCreateRequest":              schemaValue(applicationRequestSchema(true)),
+				"ApplicationUpdateRequest":              schemaValue(applicationRequestSchema(false)),
+				"ApplicationStatusUpdateRequest":        schemaValue(applicationStatusUpdateRequestSchema()),
+				"ApplicationEnvironmentRequest":         schemaValue(applicationEnvironmentRequestSchema()),
+				"ApplicationMemberRequest":              schemaValue(applicationMemberRequestSchema()),
+				"ApplicationMemberRoleUpdateRequest":    schemaValue(applicationMemberRoleUpdateRequestSchema()),
+				"ApplicationDeleteCheck":                schemaValue(applicationDeleteCheckSchema()),
+				"ApplicationDeleteDependency":           schemaValue(applicationDeleteDependencySchema()),
+				"Module":                                schemaValue(moduleSchema()),
+				"ModuleSummary":                         schemaValue(moduleSummarySchema()),
+				"ModulesResponse":                       schemaValue(modulesResponseSchema()),
+				"ModuleDetailResponse":                  schemaValue(moduleDetailResponseSchema()),
+				"ModuleRepositoryRequest":               schemaValue(moduleRepositoryRequestSchema()),
+				"ModuleBuildConfig":                     schemaValue(moduleBuildConfigSchema()),
+				"ModuleCreateRequest":                   schemaValue(moduleRequestSchema(true)),
+				"ModuleUpdateRequest":                   schemaValue(moduleRequestSchema(false)),
+				"BuildRecord":                           schemaValue(buildRecordSchema()),
+				"BuildAdapter":                          schemaValue(buildAdapterSchema()),
+				"BuildAdapterParameter":                 schemaValue(buildAdapterParameterSchema()),
+				"BuildAdaptersResponse":                 schemaValue(buildAdaptersResponseSchema()),
+				"BuildAdapterDetailResponse":            schemaValue(buildAdapterDetailResponseSchema()),
+				"BuildAdapterCreateRequest":             schemaValue(buildAdapterRequestSchema(true)),
+				"BuildAdapterUpdateRequest":             schemaValue(buildAdapterRequestSchema(false).WithProperty("expectedVersion", int32Schema("Version the editor loaded. When set and different from the current version, the update is rejected with 409."))),
+				"BuildAdapterErrorResponse":             schemaValue(buildAdapterErrorResponseSchema()),
+				"BuildAdapterRenderPreviewRequest":      schemaValue(buildAdapterRenderPreviewRequestSchema()),
+				"BuildAdapterDraftRenderPreviewRequest": schemaValue(buildAdapterDraftRenderPreviewRequestSchema()),
+				"BuildAdapterRenderPreviewResponse":     schemaValue(buildAdapterRenderPreviewResponseSchema()),
+				"BuildAdapterRenderError":               schemaValue(buildAdapterRenderErrorSchema()),
+				"UserSummary":                           schemaValue(userSummarySchema()),
+				"BuildArtifactTree":                     schemaValue(buildArtifactTreeSchema()),
+				"BuildArtifactTreeNode":                 schemaValue(buildArtifactTreeNodeSchema()),
+				"BuildRecordCreateRequest":              schemaValue(buildRecordCreateRequestSchema()),
+				"BuildRecordDetailResponse":             schemaValue(buildRecordDetailResponseSchema()),
+				"BuildRecordSummary":                    schemaValue(buildRecordSummarySchema()),
+				"BuildRecordsResponse":                  schemaValue(buildRecordsResponseSchema()),
+				"BuildLogChunk":                         schemaValue(buildLogChunkSchema()),
+				"BuildLogsResponse":                     schemaValue(buildLogsResponseSchema()),
+				"BuildVariable":                         schemaValue(buildVariableSchema()),
+				"BuildVariablesResponse":                schemaValue(buildVariablesResponseSchema()),
+				"BuildVariableDetailResponse":           schemaValue(buildVariableDetailResponseSchema()),
+				"BuildVariableUpsertRequest":            schemaValue(buildVariableUpsertRequestSchema()),
+				"ArtifactManifestResponse":              schemaValue(artifactManifestResponseSchema()),
+				"ArtifactManifestApplication":           schemaValue(artifactManifestApplicationSchema()),
+				"ArtifactManifestEnvironment":           schemaValue(artifactManifestEnvironmentSchema()),
+				"ArtifactManifestModule":                schemaValue(artifactManifestModuleSchema()),
+				"ArtifactManifestFile":                  schemaValue(artifactManifestFileSchema()),
+				"ArtifactMissingModule":                 schemaValue(artifactMissingModuleSchema()),
+				"ReleaseRecord":                         schemaValue(releaseRecordSchema()),
+				"ReleaseRecordSummary":                  schemaValue(releaseRecordSummarySchema()),
+				"ReleaseRoute":                          schemaValue(releaseRouteSchema()),
+				"ReleaseCreateRequest":                  schemaValue(releaseCreateRequestSchema()),
+				"ReleaseGrayPercentageUpdateRequest":    schemaValue(releaseGrayPercentageUpdateRequestSchema()),
+				"ReleaseDetailResponse":                 schemaValue(releaseDetailResponseSchema()),
+				"ReleaseResolveResponse":                schemaValue(releaseResolveResponseSchema()),
+				"ReleasesResponse":                      schemaValue(releasesResponseSchema()),
+				"CodeSourceApp":                         schemaValue(codeSourceAppSchema()),
+				"CodeSourceAppManifest":                 schemaValue(codeSourceAppManifestSchema()),
+				"CodeSourceInstallURL":                  schemaValue(codeSourceInstallURLSchema()),
+				"CodeSourceConnection":                  schemaValue(codeSourceConnectionSchema()),
+				"CodeSourceConnectionsResponse":         schemaValue(codeSourceConnectionsResponseSchema()),
+				"CodeSourceConnectionDetailResponse":    schemaValue(codeSourceConnectionDetailResponseSchema()),
+				"CodeSourceConnectionCreateRequest":     schemaValue(codeSourceConnectionCreateRequestSchema()),
+				"CodeSourceConnectionUpdateRequest":     schemaValue(codeSourceConnectionUpdateRequestSchema()),
+				"CodeSourceConnectionWebhook":           schemaValue(codeSourceConnectionWebhookSchema()),
+				"CodeSourceRepository":                  schemaValue(codeSourceRepositorySchema()),
+				"CodeSourceRepositorySearchResponse":    schemaValue(codeSourceRepositorySearchResponseSchema()),
+				"CodeSourcesResponse":                   schemaValue(codeSourcesResponseSchema()),
+				"ArtifactAccessToken":                   schemaValue(artifactAccessTokenSchema()),
+				"ArtifactAccessTokensResponse":          schemaValue(artifactAccessTokensResponseSchema()),
+				"ArtifactAccessTokenDetailResponse":     schemaValue(artifactAccessTokenDetailResponseSchema()),
+				"ArtifactAccessTokenGenerateResponse":   schemaValue(artifactAccessTokenGenerateResponseSchema()),
+				"ArtifactAccessTokenCreateRequest":      schemaValue(artifactAccessTokenCreateRequestSchema()),
+				"ArtifactAccessTokenUpdateRequest":      schemaValue(artifactAccessTokenUpdateRequestSchema()),
+				"StorageConfiguration":                  schemaValue(storageConfigurationSchema()),
+				"StorageConfigurationsResponse":         schemaValue(storageConfigurationsResponseSchema()),
+				"StorageConfigurationDetailResponse":    schemaValue(storageConfigurationDetailResponseSchema()),
+				"StorageConfigurationCreateRequest":     schemaValue(storageConfigurationRequestSchema(true)),
+				"StorageConfigurationUpdateRequest":     schemaValue(storageConfigurationRequestSchema(false)),
+				"StorageConfigurationTestRequest":       schemaValue(storageConfigurationTestRequestSchema()),
+				"StorageConfigurationTestResponse":      schemaValue(storageConfigurationTestResponseSchema()),
+				"GlobalCapabilities":                    schemaValue(globalCapabilitiesSchema()),
+				"FeishuAuthResponse":                    schemaValue(feishuAuthResponseSchema()),
+				"FeishuToken":                           schemaValue(feishuTokenSchema()),
+				"FeishuUser":                            schemaValue(feishuUserSchema()),
+				"FeishuUserSearchItem":                  schemaValue(feishuUserSearchItemSchema()),
+				"FeishuUserSearchResponse":              schemaValue(feishuUserSearchResponseSchema()),
 			},
 		},
 	}
@@ -1981,12 +2100,16 @@ func moduleRepositoryRequestSchema() *openapi3.Schema {
 
 func moduleBuildConfigSchema() *openapi3.Schema {
 	return objectSchema().
+		WithProperty("buildMode", enumStringSchema("Build mode. dockerfile uses the repository Dockerfile (default); adapter uses a platform build adapter.", "dockerfile", "adapter")).
+		WithProperty("buildAdapterId", stringSchema("Build adapter id. Required in adapter mode and must be empty in dockerfile mode. A newly selected adapter must be active.")).
+		WithProperty("buildAdapterName", stringSchema("Build adapter display name. Read only.")).
+		WithProperty("buildAdapterParams", stringMapSchema("Build adapter parameter values keyed by parameter key. Validated against the adapter parameter definitions: required parameters need a value and undeclared keys are rejected. Must be empty in dockerfile mode. Do not put secrets here; use build variables.")).
 		WithProperty("autoBuildBranches", stringArraySchema("Branch globs that trigger builds on push. Empty disables automatic builds.")).
 		WithProperty("autoBuildEnvironment", stringSchema("Environment code for automatic builds. Required when autoBuildBranches is not empty.")).
 		WithProperty("autoPreviewRelease", boolSchema("Create a targeted release named after the branch when an automatic build succeeds.")).
 		WithProperty("autoPreviewTtlHours", int32Schema("Preview release lifetime in hours, 1-8760, default 168.")).
 		WithProperty("buildContext", stringSchema("Docker build context relative to the repository root, default \".\".")).
-		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE."))
+		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE. Only used in dockerfile mode."))
 }
 
 func buildRecordCreateRequestSchema() *openapi3.Schema {
@@ -2020,6 +2143,7 @@ func buildRecordSummarySchema() *openapi3.Schema {
 func buildRecordSchema() *openapi3.Schema {
 	return objectSchema(
 		"id",
+		"number",
 		"applicationName",
 		"moduleId",
 		"moduleName",
@@ -2057,6 +2181,10 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("errorMessage", stringSchema("Build failure message.")).
 		WithProperty("finishedAt", dateTimeSchema("Build finish time.")).
 		WithProperty("id", stringSchema("Build record UUID.")).
+		WithProperty("number", int64Schema("Build number, increasing within the module.")).
+		WithProperty("buildAdapterId", stringSchema("Build adapter used by an adapter build. Empty for Dockerfile builds or before rendering.")).
+		WithProperty("buildAdapterVersion", int32Schema("Build adapter version used by an adapter build.").WithNullable()).
+		WithProperty("renderedDockerfileSha256", stringSchema("SHA-256 of the rendered Dockerfile for adapter builds. Empty for Dockerfile builds.")).
 		WithProperty("manifestKey", stringSchema("S3 object key of the artifact manifest.")).
 		WithProperty("fileCount", int32Schema("Uploaded artifact file count.")).
 		WithProperty("totalSizeBytes", int64Schema("Total uploaded artifact file size in bytes.")).
@@ -2064,7 +2192,7 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("queuedAt", dateTimeSchema("Build queue time.")).
 		WithProperty("repositoryFullName", stringSchema("Repository full name.")).
-		WithProperty("platforms", stringArraySchema("Platform directories produced by the build: android, ios, harmony.")).
+		WithProperty("platforms", stringArraySchema("Platform directories produced by the build: android, ios, harmonyos.")).
 		WithProperty("repositoryId", stringSchema("Provider repository id (external repository id).")).
 		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github", "gitlab")).
 		WithProperty("repositoryWebUrl", stringSchema("Repository web URL.")).
@@ -2549,6 +2677,7 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		"canManageStorage",
 		"canManageEnvironments",
 		"canManageAccessTokens",
+		"canManageBuildAdapters",
 	).
 		WithProperty("canCreateApplication", boolSchema("Whether current user can create applications.")).
 		WithProperty("canManageApplications", boolSchema("Whether current user can manage applications globally.")).
@@ -2558,7 +2687,8 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		WithProperty("canManageCodeSources", boolSchema("Whether current user can manage code source integrations.")).
 		WithProperty("canManageStorage", boolSchema("Whether current user can manage storage configurations.")).
 		WithProperty("canManageEnvironments", boolSchema("Whether current user can manage environments.")).
-		WithProperty("canManageAccessTokens", boolSchema("Whether current user can manage artifact access tokens."))
+		WithProperty("canManageAccessTokens", boolSchema("Whether current user can manage artifact access tokens.")).
+		WithProperty("canManageBuildAdapters", boolSchema("Whether current user can create, edit, disable and enable build adapters."))
 }
 
 func feishuAuthResponseSchema() *openapi3.Schema {
@@ -2673,6 +2803,12 @@ func intArraySchema(description string) *openapi3.Schema {
 	return schema
 }
 
+func stringMapSchema(description string) *openapi3.Schema {
+	schema := openapi3.NewObjectSchema().WithAdditionalProperties(stringSchema(""))
+	schema.Description = description
+	return schema
+}
+
 func arraySchemaRef(itemSchema string) *openapi3.SchemaRef {
 	schema := openapi3.NewArraySchema()
 	schema.Items = schemaRef(itemSchema)
@@ -2744,4 +2880,119 @@ func buildVariableUpsertRequestSchema() *openapi3.Schema {
 		WithProperty("environmentCode", stringSchema("Environment code. Empty means the variable applies to all environments.")).
 		WithProperty("value", stringSchema("Plain value. Required and non-empty for secrets.")).
 		WithProperty("isSecret", boolSchema("Store as a secret build variable."))
+}
+
+func buildAdapterIDParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewPathParameter("id").
+				WithDescription("Build adapter id.").
+				WithSchema(stringSchema("Build adapter id.")),
+		},
+	}
+}
+
+func buildAdapterParameterSchema() *openapi3.Schema {
+	return objectSchema("key", "label", "description", "required", "default").
+		WithProperty("key", stringSchema("Parameter key, matching ^[a-zA-Z][a-zA-Z0-9_]{0,63}$. Referenced in templates as .Params.<key>.")).
+		WithProperty("label", stringSchema("Display label. Defaults to the key.")).
+		WithProperty("description", stringSchema("Parameter description.")).
+		WithProperty("required", boolSchema("Whether modules must provide a non-empty value (or the default is non-empty).")).
+		WithProperty("default", stringSchema("Default value used when the module leaves the parameter empty."))
+}
+
+func buildAdapterSchema() *openapi3.Schema {
+	return objectSchema(
+		"id",
+		"name",
+		"description",
+		"dockerfileTemplate",
+		"files",
+		"parameters",
+		"version",
+		"status",
+		"moduleCount",
+		"createdByUserId",
+		"createdBy",
+		"updatedByUserId",
+		"updatedBy",
+		"createdAt",
+		"updatedAt",
+	).
+		WithProperty("id", stringSchema("Build adapter id.")).
+		WithProperty("name", stringSchema("Build adapter display name.")).
+		WithProperty("description", stringSchema("Build adapter description.")).
+		WithProperty("dockerfileTemplate", stringSchema("Dockerfile template using Go text/template syntax.")).
+		WithProperty("files", stringMapSchema("Helper file templates keyed by path relative to the .forge/ directory of the build context.")).
+		WithPropertyRef("parameters", arraySchemaRef("BuildAdapterParameter")).
+		WithProperty("version", int32Schema("Version, incremented by every update.")).
+		WithProperty("status", enumStringSchema("Build adapter status. Disabled adapters cannot be selected and referencing modules cannot start new builds.", "active", "disabled")).
+		WithProperty("moduleCount", int32Schema("Number of modules referencing this adapter.")).
+		WithProperty("createdByUserId", stringSchema("Creator user id.")).
+		WithProperty("createdBy", nullableSchemaRef("UserSummary", "Creator.")).
+		WithProperty("updatedByUserId", stringSchema("Last updater user id.")).
+		WithProperty("updatedBy", nullableSchemaRef("UserSummary", "Last updater.")).
+		WithProperty("createdAt", dateTimeSchema("Creation time.")).
+		WithProperty("updatedAt", dateTimeSchema("Last update time."))
+}
+
+func buildAdaptersResponseSchema() *openapi3.Schema {
+	return objectSchema("buildAdapters").
+		WithPropertyRef("buildAdapters", arraySchemaRef("BuildAdapter"))
+}
+
+func buildAdapterDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("buildAdapter").
+		WithPropertyRef("buildAdapter", schemaRef("BuildAdapter"))
+}
+
+func buildAdapterRequestSchema(create bool) *openapi3.Schema {
+	required := []string{}
+	if create {
+		required = []string{"name", "dockerfileTemplate"}
+	}
+	return objectSchema(required...).
+		WithProperty("name", stringSchema("Display name, at most 100 characters.")).
+		WithProperty("description", stringSchema("Description, at most 2000 characters.")).
+		WithProperty("dockerfileTemplate", stringSchema("Dockerfile template, at most 64 KiB. Only default, quote, join, lower, upper, trim, replace and the and/or/not/eq/ne/lt/le/gt/ge builtins are allowed; define/template/block are rejected and range only accepts context fields or variables.")).
+		WithProperty("files", stringMapSchema("Helper file templates, at most 20 files of 64 KiB each. Keys are clean relative paths without .. and are written under .forge/ of the build context. Replaces all files when provided.")).
+		WithPropertyRef("parameters", arraySchemaRef("BuildAdapterParameter"))
+}
+
+func buildAdapterErrorResponseSchema() *openapi3.Schema {
+	return objectSchema("error").
+		WithProperty("error", stringSchema("Error message.")).
+		WithProperty("template", stringSchema("Template that failed: Dockerfile or a helper file path.")).
+		WithProperty("line", int32Schema("1-based template line of the error."))
+}
+
+func buildAdapterRenderPreviewRequestSchema() *openapi3.Schema {
+	return objectSchema().
+		WithProperty("moduleId", stringSchema("Module used for the render context. Omit to use a sample context.")).
+		WithProperty("params", stringMapSchema("Parameter values. Omit to use the parameters saved on the module (when it references this adapter)."))
+}
+
+func buildAdapterRenderErrorSchema() *openapi3.Schema {
+	return objectSchema("message", "template", "line").
+		WithProperty("message", stringSchema("Error message.")).
+		WithProperty("template", stringSchema("Template that failed: Dockerfile or a helper file path. Empty for parameter errors.")).
+		WithProperty("line", int32Schema("1-based template line. 0 when unknown."))
+}
+
+func buildAdapterRenderPreviewResponseSchema() *openapi3.Schema {
+	return objectSchema("ok", "dockerfile", "dockerfileSha256", "files", "error").
+		WithProperty("ok", boolSchema("Whether rendering succeeded.")).
+		WithProperty("dockerfile", stringSchema("Rendered Dockerfile.")).
+		WithProperty("dockerfileSha256", stringSchema("SHA-256 of the rendered Dockerfile.")).
+		WithProperty("files", stringMapSchema("Rendered helper files keyed by path relative to .forge/.")).
+		WithProperty("error", nullableSchemaRef("BuildAdapterRenderError", "Render or parameter error. Null on success."))
+}
+
+func buildAdapterDraftRenderPreviewRequestSchema() *openapi3.Schema {
+	return objectSchema("dockerfileTemplate").
+		WithProperty("dockerfileTemplate", stringSchema("Draft Dockerfile template. Validated with the same rules as saving.")).
+		WithProperty("files", stringMapSchema("Draft helper file templates keyed by path relative to .forge/.")).
+		WithPropertyRef("parameters", arraySchemaRef("BuildAdapterParameter")).
+		WithProperty("moduleId", stringSchema("Module used for the render context. Omit to use a sample context.")).
+		WithProperty("params", stringMapSchema("Parameter values, validated strictly against the draft parameters. Omit to use the parameters saved on the module; keys not declared in the draft are ignored."))
 }
