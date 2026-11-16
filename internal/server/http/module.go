@@ -3,7 +3,6 @@ package httpserver
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"forge-server/internal/domain"
@@ -27,29 +26,39 @@ type moduleDetailResponse struct {
 }
 
 type moduleResponse struct {
-	ApplicationID            string `json:"applicationId"`
-	ApplicationName          string `json:"applicationName"`
-	ApplicationSlug          string `json:"applicationSlug"`
-	CreatedAt                string `json:"createdAt"`
-	DefaultBranch            string `json:"defaultBranch"`
-	ID                       string `json:"id"`
-	Kind                     string `json:"kind"`
-	CommonModuleID           string `json:"commonModuleId"`
-	CommonModuleName         string `json:"commonModuleName"`
-	Name                     string `json:"name"`
-	Owner                    string `json:"owner"`
-	OwnerAvatarURL           string `json:"ownerAvatarUrl"`
-	OwnerEmail               string `json:"ownerEmail"`
-	OwnerUserID              string `json:"ownerUserId"`
-	Repository               string `json:"repository"`
-	RepositoryCloneURL       string `json:"repositoryCloneUrl"`
-	RepositoryFullName       string `json:"repositoryFullName"`
-	RepositoryHTMLURL        string `json:"repositoryHtmlUrl"`
-	RepositoryID             string `json:"repositoryId"`
-	RepositoryInstallationID string `json:"repositoryInstallationId"`
-	RepositoryProvider       string `json:"repositoryProvider"`
-	RepositorySSHURL         string `json:"repositorySshUrl"`
-	UpdatedAt                string `json:"updatedAt"`
+	ApplicationID            string                    `json:"applicationId"`
+	ApplicationName          string                    `json:"applicationName"`
+	ApplicationSlug          string                    `json:"applicationSlug"`
+	BuildConfig              moduleBuildConfigResponse `json:"buildConfig"`
+	CodeSourceConnectionID   string                    `json:"codeSourceConnectionId"`
+	CodeSourceConnectionName string                    `json:"codeSourceConnectionName"`
+	CreatedAt                string                    `json:"createdAt"`
+	DefaultBranch            string                    `json:"defaultBranch"`
+	ID                       string                    `json:"id"`
+	Kind                     string                    `json:"kind"`
+	CommonModuleID           string                    `json:"commonModuleId"`
+	CommonModuleName         string                    `json:"commonModuleName"`
+	Name                     string                    `json:"name"`
+	Owner                    string                    `json:"owner"`
+	OwnerAvatarURL           string                    `json:"ownerAvatarUrl"`
+	OwnerEmail               string                    `json:"ownerEmail"`
+	OwnerUserID              string                    `json:"ownerUserId"`
+	Repository               string                    `json:"repository"`
+	RepositoryCloneURL       string                    `json:"repositoryCloneUrl"`
+	RepositoryFullName       string                    `json:"repositoryFullName"`
+	RepositoryID             string                    `json:"repositoryId"`
+	RepositoryProvider       string                    `json:"repositoryProvider"`
+	RepositoryWebURL         string                    `json:"repositoryWebUrl"`
+	UpdatedAt                string                    `json:"updatedAt"`
+}
+
+type moduleBuildConfigResponse struct {
+	AutoBuildBranches    []string `json:"autoBuildBranches"`
+	AutoBuildEnvironment string   `json:"autoBuildEnvironment"`
+	AutoPreviewRelease   bool     `json:"autoPreviewRelease"`
+	AutoPreviewTTLHours  int      `json:"autoPreviewTtlHours"`
+	BuildContext         string   `json:"buildContext"`
+	DockerfilePath       string   `json:"dockerfilePath"`
 }
 
 type moduleSummaryResponse struct {
@@ -59,31 +68,36 @@ type moduleSummaryResponse struct {
 }
 
 type moduleRequest struct {
-	ApplicationID      string                  `json:"applicationId"`
-	CommonModuleID     string                  `json:"commonModuleId"`
-	ID                 string                  `json:"id"`
-	Kind               domain.ModuleKind       `json:"kind"`
-	Name               string                  `json:"name"`
-	Owner              string                  `json:"owner"`
-	OwnerAvatarURL     string                  `json:"ownerAvatarUrl"`
-	OwnerDepartmentIDs []string                `json:"ownerDepartmentIds"`
-	OwnerEmail         string                  `json:"ownerEmail"`
-	OwnerFeishuOpenID  string                  `json:"ownerFeishuOpenId"`
-	OwnerFeishuUnionID string                  `json:"ownerFeishuUnionId"`
-	OwnerFeishuUserID  string                  `json:"ownerFeishuUserId"`
-	OwnerUserID        string                  `json:"ownerUserId"`
-	Repository         moduleRepositoryRequest `json:"repository"`
+	ApplicationID      string                   `json:"applicationId"`
+	CommonModuleID     string                   `json:"commonModuleId"`
+	ID                 string                   `json:"id"`
+	Kind               domain.ModuleKind        `json:"kind"`
+	Name               string                   `json:"name"`
+	Owner              string                   `json:"owner"`
+	OwnerAvatarURL     string                   `json:"ownerAvatarUrl"`
+	OwnerDepartmentIDs []string                 `json:"ownerDepartmentIds"`
+	OwnerEmail         string                   `json:"ownerEmail"`
+	OwnerFeishuOpenID  string                   `json:"ownerFeishuOpenId"`
+	OwnerFeishuUnionID string                   `json:"ownerFeishuUnionId"`
+	OwnerFeishuUserID  string                   `json:"ownerFeishuUserId"`
+	OwnerUserID        string                   `json:"ownerUserId"`
+	Repository         moduleRepositoryRequest  `json:"repository"`
+	BuildConfig        moduleBuildConfigRequest `json:"buildConfig"`
 }
 
+// moduleRepositoryRequest 只需要连接和外部仓库 id，仓库名称、地址等以服务端仓库缓存为准。
 type moduleRepositoryRequest struct {
-	CloneURL       string `json:"cloneUrl"`
-	DefaultBranch  string `json:"defaultBranch"`
-	FullName       string `json:"fullName"`
-	HTMLURL        string `json:"htmlUrl"`
-	ID             string `json:"id"`
-	InstallationID string `json:"installationId"`
-	Provider       string `json:"provider"`
-	SSHURL         string `json:"sshUrl"`
+	ConnectionID         string `json:"connectionId"`
+	ExternalRepositoryID string `json:"externalRepositoryId"`
+}
+
+type moduleBuildConfigRequest struct {
+	AutoBuildBranches    []string `json:"autoBuildBranches"`
+	AutoBuildEnvironment string   `json:"autoBuildEnvironment"`
+	AutoPreviewRelease   bool     `json:"autoPreviewRelease"`
+	AutoPreviewTTLHours  int      `json:"autoPreviewTtlHours"`
+	BuildContext         string   `json:"buildContext"`
+	DockerfilePath       string   `json:"dockerfilePath"`
 }
 
 func registerModuleRoutes(group *echo.Group, service ModuleService, authService AuthorizationService) {
@@ -200,15 +214,6 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 		return domain.ModuleInput{}, false
 	}
 
-	repositoryID, err := strconv.ParseInt(strings.TrimSpace(request.Repository.ID), 10, 64)
-	if err != nil {
-		return domain.ModuleInput{}, false
-	}
-	installationID, err := strconv.ParseInt(strings.TrimSpace(request.Repository.InstallationID), 10, 64)
-	if err != nil {
-		return domain.ModuleInput{}, false
-	}
-
 	input := domain.ModuleInput{
 		ApplicationID:      request.ApplicationID,
 		CommonModuleID:     request.CommonModuleID,
@@ -222,15 +227,17 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 		OwnerFeishuUnionID: request.OwnerFeishuUnionID,
 		OwnerFeishuUserID:  request.OwnerFeishuUserID,
 		OwnerUserID:        request.OwnerUserID,
-		Repository: domain.ModuleRepositoryBinding{
-			Provider:       domain.CodeSourceProvider(request.Repository.Provider),
-			RepositoryID:   repositoryID,
-			InstallationID: installationID,
-			FullName:       request.Repository.FullName,
-			HTMLURL:        request.Repository.HTMLURL,
-			CloneURL:       request.Repository.CloneURL,
-			SSHURL:         request.Repository.SSHURL,
-			DefaultBranch:  request.Repository.DefaultBranch,
+		Repository: domain.ModuleRepository{
+			ConnectionID:         request.Repository.ConnectionID,
+			ExternalRepositoryID: request.Repository.ExternalRepositoryID,
+		},
+		BuildConfig: domain.ModuleBuildConfig{
+			AutoBuildBranches:    request.BuildConfig.AutoBuildBranches,
+			AutoBuildEnvironment: request.BuildConfig.AutoBuildEnvironment,
+			AutoPreviewRelease:   request.BuildConfig.AutoPreviewRelease,
+			AutoPreviewTTLHours:  request.BuildConfig.AutoPreviewTTLHours,
+			BuildContext:         request.BuildConfig.BuildContext,
+			DockerfilePath:       request.BuildConfig.DockerfilePath,
 		},
 	}
 	if includeID {
@@ -258,6 +265,8 @@ func moduleErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "common module must belong to same application"})
 	case errors.Is(err, domain.ErrInvalidModuleInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid module request"})
+	case errors.Is(err, domain.ErrCodeSourceConnectionInactive):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "code source connection is not active"})
 	case errors.Is(err, domain.ErrForbidden):
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:
@@ -275,11 +284,21 @@ func newModuleResponses(modules []domain.Module) []moduleResponse {
 
 func newModuleResponse(module domain.Module) moduleResponse {
 	return moduleResponse{
-		ApplicationID:            module.ApplicationID,
-		ApplicationName:          module.ApplicationName,
-		ApplicationSlug:          module.ApplicationSlug,
+		ApplicationID:   module.ApplicationID,
+		ApplicationName: module.ApplicationName,
+		ApplicationSlug: module.ApplicationSlug,
+		BuildConfig: moduleBuildConfigResponse{
+			AutoBuildBranches:    nonNilStrings(module.BuildConfig.AutoBuildBranches),
+			AutoBuildEnvironment: module.BuildConfig.AutoBuildEnvironment,
+			AutoPreviewRelease:   module.BuildConfig.AutoPreviewRelease,
+			AutoPreviewTTLHours:  module.BuildConfig.AutoPreviewTTLHours,
+			BuildContext:         module.BuildConfig.BuildContext,
+			DockerfilePath:       module.BuildConfig.DockerfilePath,
+		},
+		CodeSourceConnectionID:   module.Repository.ConnectionID,
+		CodeSourceConnectionName: module.ConnectionName,
 		CreatedAt:                formatTime(module.CreatedAt),
-		DefaultBranch:            module.DefaultBranch,
+		DefaultBranch:            module.Repository.DefaultBranch,
 		ID:                       module.ID,
 		Kind:                     string(module.Kind),
 		CommonModuleID:           module.CommonModuleID,
@@ -289,14 +308,12 @@ func newModuleResponse(module domain.Module) moduleResponse {
 		OwnerAvatarURL:           module.OwnerAvatarURL,
 		OwnerEmail:               module.OwnerEmail,
 		OwnerUserID:              module.OwnerUserID,
-		Repository:               module.RepositoryFullName,
-		RepositoryCloneURL:       module.RepositoryCloneURL,
-		RepositoryFullName:       module.RepositoryFullName,
-		RepositoryHTMLURL:        module.RepositoryHTMLURL,
-		RepositoryID:             strconv.FormatInt(module.RepositoryID, 10),
-		RepositoryInstallationID: strconv.FormatInt(module.RepositoryInstallationID, 10),
-		RepositoryProvider:       string(module.RepositoryProvider),
-		RepositorySSHURL:         module.RepositorySSHURL,
+		Repository:               module.Repository.FullName,
+		RepositoryCloneURL:       module.Repository.CloneURL,
+		RepositoryFullName:       module.Repository.FullName,
+		RepositoryID:             module.Repository.ExternalRepositoryID,
+		RepositoryProvider:       string(module.CodeSourceProvider),
+		RepositoryWebURL:         module.Repository.WebURL,
 		UpdatedAt:                formatTime(module.UpdatedAt),
 	}
 }

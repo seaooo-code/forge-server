@@ -14,12 +14,11 @@ type buildHandler struct {
 	service     BuildService
 }
 
+// buildCreateRequest 只创建手动构建；webhook 构建由 PushEventHandler 在服务端创建。
 type buildCreateRequest struct {
 	ModuleID    string `json:"moduleId"`
 	Environment string `json:"environment"`
 	Branch      string `json:"branch"`
-	TriggerID   string `json:"triggerId"`
-	TriggerType string `json:"triggerType"`
 }
 
 type buildRecordDetailResponse struct {
@@ -38,6 +37,7 @@ type buildRecordResponse struct {
 	ArtifactKey              string                `json:"artifactKey"`
 	ArtifactURL              string                `json:"artifactUrl"`
 	CreatedAt                string                `json:"createdAt"`
+	CreatedBy                *userSummaryResponse  `json:"createdBy"`
 	Branch                   string                `json:"branch"`
 	DefaultBranch            string                `json:"defaultBranch"`
 	Environment              string                `json:"environment"`
@@ -51,10 +51,14 @@ type buildRecordResponse struct {
 	FileCount                int                   `json:"fileCount"`
 	TotalSizeBytes           int64                 `json:"totalSizeBytes"`
 	QueuedAt                 string                `json:"queuedAt"`
+	CodeSourceConnectionID   string                `json:"codeSourceConnectionId"`
+	CommitSHA                string                `json:"commitSha"`
+	Platforms                []string              `json:"platforms"`
 	RepositoryFullName       string                `json:"repositoryFullName"`
 	RepositoryID             string                `json:"repositoryId"`
-	RepositoryInstallationID string                `json:"repositoryInstallationId"`
 	RepositoryProvider       string                `json:"repositoryProvider"`
+	RepositoryWebURL         string                `json:"repositoryWebUrl"`
+	RuntimeVersion           string                `json:"runtimeVersion"`
 	StartedAt                string                `json:"startedAt"`
 	Status                   string                `json:"status"`
 	StorageConfigurationID   string                `json:"storageConfigurationId"`
@@ -63,6 +67,13 @@ type buildRecordResponse struct {
 	TriggerType              string                `json:"triggerType"`
 	UpdatedAt                string                `json:"updatedAt"`
 	WorkerID                 string                `json:"workerId"`
+}
+
+// userSummaryResponse 是创建人等关联用户的展示字段；用户为空时整个对象为 null。
+type userSummaryResponse struct {
+	AvatarURL string `json:"avatarUrl"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 }
 
 type artifactTreeResponse struct {
@@ -152,13 +163,15 @@ func (h buildHandler) create(c echo.Context) error {
 	if err := authorizeCurrentUser(c, h.authService, domain.ActionBuildCreate, domain.AuthorizationResource{ModuleID: request.ModuleID}); err != nil {
 		return err
 	}
+	// authorizeCurrentUser 已校验会话和用户 id，这里只取值。
+	session, _ := consoleSession(c)
 
 	record, err := h.service.CreateBuildRecord(c.Request().Context(), domain.BuildRecordInput{
-		ModuleID:    request.ModuleID,
-		Environment: request.Environment,
-		Branch:      request.Branch,
-		TriggerID:   request.TriggerID,
-		TriggerType: domain.BuildTriggerType(request.TriggerType),
+		ModuleID:        request.ModuleID,
+		Environment:     request.Environment,
+		Branch:          request.Branch,
+		TriggerType:     domain.BuildTriggerTypeManual,
+		CreatedByUserID: domain.ConsoleUserIDFromFeishu(session.User),
 	})
 	if err != nil {
 		return buildErrorResponse(c, err)
@@ -221,10 +234,14 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		FileCount:                record.FileCount,
 		TotalSizeBytes:           record.TotalSizeBytes,
 		QueuedAt:                 formatTime(record.QueuedAt),
-		RepositoryFullName:       record.RepositoryFullName,
-		RepositoryID:             int64String(record.RepositoryID),
-		RepositoryInstallationID: int64String(record.RepositoryInstallationID),
-		RepositoryProvider:       string(record.RepositoryProvider),
+		CodeSourceConnectionID:   record.Repository.ConnectionID,
+		CommitSHA:                record.CommitSHA,
+		Platforms:                nonNilStrings(record.Platforms),
+		RepositoryFullName:       record.Repository.FullName,
+		RepositoryID:             record.Repository.ExternalRepositoryID,
+		RepositoryProvider:       string(record.CodeSourceProvider),
+		RepositoryWebURL:         record.Repository.WebURL,
+		RuntimeVersion:           record.RuntimeVersion,
 		StartedAt:                formatOptionalTime(record.StartedAt),
 		Status:                   string(record.Status),
 		StorageConfigurationID:   record.StorageConfigurationID,
@@ -233,6 +250,9 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		TriggerType:              string(record.TriggerType),
 		UpdatedAt:                formatTime(record.UpdatedAt),
 		WorkerID:                 record.WorkerID,
+	}
+	if record.CreatedBy != nil {
+		response.CreatedBy = &userSummaryResponse{AvatarURL: record.CreatedBy.AvatarURL, ID: record.CreatedBy.ID, Name: record.CreatedBy.Name}
 	}
 	if includeArtifactTree {
 		tree := newArtifactTreeResponse(record.ArtifactTree)
@@ -278,4 +298,12 @@ func newBuildRecordSummaryResponse(summary domain.BuildRecordSummary) buildRecor
 		Succeeded: summary.Succeeded,
 		Total:     summary.Total,
 	}
+}
+
+// nonNilStrings 让空切片序列化为 [] 而不是 null。
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }

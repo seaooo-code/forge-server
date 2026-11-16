@@ -288,6 +288,27 @@ func TestReleaseServiceResolveRouteNormalizesInput(t *testing.T) {
 	}
 }
 
+func TestReleaseServiceResolveRouteValidatesRuntimeVersion(t *testing.T) {
+	repository := fakeReleaseRepository{}
+	service := NewReleaseService(&repository)
+
+	if _, err := service.ResolveReleaseRoute(context.Background(), domain.ReleaseResolveInput{
+		ModuleID:       "module-profile",
+		Environment:    "qa",
+		RuntimeVersion: " 1.0.0 ",
+	}); err != nil || repository.lastResolveInput.RuntimeVersion != "1.0.0" {
+		t.Fatalf("expected trimmed runtimeVersion, got %+v, %v", repository.lastResolveInput, err)
+	}
+
+	if _, err := service.ResolveReleaseRoute(context.Background(), domain.ReleaseResolveInput{
+		ModuleID:       "module-profile",
+		Environment:    "qa",
+		RuntimeVersion: "1.0.0/beta",
+	}); !errors.Is(err, domain.ErrInvalidReleaseInput) {
+		t.Fatalf("expected invalid runtimeVersion to be rejected, got %v", err)
+	}
+}
+
 func TestReleaseServiceListReleasesNormalizesFilters(t *testing.T) {
 	repository := fakeReleaseRepository{}
 	service := NewReleaseService(&repository)

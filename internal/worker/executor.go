@@ -2,16 +2,17 @@ package worker
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -22,22 +23,34 @@ import (
 	s3infra "forge-server/internal/infra/s3"
 )
 
-type CodeSourceConfigStore interface {
-	GetCodeSourceAppConfig(ctx context.Context, provider domain.CodeSourceProvider) (domain.CodeSourceAppConfig, error)
+// RepositoryCredentialsProvider 通过代码源 provider 获取 clone 凭证，由 service.CodeSourceService 实现。
+type RepositoryCredentialsProvider interface {
+	CloneCredentials(ctx context.Context, repository domain.ModuleRepository) (domain.GitCredentials, error)
 }
 
-type GitHubInstallationTokenClient interface {
-	InstallationAccessToken(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) (string, error)
+// BuildVariableResolver 解析模块在某个环境下生效的构建变量（已解密、已按环境覆盖），由 service.BuildVariableService 实现。
+type BuildVariableResolver interface {
+	ResolveBuildVariables(ctx context.Context, moduleID string, environmentCode string) ([]domain.ModuleBuildVariable, error)
 }
 
 const dockerBuildArtifactDir = "/app/dist"
 
 type Executor struct {
-	cfg                  config.WorkerConfig
-	codeSourceStore      CodeSourceConfigStore
-	fallbackGitHubConfig domain.CodeSourceAppConfig
-	githubClient         GitHubInstallationTokenClient
-	logger               *slog.Logger
+	cfg         config.WorkerConfig
+	credentials RepositoryCredentialsProvider
+	variables   BuildVariableResolver
+	logs        BuildLogStore
+	logger      *slog.Logger
+	// runner 为空时使用 execCommand，测试可以替换成假实现。
+	runner commandRunner
+	// logFlushInterval 为 0 时使用 buildLogFlushInterval。
+	logFlushInterval time.Duration
+}
+
+type ExecutorDependencies struct {
+	Credentials RepositoryCredentialsProvider
+	Logs        BuildLogStore
+	Variables   BuildVariableResolver
 }
 
 type buildWorkspace struct {
@@ -46,25 +59,63 @@ type buildWorkspace struct {
 	rootDir   string
 }
 
-func NewExecutor(cfg config.WorkerConfig, codeSourceStore CodeSourceConfigStore, githubClient GitHubInstallationTokenClient, fallbackGitHubConfig domain.CodeSourceAppConfig, logger *slog.Logger) *Executor {
+func NewExecutor(cfg config.WorkerConfig, deps ExecutorDependencies, logger *slog.Logger) *Executor {
 	return &Executor{
-		cfg:                  cfg,
-		codeSourceStore:      codeSourceStore,
-		fallbackGitHubConfig: fallbackGitHubConfig,
-		githubClient:         githubClient,
-		logger:               logger,
+		cfg:         cfg,
+		credentials: deps.Credentials,
+		variables:   deps.Variables,
+		logs:        deps.Logs,
+		logger:      logger,
 	}
 }
 
 func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (domain.BuildRecordCompletion, error) {
-	// 构建执行保持单 worker 串行编排，但每一步保留独立函数边界，后续流水线任务可按这些边界配置和复用。
 	if err := e.validateBuildTask(record); err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
 
-	token, err := e.resolveRepositoryToken(ctx, record)
+	flushInterval := e.logFlushInterval
+	if flushInterval <= 0 {
+		flushInterval = buildLogFlushInterval
+	}
+	logs := newBuildLogStream(ctx, e.logs, e.logger, record.ID, buildLogOptions{
+		chunkBytes:    buildLogChunkBytes,
+		flushInterval: flushInterval,
+		maxBytes:      e.cfg.LogMaxBytes,
+	})
+
+	completion, err := e.execute(ctx, record, logs)
 	if err != nil {
-		return domain.BuildRecordCompletion{}, err
+		logs.Linef("构建失败：%v", err)
+	} else {
+		logs.Linef("构建成功：commit %s，runtimeVersion %s，平台 %s，共 %d 个文件", completion.CommitSHA, completion.RuntimeVersion, strings.Join(completion.Platforms, ","), completion.FileCount)
+	}
+	// 必须先写完日志再返回：worker 随后才把构建标记为结束，日志接口据此判断 finished。
+	_ = logs.Close()
+	return completion, err
+}
+
+// execute 按检出、docker 构建、产物校验、生成清单、上传的顺序串行执行，每一步的输出都进入构建日志。
+func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs *buildLogStream) (domain.BuildRecordCompletion, error) {
+	logs.Linef("开始构建 %s：模块 %s，环境 %s，分支 %s", record.ID, record.ModuleID, record.Environment, record.Branch)
+
+	credentials, err := e.credentials.CloneCredentials(ctx, record.Repository)
+	if err != nil {
+		return domain.BuildRecordCompletion{}, fmt.Errorf("获取仓库凭证失败：%w", err)
+	}
+	logs.AddSecrets(credentials.Password)
+
+	var variables []domain.ModuleBuildVariable
+	if e.variables != nil {
+		variables, err = e.variables.ResolveBuildVariables(ctx, record.ModuleID, record.Environment)
+		if err != nil {
+			return domain.BuildRecordCompletion{}, fmt.Errorf("读取构建变量失败：%w", err)
+		}
+	}
+	for _, variable := range variables {
+		if variable.IsSecret {
+			logs.AddSecrets(variable.Value)
+		}
 	}
 
 	workspace, cleanup, err := e.prepareBuildWorkspace(record)
@@ -73,39 +124,59 @@ func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (doma
 	}
 	defer cleanup()
 
-	artifactRoot, err := e.buildArtifact(ctx, record, token, workspace)
+	paths, err := resolveDockerBuildPaths(workspace.repoDir, record.DockerfilePath, record.BuildContext, e.cfg.Dockerfile)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
 
-	artifactKey := e.artifactKey(record)
-	manifest, err := generateArtifactManifest(artifactRoot, artifactKey)
+	commitSHA, err := e.checkoutRepository(ctx, record, credentials, workspace.repoDir, logs)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
+	logs.Linef("已检出 commit %s", commitSHA)
+
+	if err := verifyDockerBuildPaths(workspace.repoDir, paths); err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+	buildOptions, buildEnv := dockerBuildVariableOptions(record, commitSHA, variables)
+	if err := e.exportDockerArtifact(ctx, record.ID+"-"+filepath.Base(workspace.rootDir), paths, buildOptions, buildEnv, workspace.outputDir, logs); err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+
+	artifactRoot, err := buildArtifactRoot(workspace.outputDir)
+	if err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+	forgeManifest, platforms, err := validateArtifactContract(artifactRoot)
+	if err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+	logs.Linef("产物校验通过：runtimeVersion %s，平台 %s", forgeManifest.RuntimeVersion, strings.Join(platforms, ","))
+
+	manifest, err := generateArtifactManifest(artifactRoot, e.artifactKey(record), e.cfg.ArtifactDigests)
+	if err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+	logs.Linef("上传 %d 个文件，共 %d 字节", manifest.FileCount, manifest.TotalSizeBytes)
 	if err := e.uploadArtifact(ctx, record, artifactRoot, manifest); err != nil {
-		return domain.BuildRecordCompletion{}, err
+		return domain.BuildRecordCompletion{}, fmt.Errorf("上传产物失败：%w", err)
 	}
 
-	return buildRecordCompletion(record, manifest), nil
+	completion := buildRecordCompletion(record, manifest)
+	completion.CommitSHA = commitSHA
+	completion.RuntimeVersion = forgeManifest.RuntimeVersion
+	completion.Platforms = platforms
+	return completion, nil
 }
 
 func (e *Executor) validateBuildTask(record domain.BuildRecord) error {
-	if record.RepositoryProvider != domain.CodeSourceProviderGitHub {
+	if record.Repository.ConnectionID == "" {
 		return domain.ErrInvalidBuildInput
 	}
-	if e.codeSourceStore == nil || e.githubClient == nil {
+	if e.credentials == nil {
 		return domain.ErrCodeSourceAuthNotConfigured
 	}
 	return nil
-}
-
-func (e *Executor) resolveRepositoryToken(ctx context.Context, record domain.BuildRecord) (string, error) {
-	appConfig, err := e.codeSourceAppConfig(ctx, record.RepositoryProvider)
-	if err != nil {
-		return "", err
-	}
-	return e.githubClient.InstallationAccessToken(ctx, appConfig, record.RepositoryInstallationID)
 }
 
 func (e *Executor) prepareBuildWorkspace(record domain.BuildRecord) (buildWorkspace, func(), error) {
@@ -136,17 +207,6 @@ func (e *Executor) prepareBuildWorkspace(record domain.BuildRecord) (buildWorksp
 	return workspace, cleanup, nil
 }
 
-func (e *Executor) buildArtifact(ctx context.Context, record domain.BuildRecord, token string, workspace buildWorkspace) (string, error) {
-	// 本地构建阶段只负责检出代码和导出产物目录，不处理 manifest 或上传，便于后续拆成独立流水线任务。
-	if err := e.checkoutRepository(ctx, record, token, workspace.repoDir); err != nil {
-		return "", err
-	}
-	if err := e.exportDockerArtifact(ctx, record.ID+"-"+filepath.Base(workspace.rootDir), workspace.repoDir, workspace.outputDir); err != nil {
-		return "", err
-	}
-	return buildArtifactRoot(workspace.outputDir)
-}
-
 func buildRecordCompletion(record domain.BuildRecord, manifest domain.ArtifactManifest) domain.BuildRecordCompletion {
 	return domain.BuildRecordCompletion{
 		ArtifactKey:    manifest.ArtifactKey,
@@ -157,69 +217,34 @@ func buildRecordCompletion(record domain.BuildRecord, manifest domain.ArtifactMa
 	}
 }
 
-func (e *Executor) checkoutRepository(ctx context.Context, record domain.BuildRecord, token string, repoDir string) error {
-	cloneURL := strings.TrimSpace(record.RepositoryCloneURL)
-	if cloneURL == "" {
-		return domain.ErrInvalidBuildInput
+func (e *Executor) exportDockerArtifact(ctx context.Context, buildID string, paths dockerBuildPaths, buildOptions []string, buildEnv []string, outputDir string, logs io.Writer) error {
+	docker := func(env []string, captureStdout bool, args ...string) (string, error) {
+		return e.runCommand(ctx, command{env: env, name: "docker", args: args, log: logs, captureStdout: captureStdout})
 	}
 
-	askpassPath, err := writeGitAskPass(filepath.Dir(repoDir))
-	if err != nil {
+	outputPlan := dockerArtifactOutputPlan(paths.repoDir, paths.dockerfile)
+	if outputPlan.useBuildOutput {
+		_, err := docker(buildEnv, false, dockerBuildOutputArgs(paths, outputDir, buildOptions)...)
 		return err
 	}
 
-	return runCommand(ctx, "", []string{
-		"GIT_ASKPASS=" + askpassPath,
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_USERNAME=x-access-token",
-		"GIT_PASSWORD=" + token,
-	}, []string{token}, "git", gitCloneArgs(record.Branch, cloneURL, repoDir)...)
-}
-
-func gitCloneArgs(branch string, cloneURL string, repoDir string) []string {
-	args := []string{"clone", "--depth", "1"}
-	if strings.TrimSpace(branch) != "" {
-		args = append(args, "--branch", strings.TrimSpace(branch))
-	}
-	return append(args, cloneURL, repoDir)
-}
-
-func (e *Executor) exportDockerArtifact(ctx context.Context, buildID string, repoDir string, outputDir string) error {
-	dockerfile := strings.TrimSpace(e.cfg.Dockerfile)
-	if dockerfile == "" {
-		dockerfile = "Dockerfile"
-	}
-
-	outputPlan := dockerArtifactOutputPlan(repoDir, dockerfile)
-	if outputPlan.useBuildOutput {
-		return runCommand(ctx, repoDir, nil, nil, "docker", dockerBuildOutputArgs(dockerfile, outputDir)...)
-	}
-
 	imageTag := dockerImageTag(buildID)
-	if err := runCommand(ctx, repoDir, nil, nil, "docker", dockerBuildArgs(dockerfile, imageTag)...); err != nil {
+	if _, err := docker(buildEnv, false, dockerBuildArgs(paths, imageTag, buildOptions)...); err != nil {
 		return err
 	}
 	defer e.cleanupDockerImage(imageTag)
 
-	containerID, err := runCommandOutput(ctx, "", nil, nil, "docker", dockerCreateArgs(imageTag)...)
+	containerID, err := docker(nil, true, dockerCreateArgs(imageTag)...)
 	if err != nil {
 		return err
 	}
-	containerID = strings.TrimSpace(containerID)
 	if containerID == "" {
 		return errors.New("docker create returned empty container id")
 	}
 	defer e.cleanupDockerContainer(containerID)
 
-	return runCommand(ctx, "", nil, nil, "docker", dockerCopyArgs(containerID, outputPlan.copySource, outputDir)...)
-}
-
-func dockerBuildArgs(dockerfile string, imageTag string) []string {
-	return []string{"build", "--file", dockerfile, "--tag", imageTag, "."}
-}
-
-func dockerBuildOutputArgs(dockerfile string, outputDir string) []string {
-	return []string{"build", "--file", dockerfile, "--output", "type=local,dest=" + outputDir, "."}
+	_, err = docker(nil, false, dockerCopyArgs(containerID, outputPlan.copySource, outputDir)...)
+	return err
 }
 
 func dockerCreateArgs(imageTag string) []string {
@@ -414,18 +439,19 @@ func dockerImageTag(buildID string) string {
 }
 
 func (e *Executor) cleanupDockerContainer(containerID string) {
-	if err := runCommand(context.Background(), "", nil, nil, "docker", "rm", "-f", containerID); err != nil && e.logger != nil {
+	if _, err := e.runCommand(context.Background(), command{name: "docker", args: []string{"rm", "-f", containerID}}); err != nil && e.logger != nil {
 		e.logger.Warn("remove build container failed", "container", containerID, "error", err)
 	}
 }
 
 func (e *Executor) cleanupDockerImage(imageTag string) {
-	if err := runCommand(context.Background(), "", nil, nil, "docker", "image", "rm", "-f", imageTag); err != nil && e.logger != nil {
+	if _, err := e.runCommand(context.Background(), command{name: "docker", args: []string{"image", "rm", "-f", imageTag}}); err != nil && e.logger != nil {
 		e.logger.Warn("remove build image failed", "image", imageTag, "error", err)
 	}
 }
 
-func generateArtifactManifest(artifactRoot string, artifactKey string) (domain.ArtifactManifest, error) {
+// generateArtifactManifest 扫描本地产物生成清单。digests 是 FORGE_ARTIFACT_DIGESTS 配置的算法，sha256 字段始终计算以兼容旧逻辑。
+func generateArtifactManifest(artifactRoot string, artifactKey string, digests []string) (domain.ArtifactManifest, error) {
 	// manifest 是产物上传和客户端下载的共同索引，这里只扫描本地文件并生成稳定元数据，不访问远端存储。
 	files, err := artifactFiles(artifactRoot)
 	if err != nil {
@@ -438,7 +464,7 @@ func generateArtifactManifest(artifactRoot string, artifactKey string) (domain.A
 	manifest := newArtifactManifest(artifactKey)
 	for _, artifact := range files {
 		objectKey := strings.TrimRight(artifactKey, "/") + "/" + strings.TrimLeft(artifact.key, "/")
-		manifestFile, err := artifactManifestFile(artifact, objectKey)
+		manifestFile, err := artifactManifestFile(artifact, objectKey, digests)
 		if err != nil {
 			return domain.ArtifactManifest{}, err
 		}
@@ -510,25 +536,45 @@ func newArtifactManifest(artifactKey string) domain.ArtifactManifest {
 	}
 }
 
-func artifactManifestFile(artifact artifactFile, objectKey string) (domain.ArtifactManifestFile, error) {
+func artifactManifestFile(artifact artifactFile, objectKey string, digests []string) (domain.ArtifactManifestFile, error) {
 	file, err := os.Open(artifact.path)
 	if err != nil {
 		return domain.ArtifactManifestFile{}, err
 	}
 	defer file.Close()
 
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
+	sha256Hash := sha256.New()
+	hashes := map[string]hash.Hash{"sha256": sha256Hash}
+	writers := []io.Writer{sha256Hash}
+	for _, algorithm := range digests {
+		if _, ok := hashes[algorithm]; ok {
+			continue
+		}
+		switch algorithm {
+		case "md5":
+			hashes[algorithm] = md5.New()
+		default:
+			return domain.ArtifactManifestFile{}, fmt.Errorf("unsupported artifact digest algorithm %q", algorithm)
+		}
+		writers = append(writers, hashes[algorithm])
+	}
+
+	size, err := io.Copy(io.MultiWriter(writers...), file)
 	if err != nil {
 		return domain.ArtifactManifestFile{}, err
 	}
 
+	fileDigests := make(map[string]string, len(digests))
+	for _, algorithm := range digests {
+		fileDigests[algorithm] = fmt.Sprintf("%x", hashes[algorithm].Sum(nil))
+	}
 	return domain.ArtifactManifestFile{
 		Path:        artifact.key,
 		ObjectKey:   objectKey,
 		SizeBytes:   size,
 		ContentType: contentType(artifact.path),
-		SHA256:      fmt.Sprintf("%x", hash.Sum(nil)),
+		SHA256:      fmt.Sprintf("%x", sha256Hash.Sum(nil)),
+		Digests:     fileDigests,
 	}, nil
 }
 
@@ -626,19 +672,6 @@ func artifactPathSegment(value string) string {
 	return value
 }
 
-func (e *Executor) codeSourceAppConfig(ctx context.Context, provider domain.CodeSourceProvider) (domain.CodeSourceAppConfig, error) {
-	config, err := e.codeSourceStore.GetCodeSourceAppConfig(ctx, provider)
-	if err == nil {
-		return config, nil
-	}
-	if errors.Is(err, domain.ErrCodeSourceAuthNotConfigured) &&
-		provider == domain.CodeSourceProviderGitHub &&
-		isUsableGitHubAppConfig(e.fallbackGitHubConfig) {
-		return e.fallbackGitHubConfig, nil
-	}
-	return domain.CodeSourceAppConfig{}, err
-}
-
 func (e *Executor) workDir() string {
 	workDir := strings.TrimSpace(e.cfg.WorkDir)
 	if workDir == "" {
@@ -666,54 +699,4 @@ func contentType(path string) string {
 		return "application/octet-stream"
 	}
 	return contentType
-}
-
-func runCommand(ctx context.Context, dir string, env []string, secrets []string, name string, args ...string) error {
-	_, err := runCommandOutput(ctx, dir, env, secrets, name, args...)
-	return err
-}
-
-func runCommandOutput(ctx context.Context, dir string, env []string, secrets []string, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return "", fmt.Errorf("run %s: %w", name, err)
-		}
-		for _, secret := range secrets {
-			if strings.TrimSpace(secret) != "" {
-				message = strings.ReplaceAll(message, secret, "[redacted]")
-			}
-		}
-		return "", fmt.Errorf("run %s: %w: %s", name, err, message)
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func writeGitAskPass(dir string) (string, error) {
-	path := filepath.Join(dir, "git-askpass.sh")
-	script := `#!/bin/sh
-case "$1" in
-*Username*) printf '%s\n' "$GIT_USERNAME" ;;
-*) printf '%s\n' "$GIT_PASSWORD" ;;
-esac
-`
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		return "", fmt.Errorf("write git askpass helper: %w", err)
-	}
-	return path, nil
-}
-
-func isUsableGitHubAppConfig(config domain.CodeSourceAppConfig) bool {
-	return strings.TrimSpace(config.AppID) != "" &&
-		strings.TrimSpace(config.AppSlug) != "" &&
-		strings.TrimSpace(config.PrivateKey) != ""
 }

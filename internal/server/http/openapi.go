@@ -3,6 +3,8 @@ package httpserver
 import (
 	"net/http"
 
+	"forge-server/internal/domain"
+
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/labstack/echo/v4"
 )
@@ -66,7 +68,11 @@ func openAPIDocument() *openapi3.T {
 			},
 			{
 				Name:        "CodeSources",
-				Description: "Code source provider installation and repository discovery.",
+				Description: "Code source connections (GitHub App installations, GitLab access tokens) and repository discovery.",
+			},
+			{
+				Name:        "Webhooks",
+				Description: "Code source provider webhook receivers. No console session; verified by each provider.",
 			},
 			{
 				Name:        "Storage",
@@ -342,6 +348,41 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/modules/{id}/build-variables", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("listModuleBuildVariables", "List module build variables", []string{"Modules"}, responses(
+						response(http.StatusOK, "Module build variables. Secret values are masked as ******.", schemaRef("BuildVariablesResponse")),
+						response(http.StatusForbidden, "Current user cannot manage this module.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = moduleIDParameters()
+					return op
+				}(),
+				Put: func() *openapi3.Operation {
+					op := operation("upsertModuleBuildVariable", "Create or update a module build variable", []string{"Modules"}, responses(
+						response(http.StatusOK, "Build variable saved. Secret values are masked as ******.", schemaRef("BuildVariableDetailResponse")),
+						response(http.StatusBadRequest, "Invalid build variable request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage this module.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module or environment not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = moduleIDParameters()
+					op.RequestBody = requestBody("Build variable payload. Upserts by key and environmentCode.", schemaRef("BuildVariableUpsertRequest"))
+					return op
+				}(),
+				Delete: func() *openapi3.Operation {
+					op := operation("deleteModuleBuildVariable", "Delete a module build variable", []string{"Modules"}, responses(
+						responseNoBody(http.StatusNoContent, "Build variable deleted."),
+						response(http.StatusBadRequest, "Invalid build variable request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot manage this module.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module or build variable not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = append(moduleIDParameters(), buildVariableDeleteParameters()...)
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/builds", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("listBuildRecords", "List RN JS bundle build records", []string{"Builds"}, responses(
@@ -375,6 +416,18 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/builds/{id}/logs", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("listBuildLogs", "List build log chunks", []string{"Builds"}, responses(
+						response(http.StatusOK, "Build log chunks after afterSeq.", schemaRef("BuildLogsResponse")),
+						response(http.StatusBadRequest, "Invalid afterSeq.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = append(buildRecordIDParameters(), buildLogParameters()...)
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/artifacts/applications/{applicationSlug}/modules/{moduleId}/environments/{environment}/builds/{buildId}/file", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("downloadArtifactFile", "Download a single build artifact file", []string{"Artifacts"}, responses(
@@ -393,7 +446,7 @@ func openAPIDocument() *openapi3.T {
 				Get: func() *openapi3.Operation {
 					op := operation("getApplicationArtifactManifest", "Get application module artifact manifest", []string{"Artifacts"}, responses(
 						response(http.StatusOK, "Application module artifact manifest.", schemaRef("ArtifactManifestResponse")),
-						response(http.StatusBadRequest, "Invalid artifact manifest request.", schemaRef("ErrorResponse")),
+						response(http.StatusBadRequest, "Invalid artifact manifest request, including missing or invalid platform or runtimeVersion.", schemaRef("ErrorResponse")),
 						response(http.StatusUnauthorized, "Artifact token is required.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Application environment manifest not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -480,32 +533,22 @@ func openAPIDocument() *openapi3.T {
 				}(),
 			}),
 			openapi3.WithPath("/api/v1/code-sources", &openapi3.PathItem{
-				Get: operation("listCodeSources", "List code source apps", []string{"CodeSources"}, responses(
+				Get: operation("listCodeSources", "List code source apps (GitHub App status)", []string{"CodeSources"}, responses(
 					response(http.StatusOK, "Code source app list.", schemaRef("CodeSourcesResponse")),
 					response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
 					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 				)),
 			}),
-			openapi3.WithPath("/api/v1/code-sources/{provider}/manifest", &openapi3.PathItem{
-				Get: func() *openapi3.Operation {
-					op := operation("getCodeSourceAppManifest", "Get code source app manifest creation payload", []string{"CodeSources"}, responses(
-						response(http.StatusOK, "Code source app manifest creation payload.", schemaRef("CodeSourceAppManifest")),
-						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Code source provider not found.", schemaRef("ErrorResponse")),
-						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
-						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
-						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
-					))
-					op.Parameters = codeSourceProviderParameters()
-					return op
-				}(),
+			openapi3.WithPath("/api/v1/code-sources/github/manifest", &openapi3.PathItem{
+				Get: operation("getCodeSourceAppManifest", "Get GitHub App manifest creation payload", []string{"CodeSources"}, codeSourceResponses(
+					response(http.StatusOK, "GitHub App manifest creation payload.", schemaRef("CodeSourceAppManifest")),
+				)),
 			}),
-			openapi3.WithPath("/api/v1/code-sources/{provider}/manifest/callback", &openapi3.PathItem{
+			openapi3.WithPath("/api/v1/code-sources/github/manifest/callback", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
-					op := operation("completeCodeSourceAppManifest", "Complete code source app manifest callback", []string{"CodeSources"}, responses(
+					op := operation("completeCodeSourceAppManifest", "Complete GitHub App manifest callback", []string{"CodeSources"}, responses(
 						response(http.StatusFound, "Redirects to GitHub App installation URL.", nil),
 						response(http.StatusBadRequest, "Invalid code source manifest callback.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Code source provider not found.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -514,64 +557,110 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/code-sources/{provider}/install-url", &openapi3.PathItem{
-				Get: func() *openapi3.Operation {
-					op := operation("getCodeSourceInstallURL", "Get code source app installation URL", []string{"CodeSources"}, responses(
-						response(http.StatusOK, "Code source installation URL.", schemaRef("CodeSourceInstallURL")),
-						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
-						response(http.StatusForbidden, "Current user cannot manage code sources.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Code source provider not found.", schemaRef("ErrorResponse")),
-						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
-						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
-						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
-					))
-					op.Parameters = codeSourceProviderParameters()
-					return op
-				}(),
+			openapi3.WithPath("/api/v1/code-sources/github/install-url", &openapi3.PathItem{
+				Get: operation("getCodeSourceInstallURL", "Get GitHub App installation URL", []string{"CodeSources"}, codeSourceResponses(
+					response(http.StatusOK, "GitHub App installation URL.", schemaRef("CodeSourceInstallURL")),
+				)),
 			}),
-			openapi3.WithPath("/api/v1/code-sources/{provider}/install/callback", &openapi3.PathItem{
+			openapi3.WithPath("/api/v1/code-sources/github/install/callback", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
-					op := operation("completeCodeSourceInstallation", "Complete code source app installation callback", []string{"CodeSources"}, responses(
-						response(http.StatusFound, "Code source app installation completed and redirects to console.", nil),
-						response(http.StatusBadRequest, "Invalid code source callback.", schemaRef("ErrorResponse")),
-						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
-						response(http.StatusForbidden, "Current user cannot manage code sources.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Code source provider or installation not found.", schemaRef("ErrorResponse")),
-						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
-						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
-						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					op := operation("completeCodeSourceInstallation", "Complete GitHub App installation callback and upsert the installation connection", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusFound, "Installation connection saved and redirects to console.", nil),
 					))
 					op.Parameters = codeSourceInstallCallbackParameters()
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/code-sources/{provider}/installations", &openapi3.PathItem{
-				Delete: func() *openapi3.Operation {
-					op := operation("deleteCodeSourceInstallations", "Delete current user's code source app authorizations and repository cache", []string{"CodeSources"}, responses(
-						responseNoBody(http.StatusNoContent, "Current user's code source app authorizations and repository cache were deleted."),
-						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
-						response(http.StatusForbidden, "Current user cannot manage code sources.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Code source provider or installation not found.", schemaRef("ErrorResponse")),
-						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
-						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
-						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+			openapi3.WithPath("/api/v1/code-source-connections", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("listCodeSourceConnections", "List code source connections", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusOK, "Code source connection list. Deleted connections are excluded.", schemaRef("CodeSourceConnectionsResponse")),
 					))
-					op.Parameters = codeSourceProviderParameters()
+					op.Parameters = codeSourceConnectionListParameters()
+					return op
+				}(),
+				Post: func() *openapi3.Operation {
+					op := operation("createCodeSourceConnection", "Create a token based code source connection (GitLab)", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusCreated, "Connection verified and created.", schemaRef("CodeSourceConnectionDetailResponse")),
+						response(http.StatusConflict, "Connection already exists.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Code source connection create payload.", schemaRef("CodeSourceConnectionCreateRequest"))
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/code-sources/{provider}/repositories/search", &openapi3.PathItem{
+			openapi3.WithPath("/api/v1/code-source-connections/{id}", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
-					op := operation("searchCodeSourceRepositories", "Search authorized code source repositories", []string{"CodeSources"}, responses(
-						response(http.StatusOK, "Authorized repository search result.", schemaRef("CodeSourceRepositorySearchResponse")),
-						response(http.StatusBadRequest, "Invalid repository search request.", schemaRef("ErrorResponse")),
-						response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Code source provider or installation not found.", schemaRef("ErrorResponse")),
-						response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
-						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
-						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					op := operation("getCodeSourceConnection", "Get code source connection", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusOK, "Code source connection detail.", schemaRef("CodeSourceConnectionDetailResponse")),
+					))
+					op.Parameters = codeSourceConnectionIDParameters()
+					return op
+				}(),
+				Patch: func() *openapi3.Operation {
+					op := operation("updateCodeSourceConnection", "Update code source connection name, credential or status", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusOK, "Code source connection updated.", schemaRef("CodeSourceConnectionDetailResponse")),
+					))
+					op.Parameters = codeSourceConnectionIDParameters()
+					op.RequestBody = requestBody("Code source connection update payload. Omitted fields are unchanged.", schemaRef("CodeSourceConnectionUpdateRequest"))
+					return op
+				}(),
+				Delete: func() *openapi3.Operation {
+					op := operation("deleteCodeSourceConnection", "Delete code source connection", []string{"CodeSources"}, codeSourceResponses(
+						responseNoBody(http.StatusNoContent, "Connection was deleted."),
+						response(http.StatusConflict, "Connection is referenced by modules.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = codeSourceConnectionIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/code-source-connections/{id}/verify", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("verifyCodeSourceConnection", "Verify code source connection credential", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusOK, "Connection verified.", schemaRef("CodeSourceConnectionDetailResponse")),
+					))
+					op.Parameters = codeSourceConnectionIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/code-source-connections/{id}/repositories", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("searchCodeSourceRepositories", "Search repositories accessible by a connection and refresh the repository cache", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusOK, "Repository search result.", schemaRef("CodeSourceRepositorySearchResponse")),
 					))
 					op.Parameters = codeSourceRepositorySearchParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/code-source-connections/{id}/webhook", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("getCodeSourceConnectionWebhook", "Get webhook configuration of a connection", []string{"CodeSources"}, codeSourceResponses(
+						response(http.StatusOK, "Webhook path and secret.", schemaRef("CodeSourceConnectionWebhook")),
+					))
+					op.Parameters = codeSourceConnectionIDParameters()
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/webhooks/github", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("receiveGitHubWebhook", "Receive GitHub App webhook", []string{"Webhooks"}, webhookResponses())
+					op.Description = "Shared by all GitHub App installations. Verified with X-Hub-Signature-256 (HMAC-SHA256 of the App webhook secret); only push events are processed."
+					op.Parameters = webhookHeaderParameters("X-Hub-Signature-256", "X-GitHub-Event", "X-GitHub-Delivery")
+					op.RequestBody = requestBody("Raw GitHub webhook payload.", schemaValue(openapi3.NewObjectSchema()))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/webhooks/gitlab/{connectionId}", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("receiveGitLabWebhook", "Receive GitLab project webhook", []string{"Webhooks"}, webhookResponses())
+					op.Description = "Configured per GitLab project. Verified with X-Gitlab-Token against the connection webhook secret; only Push Hook branch pushes are processed."
+					op.Parameters = append(openapi3.Parameters{
+						{
+							Value: openapi3.NewPathParameter("connectionId").
+								WithDescription("Code source connection id.").
+								WithSchema(stringSchema("Code source connection id.")),
+						},
+					}, webhookHeaderParameters("X-Gitlab-Token", "X-Gitlab-Event", "X-Gitlab-Event-UUID")...)
+					op.RequestBody = requestBody("Raw GitLab webhook payload.", schemaValue(openapi3.NewObjectSchema()))
 					return op
 				}(),
 			}),
@@ -842,15 +931,23 @@ func openAPIDocument() *openapi3.T {
 				"ModulesResponse":                      schemaValue(modulesResponseSchema()),
 				"ModuleDetailResponse":                 schemaValue(moduleDetailResponseSchema()),
 				"ModuleRepositoryRequest":              schemaValue(moduleRepositoryRequestSchema()),
+				"ModuleBuildConfig":                    schemaValue(moduleBuildConfigSchema()),
 				"ModuleCreateRequest":                  schemaValue(moduleRequestSchema(true)),
 				"ModuleUpdateRequest":                  schemaValue(moduleRequestSchema(false)),
 				"BuildRecord":                          schemaValue(buildRecordSchema()),
+				"UserSummary":                          schemaValue(userSummarySchema()),
 				"BuildArtifactTree":                    schemaValue(buildArtifactTreeSchema()),
 				"BuildArtifactTreeNode":                schemaValue(buildArtifactTreeNodeSchema()),
 				"BuildRecordCreateRequest":             schemaValue(buildRecordCreateRequestSchema()),
 				"BuildRecordDetailResponse":            schemaValue(buildRecordDetailResponseSchema()),
 				"BuildRecordSummary":                   schemaValue(buildRecordSummarySchema()),
 				"BuildRecordsResponse":                 schemaValue(buildRecordsResponseSchema()),
+				"BuildLogChunk":                        schemaValue(buildLogChunkSchema()),
+				"BuildLogsResponse":                    schemaValue(buildLogsResponseSchema()),
+				"BuildVariable":                        schemaValue(buildVariableSchema()),
+				"BuildVariablesResponse":               schemaValue(buildVariablesResponseSchema()),
+				"BuildVariableDetailResponse":          schemaValue(buildVariableDetailResponseSchema()),
+				"BuildVariableUpsertRequest":           schemaValue(buildVariableUpsertRequestSchema()),
 				"ArtifactManifestResponse":             schemaValue(artifactManifestResponseSchema()),
 				"ArtifactManifestApplication":          schemaValue(artifactManifestApplicationSchema()),
 				"ArtifactManifestEnvironment":          schemaValue(artifactManifestEnvironmentSchema()),
@@ -866,9 +963,14 @@ func openAPIDocument() *openapi3.T {
 				"ReleaseResolveResponse":               schemaValue(releaseResolveResponseSchema()),
 				"ReleasesResponse":                     schemaValue(releasesResponseSchema()),
 				"CodeSourceApp":                        schemaValue(codeSourceAppSchema()),
-				"CodeSourceAppDetailResponse":          schemaValue(codeSourceAppDetailResponseSchema()),
 				"CodeSourceAppManifest":                schemaValue(codeSourceAppManifestSchema()),
 				"CodeSourceInstallURL":                 schemaValue(codeSourceInstallURLSchema()),
+				"CodeSourceConnection":                 schemaValue(codeSourceConnectionSchema()),
+				"CodeSourceConnectionsResponse":        schemaValue(codeSourceConnectionsResponseSchema()),
+				"CodeSourceConnectionDetailResponse":   schemaValue(codeSourceConnectionDetailResponseSchema()),
+				"CodeSourceConnectionCreateRequest":    schemaValue(codeSourceConnectionCreateRequestSchema()),
+				"CodeSourceConnectionUpdateRequest":    schemaValue(codeSourceConnectionUpdateRequestSchema()),
+				"CodeSourceConnectionWebhook":          schemaValue(codeSourceConnectionWebhookSchema()),
 				"CodeSourceRepository":                 schemaValue(codeSourceRepositorySchema()),
 				"CodeSourceRepositorySearchResponse":   schemaValue(codeSourceRepositorySearchResponseSchema()),
 				"CodeSourcesResponse":                  schemaValue(codeSourcesResponseSchema()),
@@ -949,6 +1051,12 @@ func requestBody(description string, schema *openapi3.SchemaRef) *openapi3.Reque
 
 func schemaRef(name string) *openapi3.SchemaRef {
 	return openapi3.NewSchemaRef("#/components/schemas/"+name, nil)
+}
+
+// nullableSchemaRef 用 allOf 包一层 $ref，OpenAPI 3.0 下 $ref 旁的 nullable 会被忽略。
+func nullableSchemaRef(name string, description string) *openapi3.Schema {
+	schema := &openapi3.Schema{AllOf: openapi3.SchemaRefs{schemaRef(name)}, Description: description}
+	return schema.WithNullable()
 }
 
 func schemaValue(schema *openapi3.Schema) *openapi3.SchemaRef {
@@ -1195,8 +1303,13 @@ func artifactDownloadParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Build record UUID.")),
 		},
 		{
+			Value: openapi3.NewQueryParameter("platform").
+				WithDescription("Optional platform. When present, path is relative to the platform directory, as returned by the application manifest.").
+				WithSchema(enumStringSchema("Artifact platform.", domain.BuildPlatforms...)),
+		},
+		{
 			Value: openapi3.NewQueryParameter("path").
-				WithDescription("Artifact file relative path from the build artifact manifest.").
+				WithDescription("Artifact file relative path. Relative to the artifact root, or to the platform directory when platform is present.").
 				WithRequired(true).
 				WithSchema(stringSchema("Artifact file relative path.")),
 		},
@@ -1216,6 +1329,18 @@ func artifactManifestParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Environment code.")),
 		},
 		{
+			Value: openapi3.NewQueryParameter("platform").
+				WithDescription("Client platform. Only files under the {platform}/ directory are returned, with the platform prefix removed.").
+				WithRequired(true).
+				WithSchema(enumStringSchema("Client platform.", domain.BuildPlatforms...)),
+		},
+		{
+			Value: openapi3.NewQueryParameter("runtimeVersion").
+				WithDescription("Client runtimeVersion. Only routes with exactly this runtimeVersion are matched. 1-64 characters of [A-Za-z0-9._-].").
+				WithRequired(true).
+				WithSchema(stringSchema("Client runtimeVersion.")),
+		},
+		{
 			Value: openapi3.NewQueryParameter("identifier").
 				WithDescription("Optional targeting identifier. Targeted gray wins when present, percentage gray may use userId, otherwise default release is used.").
 				WithSchema(stringSchema("Targeting identifier.")),
@@ -1228,61 +1353,116 @@ func artifactManifestParameters() openapi3.Parameters {
 	}
 }
 
-func codeSourceProviderParameters() openapi3.Parameters {
+func codeSourceManifestCallbackParameters() openapi3.Parameters {
 	return openapi3.Parameters{
 		{
-			Value: openapi3.NewPathParameter("provider").
-				WithDescription("Code source provider.").
-				WithSchema(enumStringSchema("Code source provider.", "github")),
-		},
-	}
-}
-
-func codeSourceManifestCallbackParameters() openapi3.Parameters {
-	parameters := codeSourceProviderParameters()
-	return append(parameters,
-		&openapi3.ParameterRef{
 			Value: openapi3.NewQueryParameter("code").
 				WithDescription("Temporary GitHub App manifest code returned by GitHub.").
 				WithSchema(stringSchema("GitHub App manifest code.")),
 		},
-	)
+	}
 }
 
 func codeSourceInstallCallbackParameters() openapi3.Parameters {
-	parameters := codeSourceProviderParameters()
-	return append(parameters,
-		&openapi3.ParameterRef{
+	return openapi3.Parameters{
+		{
 			Value: openapi3.NewQueryParameter("installation_id").
 				WithDescription("GitHub App installation id returned by setup URL.").
 				WithSchema(int64Schema("GitHub App installation id.")),
 		},
-		&openapi3.ParameterRef{
+		{
 			Value: openapi3.NewQueryParameter("setup_action").
 				WithDescription("GitHub setup action, such as install or update.").
 				WithSchema(enumStringSchema("GitHub setup action.", "install", "update")),
 		},
-		&openapi3.ParameterRef{
+		{
 			Value: openapi3.NewQueryParameter("state").
 				WithDescription("Opaque setup state returned by GitHub when present.").
 				WithSchema(stringSchema("Setup state.")),
 		},
-	)
+	}
+}
+
+func codeSourceConnectionIDParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewPathParameter("id").
+				WithDescription("Code source connection id.").
+				WithSchema(stringSchema("Code source connection id.")),
+		},
+	}
+}
+
+func codeSourceConnectionListParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("provider").
+				WithDescription("Code source provider filter.").
+				WithSchema(enumStringSchema("Code source provider.", "github", "gitlab")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("status").
+				WithDescription("Connection status filter.").
+				WithSchema(enumStringSchema("Connection status.", "active", "disabled")),
+		},
+	}
 }
 
 func codeSourceRepositorySearchParameters() openapi3.Parameters {
-	parameters := codeSourceProviderParameters()
-	return append(parameters,
+	return append(codeSourceConnectionIDParameters(),
 		&openapi3.ParameterRef{
 			Value: openapi3.NewQueryParameter("query").
-				WithDescription("Repository search keyword. Matches owner, name, full name or description.").
+				WithDescription("Repository search keyword.").
 				WithSchema(stringSchema("Repository search keyword.")),
+		},
+		&openapi3.ParameterRef{
+			Value: openapi3.NewQueryParameter("page").
+				WithDescription("Page number, min 1, default 1.").
+				WithSchema(int32Schema("Page number.")),
 		},
 		&openapi3.ParameterRef{
 			Value: openapi3.NewQueryParameter("pageSize").
 				WithDescription("Result size, min 1, max 100, default 20.").
 				WithSchema(int32Schema("Page size.")),
 		},
+	)
+}
+
+func webhookHeaderParameters(names ...string) openapi3.Parameters {
+	parameters := make(openapi3.Parameters, 0, len(names))
+	for _, name := range names {
+		parameters = append(parameters, &openapi3.ParameterRef{
+			Value: openapi3.NewHeaderParameter(name).
+				WithDescription("Provider webhook header " + name + ".").
+				WithSchema(stringSchema(name)),
+		})
+	}
+	return parameters
+}
+
+// codeSourceResponses 为代码源接口补齐公共错误响应。
+func codeSourceResponses(items ...openapi3.NewResponsesOption) *openapi3.Responses {
+	return responses(append(items,
+		response(http.StatusBadRequest, "Invalid code source request or credential.", schemaRef("ErrorResponse")),
+		response(http.StatusUnauthorized, "Authentication is required.", schemaRef("ErrorResponse")),
+		response(http.StatusForbidden, "Current user cannot manage or use code source connections.", schemaRef("ErrorResponse")),
+		response(http.StatusNotFound, "Code source connection, repository or installation not found.", schemaRef("ErrorResponse")),
+		response(http.StatusServiceUnavailable, "Code source auth is not configured.", schemaRef("ErrorResponse")),
+		response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
+		response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+	)...)
+}
+
+func webhookResponses() *openapi3.Responses {
+	return responses(
+		responseNoBody(http.StatusAccepted, "Push event matched at least one module auto build rule. Builds were created, or skipped because the same commit already has a pending, running or succeeded build."),
+		responseNoBody(http.StatusNoContent, "Event ignored (not a branch push, branch deleted, tag push, connection disabled, or no module auto build rule matched)."),
+		response(http.StatusBadRequest, "Invalid webhook payload.", schemaRef("ErrorResponse")),
+		response(http.StatusUnauthorized, "Webhook signature or secret is invalid.", schemaRef("ErrorResponse")),
+		response(http.StatusNotFound, "Code source connection not found.", schemaRef("ErrorResponse")),
+		response(http.StatusRequestEntityTooLarge, "Webhook payload too large.", schemaRef("ErrorResponse")),
+		response(http.StatusServiceUnavailable, "Webhook secret is not configured.", schemaRef("ErrorResponse")),
+		response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 	)
 }
 
@@ -1363,7 +1543,7 @@ func buildListParameters() openapi3.Parameters {
 		{
 			Value: openapi3.NewQueryParameter("triggerType").
 				WithDescription("Build trigger type filter.").
-				WithSchema(enumStringSchema("Build trigger type filter.", "manual", "pipeline")),
+				WithSchema(enumStringSchema("Build trigger type filter.", "manual", "webhook")),
 		},
 	}
 	return append(parameters, paginationParameters()...)
@@ -1428,6 +1608,11 @@ func releaseResolveParameters() openapi3.Parameters {
 				WithDescription("Environment code.").
 				WithRequired(true).
 				WithSchema(stringSchema("Environment code.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("runtimeVersion").
+				WithDescription("Optional runtimeVersion. When present only routes of this runtimeVersion are resolved, otherwise the newest matching route of any runtimeVersion wins.").
+				WithSchema(stringSchema("Route runtimeVersion.")),
 		},
 		{
 			Value: openapi3.NewQueryParameter("identifier").
@@ -1722,11 +1907,16 @@ func moduleSchema() *openapi3.Schema {
 		"applicationName",
 		"ownerUserId",
 		"owner",
+		"codeSourceConnectionId",
 		"repositoryProvider",
 		"repositoryId",
 		"repositoryFullName",
 		"repository",
+		"buildConfig",
 	).
+		WithPropertyRef("buildConfig", schemaRef("ModuleBuildConfig")).
+		WithProperty("codeSourceConnectionId", stringSchema("Code source connection id.")).
+		WithProperty("codeSourceConnectionName", stringSchema("Code source connection display name.")).
 		WithProperty("applicationId", stringSchema("Linked application id.")).
 		WithProperty("applicationName", stringSchema("Linked application name.")).
 		WithProperty("applicationSlug", stringSchema("Linked application slug.")).
@@ -1744,11 +1934,9 @@ func moduleSchema() *openapi3.Schema {
 		WithProperty("repository", stringSchema("Repository display full name.")).
 		WithProperty("repositoryCloneUrl", stringSchema("Repository HTTPS clone URL.")).
 		WithProperty("repositoryFullName", stringSchema("Repository full name.")).
-		WithProperty("repositoryHtmlUrl", stringSchema("Repository HTML URL.")).
-		WithProperty("repositoryId", stringSchema("Provider repository id.")).
-		WithProperty("repositoryInstallationId", stringSchema("Provider installation id that currently grants repository access.")).
-		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github")).
-		WithProperty("repositorySshUrl", stringSchema("Repository SSH clone URL.")).
+		WithProperty("repositoryId", stringSchema("Provider repository id (external repository id).")).
+		WithProperty("repositoryProvider", enumStringSchema("Repository provider, decided by the connection.", "github", "gitlab")).
+		WithProperty("repositoryWebUrl", stringSchema("Repository web URL.")).
 		WithProperty("updatedAt", dateTimeSchema("Module update time."))
 }
 
@@ -1777,7 +1965,8 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 		WithProperty("ownerFeishuOpenId", stringSchema("Owner Feishu open_id.")).
 		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
 		WithProperty("ownerUserId", stringSchema("Module owner user id.")).
-		WithPropertyRef("repository", schemaRef("ModuleRepositoryRequest"))
+		WithPropertyRef("repository", schemaRef("ModuleRepositoryRequest")).
+		WithPropertyRef("buildConfig", schemaRef("ModuleBuildConfig"))
 	if includeID {
 		schema.WithProperty("id", stringSchema("Immutable module id."))
 	}
@@ -1785,24 +1974,26 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 }
 
 func moduleRepositoryRequestSchema() *openapi3.Schema {
-	return objectSchema("provider", "id", "installationId", "fullName").
-		WithProperty("cloneUrl", stringSchema("Repository HTTPS clone URL.")).
-		WithProperty("defaultBranch", stringSchema("Repository default branch.")).
-		WithProperty("fullName", stringSchema("Repository full name.")).
-		WithProperty("htmlUrl", stringSchema("Repository HTML URL.")).
-		WithProperty("id", stringSchema("Provider repository id.")).
-		WithProperty("installationId", stringSchema("Provider installation id that currently grants repository access.")).
-		WithProperty("provider", enumStringSchema("Code source provider.", "github")).
-		WithProperty("sshUrl", stringSchema("Repository SSH clone URL."))
+	return objectSchema("connectionId", "externalRepositoryId").
+		WithProperty("connectionId", stringSchema("Code source connection id.")).
+		WithProperty("externalRepositoryId", stringSchema("Repository id returned by the connection repository search. Repository name and URLs are taken from the server side repository cache."))
+}
+
+func moduleBuildConfigSchema() *openapi3.Schema {
+	return objectSchema().
+		WithProperty("autoBuildBranches", stringArraySchema("Branch globs that trigger builds on push. Empty disables automatic builds.")).
+		WithProperty("autoBuildEnvironment", stringSchema("Environment code for automatic builds. Required when autoBuildBranches is not empty.")).
+		WithProperty("autoPreviewRelease", boolSchema("Create a targeted release named after the branch when an automatic build succeeds.")).
+		WithProperty("autoPreviewTtlHours", int32Schema("Preview release lifetime in hours, 1-8760, default 168.")).
+		WithProperty("buildContext", stringSchema("Docker build context relative to the repository root, default \".\".")).
+		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE."))
 }
 
 func buildRecordCreateRequestSchema() *openapi3.Schema {
 	return objectSchema("moduleId", "environment").
 		WithProperty("branch", stringSchema("Git branch to build. Defaults to the module default branch when omitted.")).
 		WithProperty("moduleId", stringSchema("Module id to build.")).
-		WithProperty("environment", stringSchema("Environment code whose storage configuration receives artifacts.")).
-		WithProperty("triggerId", stringSchema("Trigger source id. Required when triggerType is pipeline.")).
-		WithProperty("triggerType", enumStringSchema("Build trigger type. Defaults to manual when omitted.", "manual", "pipeline"))
+		WithProperty("environment", stringSchema("Environment code whose storage configuration receives artifacts. Console builds are always manual."))
 }
 
 func buildRecordDetailResponseSchema() *openapi3.Schema {
@@ -1839,19 +2030,26 @@ func buildRecordSchema() *openapi3.Schema {
 		"triggerType",
 		"repositoryProvider",
 		"repositoryId",
-		"repositoryInstallationId",
 		"repositoryFullName",
+		"codeSourceConnectionId",
+		"commitSha",
+		"runtimeVersion",
+		"platforms",
 		"storageConfigurationId",
 		"storageConfigurationName",
 		"queuedAt",
 		"createdAt",
+		"createdBy",
 		"updatedAt",
 	).
 		WithProperty("applicationName", stringSchema("Application display name used in artifact object keys.")).
 		WithPropertyRef("artifactTree", schemaRef("BuildArtifactTree")).
+		WithProperty("createdBy", nullableSchemaRef("UserSummary", "Build creator. Manual builds record the console user; webhook builds record the code source connection creator. Null for historical builds or deleted users.")).
 		WithProperty("artifactKey", stringSchema("S3 object key root produced by the worker.")).
 		WithProperty("artifactUrl", stringSchema("Public artifact base URL when storage configuration provides one.")).
 		WithProperty("branch", stringSchema("Git branch selected for this build record.")).
+		WithProperty("codeSourceConnectionId", stringSchema("Code source connection id of the module repository.")).
+		WithProperty("commitSha", stringSchema("Commit built by this record. Webhook builds record the pushed commit; manual builds fill it after checkout.")).
 		WithProperty("createdAt", dateTimeSchema("Build record creation time.")).
 		WithProperty("defaultBranch", stringSchema("Repository branch used by the worker when configured on the module.")).
 		WithProperty("environment", stringSchema("Environment code.")).
@@ -1866,17 +2064,26 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("queuedAt", dateTimeSchema("Build queue time.")).
 		WithProperty("repositoryFullName", stringSchema("Repository full name.")).
-		WithProperty("repositoryId", stringSchema("Provider repository id.")).
-		WithProperty("repositoryInstallationId", stringSchema("Provider installation id.")).
-		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github")).
+		WithProperty("platforms", stringArraySchema("Platform directories produced by the build: android, ios, harmony.")).
+		WithProperty("repositoryId", stringSchema("Provider repository id (external repository id).")).
+		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github", "gitlab")).
+		WithProperty("repositoryWebUrl", stringSchema("Repository web URL.")).
+		WithProperty("runtimeVersion", stringSchema("runtimeVersion from forge.json. Empty until the build succeeds.")).
 		WithProperty("startedAt", dateTimeSchema("Build start time.")).
 		WithProperty("status", enumStringSchema("Build status.", "pending", "running", "succeeded", "failed")).
 		WithProperty("storageConfigurationId", stringSchema("Storage configuration id bound to the environment at queue time.")).
 		WithProperty("storageConfigurationName", stringSchema("Storage configuration display name.")).
-		WithProperty("triggerId", stringSchema("Trigger source id. Empty for manual builds.")).
-		WithProperty("triggerType", enumStringSchema("Build trigger type.", "manual", "pipeline")).
+		WithProperty("triggerId", stringSchema("Trigger source id, such as the webhook delivery id. Empty for manual builds.")).
+		WithProperty("triggerType", enumStringSchema("Build trigger type.", "manual", "webhook")).
 		WithProperty("updatedAt", dateTimeSchema("Build record update time.")).
 		WithProperty("workerId", stringSchema("Worker id that claimed the build."))
+}
+
+func userSummarySchema() *openapi3.Schema {
+	return objectSchema("id", "name", "avatarUrl").
+		WithProperty("id", stringSchema("User id.")).
+		WithProperty("name", stringSchema("User name.")).
+		WithProperty("avatarUrl", stringSchema("Avatar URL. Empty when the user has no avatar."))
 }
 
 func buildArtifactTreeSchema() *openapi3.Schema {
@@ -1901,9 +2108,11 @@ func buildArtifactTreeNodeSchema() *openapi3.Schema {
 }
 
 func artifactManifestResponseSchema() *openapi3.Schema {
-	return objectSchema("application", "environment", "identifier", "modules", "missingModules").
+	return objectSchema("application", "environment", "platform", "runtimeVersion", "identifier", "modules", "missingModules").
 		WithPropertyRef("application", schemaRef("ArtifactManifestApplication")).
 		WithPropertyRef("environment", schemaRef("ArtifactManifestEnvironment")).
+		WithProperty("platform", enumStringSchema("Requested platform.", domain.BuildPlatforms...)).
+		WithProperty("runtimeVersion", stringSchema("Requested runtimeVersion.")).
 		WithProperty("identifier", stringSchema("Requested targeting identifier.")).
 		WithPropertyRef("modules", arraySchemaRef("ArtifactManifestModule")).
 		WithPropertyRef("missingModules", arraySchemaRef("ArtifactMissingModule"))
@@ -1923,7 +2132,7 @@ func artifactManifestEnvironmentSchema() *openapi3.Schema {
 }
 
 func artifactManifestModuleSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "buildRecordId", "artifactKey", "manifestKey", "files").
+	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
@@ -1933,18 +2142,23 @@ func artifactManifestModuleSchema() *openapi3.Schema {
 		WithProperty("grayPercentage", int32Schema("Matched percentage gray value.")).
 		WithProperty("identifier", stringSchema("Matched targeting identifier for targeted gray releases.")).
 		WithProperty("buildRecordId", stringSchema("Matched build record UUID.")).
+		WithProperty("branch", stringSchema("Branch of the matched build.")).
+		WithProperty("commitSha", stringSchema("Commit SHA of the matched build.")).
 		WithProperty("artifactKey", stringSchema("Artifact object key root.")).
 		WithProperty("manifestKey", stringSchema("Artifact manifest object key.")).
 		WithPropertyRef("files", arraySchemaRef("ArtifactManifestFile"))
 }
 
 func artifactManifestFileSchema() *openapi3.Schema {
-	return objectSchema("path", "url", "contentType", "sizeBytes", "sha256").
-		WithProperty("path", stringSchema("Artifact file relative path.")).
-		WithProperty("url", stringSchema("Download URL. Uses public base URL when configured, otherwise the artifact download API.")).
+	digests := openapi3.NewObjectSchema().WithAdditionalProperties(stringSchema("Hex digest."))
+	digests.Description = "File digests keyed by algorithm (sha256, md5), configured by FORGE_ARTIFACT_DIGESTS on the worker. Manifests generated before digests existed fall back to {sha256}."
+	return objectSchema("path", "url", "contentType", "sizeBytes", "sha256", "digests").
+		WithProperty("path", stringSchema("File path relative to the requested platform directory (platform prefix removed).")).
+		WithProperty("url", stringSchema("Download URL. Uses public base URL when configured, otherwise the artifact download API with platform and path.")).
 		WithProperty("contentType", stringSchema("File content type.")).
 		WithProperty("sizeBytes", int64Schema("File size in bytes.")).
-		WithProperty("sha256", stringSchema("File SHA-256 digest."))
+		WithProperty("sha256", stringSchema("File SHA-256 digest. Kept for compatibility; prefer digests.")).
+		WithProperty("digests", digests)
 }
 
 func artifactMissingModuleSchema() *openapi3.Schema {
@@ -1952,7 +2166,14 @@ func artifactMissingModuleSchema() *openapi3.Schema {
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
-		WithProperty("reason", stringSchema("Why this module is absent from the manifest modules list."))
+		WithProperty("reason", enumStringSchema(
+			"Why this module is absent from the manifest modules list. no_release_for_runtime: no active route under the requested runtimeVersion; release not found: routes exist under the runtimeVersion but none matched; platform_unavailable: the matched build does not contain the requested platform.",
+			domain.ArtifactMissingReasonNoReleaseForRuntime,
+			domain.ArtifactMissingReasonReleaseNotFound,
+			domain.ArtifactMissingReasonPlatformUnavailable,
+			domain.ArtifactMissingReasonBuildNotFound,
+			domain.ArtifactMissingReasonArtifactUnavailable,
+		))
 }
 
 func releaseCreateRequestSchema() *openapi3.Schema {
@@ -2005,6 +2226,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		"environmentName",
 		"buildRecordId",
 		"releaseType",
+		"runtimeVersion",
 		"status",
 		"artifactKey",
 		"createdByUserId",
@@ -2026,6 +2248,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseType", enumStringSchema("Release type.", "full", "gray")).
+		WithProperty("runtimeVersion", stringSchema("runtimeVersion of the release route. A release only replaces releases of the same runtimeVersion.")).
 		WithProperty("grayStrategy", enumStringSchema("Gray strategy.", "", "targeted", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Percentage gray value.")).
 		WithProperty("expiresAt", stringSchema("Expiration time for targeted gray releases, or empty otherwise.")).
@@ -2042,6 +2265,7 @@ func releaseRouteSchema() *openapi3.Schema {
 		"environmentName",
 		"releaseId",
 		"buildRecordId",
+		"runtimeVersion",
 		"routeType",
 		"status",
 		"artifactKey",
@@ -2064,6 +2288,7 @@ func releaseRouteSchema() *openapi3.Schema {
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseId", stringSchema("Release UUID.")).
 		WithProperty("routeType", enumStringSchema("Route type.", "default", "identifier", "percentage")).
+		WithProperty("runtimeVersion", stringSchema("runtimeVersion copied from the build record. Routes are isolated per runtimeVersion.")).
 		WithProperty("grayStrategy", enumStringSchema("Gray strategy.", "", "targeted", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Percentage gray value.")).
 		WithProperty("status", enumStringSchema("Release route status.", "active", "inactive")).
@@ -2075,14 +2300,10 @@ func codeSourcesResponseSchema() *openapi3.Schema {
 		WithPropertyRef("apps", arraySchemaRef("CodeSourceApp"))
 }
 
-func codeSourceAppDetailResponseSchema() *openapi3.Schema {
-	return objectSchema("app").
-		WithPropertyRef("app", schemaRef("CodeSourceApp"))
-}
-
 func codeSourceAppSchema() *openapi3.Schema {
-	return objectSchema("configurationStatus", "description", "id", "name", "provider", "status").
+	return objectSchema("configurationStatus", "connectionCount", "description", "id", "name", "provider", "status").
 		WithProperty("configurationStatus", enumStringSchema("Code source app configuration status.", "configured", "notConfigured")).
+		WithProperty("connectionCount", int32Schema("Active installation connection count.")).
 		WithProperty("description", stringSchema("Code source app description.")).
 		WithProperty("id", enumStringSchema("Code source app id.", "github")).
 		WithProperty("installedAt", dateTimeSchema("Installation time.")).
@@ -2103,25 +2324,76 @@ func codeSourceInstallURLSchema() *openapi3.Schema {
 }
 
 func codeSourceRepositorySearchResponseSchema() *openapi3.Schema {
-	return objectSchema("repositories").
-		WithPropertyRef("repositories", arraySchemaRef("CodeSourceRepository"))
+	return objectSchema("repositories", "hasMore", "page", "pageSize").
+		WithPropertyRef("repositories", arraySchemaRef("CodeSourceRepository")).
+		WithProperty("hasMore", boolSchema("Whether more repositories are available.")).
+		WithProperty("page", int32Schema("Effective page number.")).
+		WithProperty("pageSize", int32Schema("Effective page size."))
 }
 
 func codeSourceRepositorySchema() *openapi3.Schema {
-	return objectSchema("id", "installationId", "provider", "owner", "name", "fullName", "private").
+	return objectSchema("connectionId", "externalRepositoryId", "fullName", "private").
 		WithProperty("cloneUrl", stringSchema("HTTPS clone URL.")).
+		WithProperty("connectionId", stringSchema("Code source connection id.")).
 		WithProperty("defaultBranch", stringSchema("Default branch name.")).
 		WithProperty("description", stringSchema("Repository description.")).
-		WithProperty("fullName", stringSchema("Repository full name, owner/name.")).
-		WithProperty("htmlUrl", stringSchema("Repository HTML URL.")).
-		WithProperty("id", stringSchema("Provider repository id.")).
-		WithProperty("installationId", stringSchema("Provider installation id that currently grants repository access.")).
-		WithProperty("name", stringSchema("Repository name.")).
-		WithProperty("owner", stringSchema("Repository owner.")).
+		WithProperty("externalRepositoryId", stringSchema("Provider repository id (GitHub repository id, GitLab project id).")).
+		WithProperty("fullName", stringSchema("Repository full name, such as owner/name or group/subgroup/project.")).
+		WithProperty("lastSyncedAt", dateTimeSchema("Repository cache sync time.")).
 		WithProperty("private", boolSchema("Whether repository is private.")).
-		WithProperty("provider", enumStringSchema("Code source provider.", "github")).
-		WithProperty("sshUrl", stringSchema("SSH clone URL.")).
-		WithProperty("updatedAt", dateTimeSchema("Repository update time."))
+		WithProperty("webUrl", stringSchema("Repository web URL."))
+}
+
+func codeSourceConnectionSchema() *openapi3.Schema {
+	return objectSchema("id", "provider", "name", "webBaseUrl", "apiBaseUrl", "status", "createdByUserId", "createdAt", "updatedAt").
+		WithProperty("apiBaseUrl", stringSchema("Provider API base URL.")).
+		WithProperty("createdAt", dateTimeSchema("Connection creation time.")).
+		WithProperty("createdBy", stringSchema("Creator display name.")).
+		WithProperty("createdByUserId", stringSchema("Creator platform user id.")).
+		WithProperty("credentialExpiresAt", stringSchema("Credential expiration time, or empty when unknown or never expires.")).
+		WithProperty("credentialPreview", stringSchema("Masked credential preview. Credential itself is never returned.")).
+		WithProperty("externalAccount", stringSchema("GitHub installation account or GitLab token user.")).
+		WithProperty("externalId", stringSchema("Provider level id, such as GitHub installation id. Empty for GitLab.")).
+		WithProperty("id", stringSchema("Connection id.")).
+		WithProperty("lastVerifiedAt", stringSchema("Last successful verification time, or empty.")).
+		WithProperty("name", stringSchema("Connection display name.")).
+		WithProperty("provider", enumStringSchema("Code source provider.", "github", "gitlab")).
+		WithProperty("status", enumStringSchema("Connection status.", "active", "disabled")).
+		WithProperty("updatedAt", dateTimeSchema("Connection update time.")).
+		WithProperty("webBaseUrl", stringSchema("Provider web base URL, such as https://github.com or the GitLab instance URL."))
+}
+
+func codeSourceConnectionsResponseSchema() *openapi3.Schema {
+	return objectSchema("connections").
+		WithPropertyRef("connections", arraySchemaRef("CodeSourceConnection"))
+}
+
+func codeSourceConnectionDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("connection").
+		WithPropertyRef("connection", schemaRef("CodeSourceConnection"))
+}
+
+func codeSourceConnectionCreateRequestSchema() *openapi3.Schema {
+	return objectSchema("provider", "name", "webBaseUrl", "credential").
+		WithProperty("apiBaseUrl", stringSchema("Provider API base URL. Defaults to webBaseUrl.")).
+		WithProperty("credential", stringSchema("Access token, such as a GitLab group or project access token with read_api and read_repository scopes.")).
+		WithProperty("name", stringSchema("Connection display name.")).
+		WithProperty("provider", enumStringSchema("Code source provider. GitHub connections are created by the App installation callback.", "github", "gitlab")).
+		WithProperty("webBaseUrl", stringSchema("Provider web base URL, such as https://gitlab.example.com."))
+}
+
+func codeSourceConnectionUpdateRequestSchema() *openapi3.Schema {
+	return objectSchema().
+		WithProperty("credential", stringSchema("New access token. The connection is re-verified when provided.")).
+		WithProperty("name", stringSchema("Connection display name.")).
+		WithProperty("status", enumStringSchema("Connection status.", "active", "disabled"))
+}
+
+func codeSourceConnectionWebhookSchema() *openapi3.Schema {
+	return objectSchema("provider", "path", "secret").
+		WithProperty("path", stringSchema("Webhook path on forge-server, prefix it with the public API origin.")).
+		WithProperty("provider", enumStringSchema("Code source provider.", "github", "gitlab")).
+		WithProperty("secret", stringSchema("Webhook secret token. Empty when the provider receives webhooks at App level (GitHub)."))
 }
 
 func artifactAccessTokenSchema() *openapi3.Schema {
@@ -2405,4 +2677,71 @@ func arraySchemaRef(itemSchema string) *openapi3.SchemaRef {
 	schema := openapi3.NewArraySchema()
 	schema.Items = schemaRef(itemSchema)
 	return schemaValue(schema)
+}
+
+func buildLogParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("afterSeq").
+				WithDescription("Return chunks with seq greater than this value. Omit to read from the beginning.").
+				WithSchema(int32Schema("Last seq the client already has.")),
+		},
+	}
+}
+
+func buildVariableDeleteParameters() openapi3.Parameters {
+	return openapi3.Parameters{
+		{
+			Value: openapi3.NewQueryParameter("key").
+				WithDescription("Build variable key.").
+				WithRequired(true).
+				WithSchema(stringSchema("Build variable key.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("environmentCode").
+				WithDescription("Environment code. Omit or leave empty for the variable shared by all environments.").
+				WithSchema(stringSchema("Environment code.")),
+		},
+	}
+}
+
+func buildLogChunkSchema() *openapi3.Schema {
+	return objectSchema("seq", "content").
+		WithProperty("seq", int32Schema("Chunk sequence number, increasing within one build.")).
+		WithProperty("content", stringSchema("Redacted git and docker output."))
+}
+
+func buildLogsResponseSchema() *openapi3.Schema {
+	return objectSchema("chunks", "finished").
+		WithPropertyRef("chunks", arraySchemaRef("BuildLogChunk")).
+		WithProperty("finished", boolSchema("True when the build has finished and no more chunks remain after this page."))
+}
+
+func buildVariableSchema() *openapi3.Schema {
+	return objectSchema("key", "environmentCode", "value", "isSecret", "updatedBy", "updatedByUserId", "updatedAt").
+		WithProperty("key", stringSchema("Variable key, matching ^[A-Z][A-Z0-9_]{0,63}$.")).
+		WithProperty("environmentCode", stringSchema("Environment code. Empty means the variable applies to all environments.")).
+		WithProperty("value", stringSchema("Plain value for normal variables; ****** for secrets.")).
+		WithProperty("isSecret", boolSchema("Secrets are passed to docker build via BuildKit --secret and never returned.")).
+		WithProperty("updatedBy", stringSchema("Display name of the last updater.")).
+		WithProperty("updatedByUserId", stringSchema("User id of the last updater.")).
+		WithProperty("updatedAt", dateTimeSchema("Last update time."))
+}
+
+func buildVariablesResponseSchema() *openapi3.Schema {
+	return objectSchema("variables").
+		WithPropertyRef("variables", arraySchemaRef("BuildVariable"))
+}
+
+func buildVariableDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("variable").
+		WithPropertyRef("variable", schemaRef("BuildVariable"))
+}
+
+func buildVariableUpsertRequestSchema() *openapi3.Schema {
+	return objectSchema("key", "value").
+		WithProperty("key", stringSchema("Variable key, matching ^[A-Z][A-Z0-9_]{0,63}$. The FORGE_ prefix is reserved.")).
+		WithProperty("environmentCode", stringSchema("Environment code. Empty means the variable applies to all environments.")).
+		WithProperty("value", stringSchema("Plain value. Required and non-empty for secrets.")).
+		WithProperty("isSecret", boolSchema("Store as a secret build variable."))
 }

@@ -136,6 +136,43 @@ func (r *fakeAuthorizationRepository) GetApplicationRole(context.Context, string
 	return r.appRole, nil
 }
 
+func (r *fakeAuthorizationRepository) ListApplicationRoles(context.Context, string) ([]domain.ApplicationMemberRole, error) {
+	if r.appRole == "" {
+		return nil, nil
+	}
+	return []domain.ApplicationMemberRole{r.appRole}, nil
+}
+
 func (r *fakeAuthorizationRepository) ListGlobalRoles(context.Context, string) ([]domain.GlobalRole, error) {
 	return r.globalRoles, nil
+}
+
+func TestAuthorizationServiceCodeSourceUseWithoutApplication(t *testing.T) {
+	tests := []struct {
+		name    string
+		roles   []domain.GlobalRole
+		appRole domain.ApplicationMemberRole
+		action  domain.AuthorizationAction
+		wantErr error
+	}{
+		{name: "platform admin can use connections", roles: []domain.GlobalRole{domain.GlobalRolePlatformAdmin}, action: domain.ActionCodeSourceUse},
+		{name: "platform admin can manage connections", roles: []domain.GlobalRole{domain.GlobalRolePlatformAdmin}, action: domain.ActionCodeSourceManage},
+		{name: "application owner can use connections", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionCodeSourceUse},
+		{name: "application owner cannot manage connections", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionCodeSourceManage, wantErr: domain.ErrForbidden},
+		{name: "developer cannot use connections", appRole: domain.ApplicationMemberRoleDeveloper, action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
+		{name: "release admin cannot use connections", roles: []domain.GlobalRole{domain.GlobalRoleReleaseAdmin}, action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
+		{name: "plain user cannot use connections", action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repository := fakeAuthorizationRepository{appRole: tt.appRole, globalRoles: tt.roles}
+			service := NewAuthorizationService(&repository)
+
+			err := service.Authorize(context.Background(), "ou-user-1", tt.action, domain.AuthorizationResource{})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
+	}
 }

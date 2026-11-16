@@ -11,7 +11,7 @@ import (
 
 func TestModuleServiceRejectsInvalidIDOnCreate(t *testing.T) {
 	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	input := validModuleInput("bad id")
 	_, err := service.CreateModule(context.Background(), input)
@@ -25,10 +25,10 @@ func TestModuleServiceRejectsInvalidIDOnCreate(t *testing.T) {
 
 func TestModuleServiceRejectsMissingRepository(t *testing.T) {
 	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	input := validModuleInput("module-profile")
-	input.Repository = domain.ModuleRepositoryBinding{}
+	input.Repository = domain.ModuleRepository{}
 	_, err := service.CreateModule(context.Background(), input)
 	if !errors.Is(err, domain.ErrInvalidModuleInput) {
 		t.Fatalf("expected invalid module input, got %v", err)
@@ -38,49 +38,81 @@ func TestModuleServiceRejectsMissingRepository(t *testing.T) {
 	}
 }
 
-func TestModuleServiceRejectsUnsupportedRepositoryProvider(t *testing.T) {
-	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
-
-	input := validModuleInput("module-profile")
-	input.Repository.Provider = domain.CodeSourceProvider("gitlab")
-	_, err := service.CreateModule(context.Background(), input)
-	if !errors.Is(err, domain.ErrInvalidModuleInput) {
-		t.Fatalf("expected invalid module input, got %v", err)
+func TestModuleServiceRejectsUncachedRepositoryAndInactiveConnection(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*domain.ModuleInput, *fakeModuleCodeSourceStore)
+		wantErr error
+	}{
+		{
+			name: "repository not in connection cache",
+			mutate: func(input *domain.ModuleInput, _ *fakeModuleCodeSourceStore) {
+				input.Repository.ExternalRepositoryID = "999"
+			},
+			wantErr: domain.ErrInvalidModuleInput,
+		},
+		{
+			name: "unknown connection",
+			mutate: func(input *domain.ModuleInput, _ *fakeModuleCodeSourceStore) {
+				input.Repository.ConnectionID = "missing"
+			},
+			wantErr: domain.ErrInvalidModuleInput,
+		},
+		{
+			name: "disabled connection",
+			mutate: func(_ *domain.ModuleInput, store *fakeModuleCodeSourceStore) {
+				store.connection.Status = domain.CodeSourceConnectionStatusDisabled
+			},
+			wantErr: domain.ErrCodeSourceConnectionInactive,
+		},
 	}
-	if repository.createCalls != 0 {
-		t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repository := fakeModuleRepository{}
+			store := newFakeModuleCodeSourceStore()
+			service := NewModuleService(&repository, store, "Dockerfile")
+
+			input := validModuleInput("module-profile")
+			tt.mutate(&input, store)
+			if _, err := service.CreateModule(context.Background(), input); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+			if repository.createCalls != 0 {
+				t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
+			}
+		})
 	}
 }
 
-func TestModuleServiceNormalizesCreateInput(t *testing.T) {
-	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
-
-	input := validModuleInput(" module-profile ")
-	input.ID = "module-profile"
-	input.Name = " profile "
-	input.ApplicationID = " app-mi-car "
-	input.OwnerUserID = " ou-li-ming "
-	input.Owner = " li.ming "
-	input.Repository.FullName = " mi-car/profile "
-
-	_, err := service.CreateModule(context.Background(), input)
-	if err != nil {
-		t.Fatalf("create module: %v", err)
+func TestModuleServiceValidatesBuildConfig(t *testing.T) {
+	tests := map[string]domain.ModuleBuildConfig{
+		"absolute dockerfile":        {DockerfilePath: "/etc/Dockerfile"},
+		"dockerfile escapes repo":    {DockerfilePath: "../Dockerfile"},
+		"context escapes repo":       {BuildContext: "apps/../../"},
+		"dockerfile is directory":    {DockerfilePath: "."},
+		"invalid branch glob":        {AutoBuildBranches: []string{"release/["}, AutoBuildEnvironment: "qa"},
+		"branches without env":       {AutoBuildBranches: []string{"main"}},
+		"negative preview ttl":       {AutoPreviewTTLHours: -1},
+		"preview ttl over one year":  {AutoPreviewTTLHours: 24*365 + 1},
+		"windows separator in paths": {DockerfilePath: "apps\\Dockerfile"},
 	}
+	for name, config := range tests {
+		t.Run(name, func(t *testing.T) {
+			repository := fakeModuleRepository{}
+			service := newTestModuleService(&repository)
 
-	if repository.lastCreateInput.Name != "profile" ||
-		repository.lastCreateInput.ApplicationID != "app-mi-car" ||
-		repository.lastCreateInput.OwnerUserID != "ou-li-ming" ||
-		repository.lastCreateInput.Repository.FullName != "mi-car/profile" {
-		t.Fatalf("unexpected normalized input: %#v", repository.lastCreateInput)
+			input := validModuleInput("module-profile")
+			input.BuildConfig = config
+			if _, err := service.CreateModule(context.Background(), input); !errors.Is(err, domain.ErrInvalidModuleInput) {
+				t.Fatalf("expected invalid module input, got %v", err)
+			}
+		})
 	}
 }
 
 func TestModuleServiceRejectsIDChangeOnUpdate(t *testing.T) {
 	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	input := validModuleInput("")
 	input.ID = "changed"
@@ -100,7 +132,7 @@ func TestModuleServiceReturnsSummary(t *testing.T) {
 			testServiceModule("module-home", domain.ModuleKindFeature),
 		},
 	}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	_, summary, err := service.ListModules(context.Background(), domain.ModuleListFilters{})
 	if err != nil {
@@ -114,7 +146,7 @@ func TestModuleServiceReturnsSummary(t *testing.T) {
 
 func TestModuleServiceRejectsFeatureWithoutCommonModule(t *testing.T) {
 	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	input := validModuleInput("module-profile")
 	input.CommonModuleID = ""
@@ -129,7 +161,7 @@ func TestModuleServiceRejectsFeatureWithoutCommonModule(t *testing.T) {
 
 func TestModuleServiceRejectsCommonWithCommonModule(t *testing.T) {
 	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	input := validModuleInput("module-common")
 	input.Kind = domain.ModuleKindCommon
@@ -145,7 +177,7 @@ func TestModuleServiceRejectsCommonWithCommonModule(t *testing.T) {
 
 func TestModuleServiceDeletesThroughRepository(t *testing.T) {
 	repository := fakeModuleRepository{}
-	service := NewModuleService(&repository)
+	service := newTestModuleService(&repository)
 
 	if err := service.DeleteModule(context.Background(), " module-profile "); err != nil {
 		t.Fatalf("delete module: %v", err)
@@ -220,17 +252,55 @@ func validModuleInput(id string) domain.ModuleInput {
 		OwnerDepartmentIDs: []string{"od-rn-platform"},
 		OwnerEmail:         "li.ming@xiaomi.com",
 		OwnerUserID:        "ou-li-ming",
-		Repository: domain.ModuleRepositoryBinding{
-			Provider:       domain.CodeSourceProviderGitHub,
-			RepositoryID:   1001,
-			InstallationID: 2001,
-			FullName:       "mi-car/profile",
-			HTMLURL:        "https://github.com/mi-car/profile",
-			CloneURL:       "https://github.com/mi-car/profile.git",
-			SSHURL:         "git@github.com:mi-car/profile.git",
-			DefaultBranch:  "main",
+		Repository: domain.ModuleRepository{
+			ConnectionID:         "code-source-1",
+			ExternalRepositoryID: "1001",
 		},
 	}
+}
+
+func newTestModuleService(repository *fakeModuleRepository) *ModuleService {
+	return NewModuleService(repository, newFakeModuleCodeSourceStore(), "docker/Dockerfile.rn")
+}
+
+type fakeModuleCodeSourceStore struct {
+	connection   domain.CodeSourceConnection
+	repositories map[string]domain.CodeSourceRepository
+}
+
+func newFakeModuleCodeSourceStore() *fakeModuleCodeSourceStore {
+	return &fakeModuleCodeSourceStore{
+		connection: domain.CodeSourceConnection{
+			ID:       "code-source-1",
+			Provider: domain.CodeSourceProviderGitLab,
+			Status:   domain.CodeSourceConnectionStatusActive,
+		},
+		repositories: map[string]domain.CodeSourceRepository{
+			"1001": {
+				ConnectionID:         "code-source-1",
+				ExternalRepositoryID: "1001",
+				FullName:             "acme/profile",
+				WebURL:               "https://gitlab.example.com/acme/profile",
+				CloneURL:             "https://gitlab.example.com/acme/profile.git",
+				DefaultBranch:        "main",
+			},
+		},
+	}
+}
+
+func (s *fakeModuleCodeSourceStore) GetCodeSourceConnection(_ context.Context, id string) (domain.CodeSourceConnection, error) {
+	if id != s.connection.ID {
+		return domain.CodeSourceConnection{}, domain.ErrCodeSourceConnectionNotFound
+	}
+	return s.connection, nil
+}
+
+func (s *fakeModuleCodeSourceStore) GetCodeSourceRepository(_ context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error) {
+	repository, ok := s.repositories[externalRepositoryID]
+	if !ok || connectionID != s.connection.ID {
+		return domain.CodeSourceRepository{}, domain.ErrCodeSourceRepositoryNotFound
+	}
+	return repository, nil
 }
 
 func testServiceModule(id string, kind domain.ModuleKind) domain.Module {
@@ -242,22 +312,24 @@ func testServiceModule(id string, kind domain.ModuleKind) domain.Module {
 	}
 
 	return domain.Module{
-		ApplicationID:            "app-mi-car",
-		ApplicationName:          "小米汽车 App",
-		ApplicationSlug:          "mi-car",
-		CommonModuleID:           commonModuleID,
-		CommonModuleName:         commonModuleName,
-		CreatedAt:                time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
-		DefaultBranch:            "main",
-		ID:                       id,
-		Kind:                     kind,
-		Name:                     "profile",
-		Owner:                    "li.ming",
-		OwnerUserID:              "ou-li-ming",
-		RepositoryFullName:       "mi-car/profile",
-		RepositoryID:             1001,
-		RepositoryInstallationID: 2001,
-		RepositoryProvider:       domain.CodeSourceProviderGitHub,
-		UpdatedAt:                time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
+		ApplicationID:      "app-mi-car",
+		ApplicationName:    "小米汽车 App",
+		ApplicationSlug:    "mi-car",
+		CommonModuleID:     commonModuleID,
+		CommonModuleName:   commonModuleName,
+		CodeSourceProvider: domain.CodeSourceProviderGitLab,
+		CreatedAt:          time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
+		ID:                 id,
+		Kind:               kind,
+		Name:               "profile",
+		Owner:              "li.ming",
+		OwnerUserID:        "ou-li-ming",
+		Repository: domain.ModuleRepository{
+			ConnectionID:         "code-source-1",
+			ExternalRepositoryID: "1001",
+			FullName:             "acme/profile",
+			DefaultBranch:        "main",
+		},
+		UpdatedAt: time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
 	}
 }

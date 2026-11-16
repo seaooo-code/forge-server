@@ -24,7 +24,7 @@ func NewBuildRepository(pool *pgxpool.Pool) *BuildRepository {
 
 func (r *BuildRepository) CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
 	for attempt := 0; attempt < 3; attempt++ {
-		record, err := r.createBuildRecord(ctx, newBuildRecordID(), input)
+		record, err := r.createBuildRecord(ctx, r.pool, newBuildRecordID(), input)
 		if err == nil {
 			return record, nil
 		}
@@ -36,19 +36,66 @@ func (r *BuildRepository) CreateBuildRecord(ctx context.Context, input domain.Bu
 	return domain.BuildRecord{}, fmt.Errorf("insert build record: id conflict")
 }
 
-func (r *BuildRepository) createBuildRecord(ctx context.Context, id string, input domain.BuildRecordInput) (domain.BuildRecord, error) {
-	record, err := scanBuildRecord(r.pool.QueryRow(ctx, `
+// CreateBuildRecordUnlessActive 用于 webhook 幂等创建构建：同一 (module_id, environment_code, commit_sha)
+// 已有 pending/running/succeeded 构建时不再创建，返回已有构建且 created=false。
+// 并发重投通过事务级 advisory lock 串行化，锁在事务提交或回滚时自动释放。
+func (r *BuildRepository) CreateBuildRecordUnlessActive(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, bool, error) {
+	if input.CommitSHA == "" {
+		return domain.BuildRecord{}, false, domain.ErrInvalidBuildInput
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.BuildRecord{}, false, fmt.Errorf("begin create build record unless active: %w", err)
+	}
+	defer rollbackMigration(ctx, tx)
+
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(hashtextextended('build_records:commit:' || $1 || ':' || $2 || ':' || $3, 0))
+	`, input.ModuleID, input.Environment, input.CommitSHA); err != nil {
+		return domain.BuildRecord{}, false, fmt.Errorf("lock build record commit: %w", err)
+	}
+
+	var existingID string
+	err = tx.QueryRow(ctx, `
+		select id::text
+		from build_records
+		where module_id = $1
+			and environment_code = $2
+			and commit_sha = $3
+			and status in ('pending', 'running', 'succeeded')
+		order by created_at desc
+		limit 1
+	`, input.ModuleID, input.Environment, input.CommitSHA).Scan(&existingID)
+	switch {
+	case err == nil:
+		if err := tx.Commit(ctx); err != nil {
+			return domain.BuildRecord{}, false, fmt.Errorf("commit build record lookup: %w", err)
+		}
+		record, err := r.GetBuildRecord(ctx, existingID)
+		return record, false, err
+	case !errors.Is(err, pgx.ErrNoRows):
+		return domain.BuildRecord{}, false, fmt.Errorf("query active build record by commit: %w", err)
+	}
+
+	record, err := r.createBuildRecord(ctx, tx, newBuildRecordID(), input)
+	if err != nil {
+		return domain.BuildRecord{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.BuildRecord{}, false, fmt.Errorf("commit create build record unless active: %w", err)
+	}
+	return record, true, nil
+}
+
+type buildRecordQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (r *BuildRepository) createBuildRecord(ctx context.Context, querier buildRecordQuerier, id string, input domain.BuildRecordInput) (domain.BuildRecord, error) {
+	record, err := scanBuildRecord(querier.QueryRow(ctx, `
 		with selected_module as (
-			select
-				m.id,
-				m.name,
-				m.application_id,
-				m.repository_provider,
-				m.provider_repository_id,
-				m.provider_installation_id,
-				m.repository_full_name,
-				m.repository_clone_url,
-				m.default_branch
+			select m.*
 			from modules m
 			where m.id = $2
 		),
@@ -64,9 +111,11 @@ func (r *BuildRepository) createBuildRecord(ctx context.Context, id string, inpu
 				environment_code,
 				storage_configuration_id,
 				branch,
+				commit_sha,
 				status,
 				trigger_type,
-				trigger_id
+				trigger_id,
+				created_by_user_id
 			)
 			select
 				$1,
@@ -74,9 +123,12 @@ func (r *BuildRepository) createBuildRecord(ctx context.Context, id string, inpu
 				e.code,
 				e.storage_configuration_id,
 				coalesce(nullif($4, ''), m.default_branch),
+				$7,
 				'pending',
 				$5,
-				$6
+				$6,
+				-- 创建人允许为空：用户不存在时写 null，避免外键错误被误报为模块不存在。
+				(select u.id from users u where u.id = nullif($8, ''))
 			from selected_module m
 			cross join selected_environment e
 			returning *
@@ -84,9 +136,10 @@ func (r *BuildRepository) createBuildRecord(ctx context.Context, id string, inpu
 	`+buildRecordSelectSQL("inserted", `
 		join selected_module m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join selected_environment e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), id, input.ModuleID, input.Environment, input.Branch, input.TriggerType, input.TriggerID))
+	`), id, input.ModuleID, input.Environment, input.Branch, input.TriggerType, input.TriggerID, input.CommitSHA, input.CreatedByUserID))
 	if err != nil {
 		if errors.Is(err, domain.ErrBuildRecordNotFound) {
 			return domain.BuildRecord{}, r.createBuildRecordMissingDependency(ctx, input)
@@ -132,6 +185,7 @@ func (r *BuildRepository) ListBuildRecords(ctx context.Context, filters domain.B
 	rows, err := r.pool.Query(ctx, buildRecordSelectSQL("build_records", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
 		where ($1 = '' or br.status = $1)
@@ -165,6 +219,7 @@ func (r *BuildRepository) GetBuildRecord(ctx context.Context, id string) (domain
 	return scanBuildRecord(r.pool.QueryRow(ctx, buildRecordSelectSQL("build_records", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
 		where br.id = $1
@@ -225,6 +280,7 @@ func (r *BuildRepository) AcquireNextBuildRecord(ctx context.Context, workerID s
 	`+buildRecordSelectSQL("updated", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
 	`), workerID, intervalString(leaseDuration)))
@@ -250,6 +306,9 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, co
 				file_count = $5,
 				total_size_bytes = $6,
 				error_message = $7,
+				commit_sha = coalesce(nullif($8, ''), br.commit_sha),
+				runtime_version = $9,
+				platforms = $10,
 				finished_at = now(),
 				updated_at = now()
 			where id = $1
@@ -258,9 +317,10 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, co
 	`+buildRecordSelectSQL("updated", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage))
+	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms)))
 	if err != nil {
 		return domain.BuildRecord{}, err
 	}
@@ -283,6 +343,7 @@ func (r *BuildRepository) FailBuildRecord(ctx context.Context, id string, messag
 	`+buildRecordSelectSQL("updated", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
 	`), id, message))
@@ -305,12 +366,18 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			m.name as module_name,
 			br.environment_code,
 			e.name as environment_name,
-			m.repository_provider,
-			m.provider_repository_id,
-			m.provider_installation_id,
+			csc.provider as code_source_provider,
+			m.code_source_connection_id,
+			m.external_repository_id,
 			m.repository_full_name,
+			m.repository_web_url,
 			m.repository_clone_url,
+			m.dockerfile_path,
+			m.build_context,
 			br.branch,
+			br.commit_sha,
+			br.runtime_version,
+			br.platforms,
 			m.default_branch,
 			br.storage_configuration_id,
 			s.name as storage_configuration_name,
@@ -329,6 +396,9 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			br.trigger_type,
 			br.trigger_id,
 			br.error_message,
+			coalesce(br.created_by_user_id, ''),
+			coalesce(cu.name, ''),
+			coalesce(cu.avatar_url, ''),
 			br.worker_id,
 			br.queued_at,
 			br.started_at,
@@ -336,6 +406,7 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			br.created_at,
 			br.updated_at
 		from ` + buildRecordSourceSQL + ` br
+		left join users cu on cu.id = br.created_by_user_id
 		` + extraJoinSQL
 }
 
@@ -343,6 +414,7 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	var record domain.BuildRecord
 	var startedAt sql.NullTime
 	var finishedAt sql.NullTime
+	var createdByName, createdByAvatarURL string
 	if err := row.Scan(
 		&record.ID,
 		&record.ApplicationName,
@@ -350,12 +422,18 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.ModuleName,
 		&record.Environment,
 		&record.EnvironmentName,
-		&record.RepositoryProvider,
-		&record.RepositoryID,
-		&record.RepositoryInstallationID,
-		&record.RepositoryFullName,
-		&record.RepositoryCloneURL,
+		&record.CodeSourceProvider,
+		&record.Repository.ConnectionID,
+		&record.Repository.ExternalRepositoryID,
+		&record.Repository.FullName,
+		&record.Repository.WebURL,
+		&record.Repository.CloneURL,
+		&record.DockerfilePath,
+		&record.BuildContext,
 		&record.Branch,
+		&record.CommitSHA,
+		&record.RuntimeVersion,
+		&record.Platforms,
 		&record.DefaultBranch,
 		&record.StorageConfigurationID,
 		&record.StorageConfigurationName,
@@ -374,6 +452,9 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.TriggerType,
 		&record.TriggerID,
 		&record.ErrorMessage,
+		&record.CreatedByUserID,
+		&createdByName,
+		&createdByAvatarURL,
 		&record.WorkerID,
 		&record.QueuedAt,
 		&startedAt,
@@ -386,6 +467,10 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		}
 		return domain.BuildRecord{}, fmt.Errorf("scan build record: %w", err)
 	}
+	record.Repository.DefaultBranch = record.DefaultBranch
+	if record.CreatedByUserID != "" {
+		record.CreatedBy = &domain.UserSummary{ID: record.CreatedByUserID, Name: createdByName, AvatarURL: createdByAvatarURL}
+	}
 	if startedAt.Valid {
 		record.StartedAt = &startedAt.Time
 	}
@@ -393,6 +478,13 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		record.FinishedAt = &finishedAt.Time
 	}
 	return record, nil
+}
+
+func buildPlatforms(platforms []string) []string {
+	if platforms == nil {
+		return []string{}
+	}
+	return platforms
 }
 
 func intervalString(duration time.Duration) string {

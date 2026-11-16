@@ -48,12 +48,15 @@ func (s *ReleaseService) ListReleases(ctx context.Context, filters domain.Releas
 
 func (s *ReleaseService) ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error) {
 	normalized := domain.ReleaseResolveInput{
-		ModuleID:    strings.TrimSpace(input.ModuleID),
-		Environment: strings.TrimSpace(input.Environment),
-		Identifier:  strings.TrimSpace(input.Identifier),
-		UserID:      strings.TrimSpace(input.UserID),
+		ModuleID:       strings.TrimSpace(input.ModuleID),
+		Environment:    strings.TrimSpace(input.Environment),
+		RuntimeVersion: strings.TrimSpace(input.RuntimeVersion),
+		Identifier:     strings.TrimSpace(input.Identifier),
+		UserID:         strings.TrimSpace(input.UserID),
 	}
-	if !domain.IsValidModuleID(normalized.ModuleID) || normalized.Environment == "" {
+	if !domain.IsValidModuleID(normalized.ModuleID) ||
+		normalized.Environment == "" ||
+		normalized.RuntimeVersion != "" && !domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
 		return domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
 	}
 	return s.repository.ResolveReleaseRoute(ctx, normalized)

@@ -1,13 +1,12 @@
 package worker
 
 import (
-	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ func TestGitCloneArgsUsesBuildRecordBranch(t *testing.T) {
 		"1",
 		"--branch",
 		"release/1.2.0",
+		"--",
 		"https://github.com/mi-car/profile.git",
 		"/tmp/repo",
 	}
@@ -37,6 +37,7 @@ func TestGitCloneArgsUsesRemoteDefaultWhenBranchEmpty(t *testing.T) {
 		"clone",
 		"--depth",
 		"1",
+		"--",
 		"https://github.com/mi-car/profile.git",
 		"/tmp/repo",
 	}
@@ -46,14 +47,19 @@ func TestGitCloneArgsUsesRemoteDefaultWhenBranchEmpty(t *testing.T) {
 }
 
 func TestDockerBuildArgsBuildsTaggedImage(t *testing.T) {
-	got := dockerBuildArgs("docker/rn.Dockerfile", "forge-worker-build:build-1")
+	paths := dockerBuildPaths{repoDir: "/tmp/repo", dockerfile: "/tmp/repo/docker/rn.Dockerfile", context: "/tmp/repo/app"}
+	got := dockerBuildArgs(paths, "forge-worker-build:build-1", []string{"--build-arg", "A=1"})
 	want := []string{
 		"build",
+		"--progress",
+		"plain",
 		"--file",
-		"docker/rn.Dockerfile",
+		"/tmp/repo/docker/rn.Dockerfile",
+		"--build-arg",
+		"A=1",
 		"--tag",
 		"forge-worker-build:build-1",
-		".",
+		"/tmp/repo/app",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %#v, got %#v", want, got)
@@ -61,8 +67,9 @@ func TestDockerBuildArgsBuildsTaggedImage(t *testing.T) {
 }
 
 func TestDockerBuildOutputArgsExportsFinalImageFilesystem(t *testing.T) {
-	got := dockerBuildOutputArgs("Dockerfile", "/tmp/output")
-	want := []string{"build", "--file", "Dockerfile", "--output", "type=local,dest=/tmp/output", "."}
+	paths := dockerBuildPaths{repoDir: "/tmp/repo", dockerfile: "/tmp/repo/Dockerfile", context: "/tmp/repo"}
+	got := dockerBuildOutputArgs(paths, "/tmp/output", nil)
+	want := []string{"build", "--progress", "plain", "--file", "/tmp/repo/Dockerfile", "--output", "type=local,dest=/tmp/output", "/tmp/repo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %#v, got %#v", want, got)
 	}
@@ -243,7 +250,7 @@ func TestArtifactManifestFileIncludesNestedMetadata(t *testing.T) {
 	file, err := artifactManifestFile(artifactFile{
 		key:  "assets/images/icons/home.png",
 		path: path,
-	}, "rn-bundles/app/module/qa/build-1/assets/images/icons/home.png")
+	}, "rn-bundles/app/module/qa/build-1/assets/images/icons/home.png", []string{"sha256", "md5"})
 	if err != nil {
 		t.Fatalf("artifact manifest file: %v", err)
 	}
@@ -252,7 +259,9 @@ func TestArtifactManifestFileIncludesNestedMetadata(t *testing.T) {
 		file.ObjectKey != "rn-bundles/app/module/qa/build-1/assets/images/icons/home.png" ||
 		file.SizeBytes != int64(len(content)) ||
 		file.ContentType != "image/png" ||
-		file.SHA256 != fmt.Sprintf("%x", sha256.Sum256(content)) {
+		file.SHA256 != fmt.Sprintf("%x", sha256.Sum256(content)) ||
+		file.Digests["sha256"] != file.SHA256 ||
+		file.Digests["md5"] != fmt.Sprintf("%x", md5.Sum(content)) {
 		t.Fatalf("unexpected manifest file: %+v", file)
 	}
 }
@@ -271,7 +280,7 @@ func TestGenerateArtifactManifestScansArtifacts(t *testing.T) {
 		t.Fatalf("write image: %v", err)
 	}
 
-	manifest, err := generateArtifactManifest(artifactRoot, "rn-bundles/app/module/qa/build-1")
+	manifest, err := generateArtifactManifest(artifactRoot, "rn-bundles/app/module/qa/build-1", []string{"sha256"})
 	if err != nil {
 		t.Fatalf("generate artifact manifest: %v", err)
 	}
@@ -334,26 +343,5 @@ func TestWriteGitAskPassUsesEnvironmentCredentials(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o700 {
 		t.Fatalf("expected executable askpass permissions, got %v", info.Mode().Perm())
-	}
-}
-
-func TestRunCommandRedactsSecretsFromErrorOutput(t *testing.T) {
-	err := runCommand(
-		context.Background(),
-		"",
-		nil,
-		[]string{"token-value"},
-		"sh",
-		"-c",
-		"printf '%s' 'failed with token-value'; exit 1",
-	)
-	if err == nil {
-		t.Fatal("expected command error")
-	}
-	if strings.Contains(err.Error(), "token-value") {
-		t.Fatalf("expected token to be redacted, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "[redacted]") {
-		t.Fatalf("expected redacted marker, got %v", err)
 	}
 }

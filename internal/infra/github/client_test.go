@@ -63,6 +63,34 @@ func TestAppManifestUsesConfiguredURLs(t *testing.T) {
 	if payload["setup_url"] != "https://api.forge.example.com/api/v1/code-sources/github/install/callback" {
 		t.Fatalf("unexpected setup url: %+v", payload)
 	}
+	if _, ok := payload["hook_attributes"]; ok {
+		t.Fatalf("expected no webhook without public webhook url: %+v", payload)
+	}
+}
+
+func TestAppManifestSubscribesPushWhenWebhookURLConfigured(t *testing.T) {
+	client := NewClient(config.GitHubConfig{WebhookURL: "https://forge.example.com/api/v1/webhooks/github"}, false)
+
+	manifest, err := client.AppManifest()
+	if err != nil {
+		t.Fatalf("app manifest: %v", err)
+	}
+	var payload struct {
+		DefaultEvents  []string `json:"default_events"`
+		HookAttributes struct {
+			Active bool   `json:"active"`
+			URL    string `json:"url"`
+		} `json:"hook_attributes"`
+	}
+	if err := json.Unmarshal([]byte(manifest.Payload), &payload); err != nil {
+		t.Fatalf("decode manifest payload: %v", err)
+	}
+	if len(payload.DefaultEvents) != 1 || payload.DefaultEvents[0] != "push" {
+		t.Fatalf("expected push event subscription, got %+v", payload.DefaultEvents)
+	}
+	if !payload.HookAttributes.Active || payload.HookAttributes.URL != "https://forge.example.com/api/v1/webhooks/github" {
+		t.Fatalf("unexpected hook attributes: %+v", payload.HookAttributes)
+	}
 }
 
 func TestValidateAppUsesGitHubAppJWT(t *testing.T) {
@@ -238,11 +266,11 @@ func TestListRepositoriesUsesInstallationAccessToken(t *testing.T) {
 		t.Fatalf("expected 1 repository, got %d", len(page.Repositories))
 	}
 	repository := page.Repositories[0]
-	if repository.RepositoryID != 2001 || repository.FullName != "mi-car/home" || repository.Owner != "mi-car" {
+	if repository.ExternalRepositoryID != "2001" || repository.FullName != "mi-car/home" || repository.WebURL != "https://github.com/mi-car/home" {
 		t.Fatalf("unexpected repository: %+v", repository)
 	}
-	if repository.UpdatedAt == nil || repository.UpdatedAt.Format(time.RFC3339) != "2026-06-12T10:00:00Z" {
-		t.Fatalf("unexpected repository updated at: %#v", repository.UpdatedAt)
+	if repository.CloneURL != "https://github.com/mi-car/home.git" || repository.DefaultBranch != "main" || !repository.Private {
+		t.Fatalf("unexpected repository clone metadata: %+v", repository)
 	}
 }
 

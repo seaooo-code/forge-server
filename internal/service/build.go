@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,9 +26,16 @@ type ArtifactManifestReader interface {
 	ReadArtifactManifest(ctx context.Context, record domain.BuildRecord) (domain.ArtifactManifest, error)
 }
 
+// BuildSucceededHook 在构建成功落库后被调用，例如按模块配置创建预览通道发布。
+// 实现自行处理并记录错误，不能影响构建状态。
+type BuildSucceededHook interface {
+	HandleBuildSucceeded(ctx context.Context, record domain.BuildRecord)
+}
+
 type BuildService struct {
 	manifestReader ArtifactManifestReader
 	repository     BuildRecordRepository
+	succeededHook  BuildSucceededHook
 }
 
 func NewBuildService(repository BuildRecordRepository) *BuildService {
@@ -36,6 +44,12 @@ func NewBuildService(repository BuildRecordRepository) *BuildService {
 
 func NewBuildServiceWithManifestReader(repository BuildRecordRepository, manifestReader ArtifactManifestReader) *BuildService {
 	return &BuildService{repository: repository, manifestReader: manifestReader}
+}
+
+// WithSucceededHook 注入构建成功回调。API 进程和 worker 进程在装配时都需要注入。
+func (s *BuildService) WithSucceededHook(hook BuildSucceededHook) *BuildService {
+	s.succeededHook = hook
+	return s
 }
 
 func (s *BuildService) CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
@@ -95,6 +109,9 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, compl
 	}
 
 	normalized := domain.BuildRecordCompletion{
+		CommitSHA:      strings.TrimSpace(completion.CommitSHA),
+		RuntimeVersion: strings.TrimSpace(completion.RuntimeVersion),
+		Platforms:      []string{},
 		ArtifactKey:    strings.Trim(strings.TrimSpace(completion.ArtifactKey), "/"),
 		ArtifactURL:    strings.TrimSpace(completion.ArtifactURL),
 		ManifestKey:    strings.Trim(strings.TrimSpace(completion.ManifestKey), "/"),
@@ -105,7 +122,25 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, compl
 	if normalized.ArtifactKey == "" || normalized.FileCount < 0 || normalized.TotalSizeBytes < 0 {
 		return domain.BuildRecord{}, domain.ErrInvalidBuildInput
 	}
-	return s.repository.CompleteBuildRecord(ctx, normalizedID, normalized)
+	if normalized.RuntimeVersion != "" && !domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
+		return domain.BuildRecord{}, domain.ErrInvalidBuildInput
+	}
+	for _, platform := range completion.Platforms {
+		if !domain.IsValidPlatform(platform) {
+			return domain.BuildRecord{}, domain.ErrInvalidBuildInput
+		}
+		if !slices.Contains(normalized.Platforms, platform) {
+			normalized.Platforms = append(normalized.Platforms, platform)
+		}
+	}
+	record, err := s.repository.CompleteBuildRecord(ctx, normalizedID, normalized)
+	if err != nil {
+		return domain.BuildRecord{}, err
+	}
+	if s.succeededHook != nil {
+		s.succeededHook.HandleBuildSucceeded(ctx, record)
+	}
+	return record, nil
 }
 
 func (s *BuildService) FailBuildRecord(ctx context.Context, id string, message string) (domain.BuildRecord, error) {
@@ -222,11 +257,13 @@ func validateBuildRecordInput(input domain.BuildRecordInput) (domain.BuildRecord
 	}
 
 	normalized := domain.BuildRecordInput{
-		ModuleID:    strings.TrimSpace(input.ModuleID),
-		Environment: strings.TrimSpace(input.Environment),
-		Branch:      strings.TrimSpace(input.Branch),
-		TriggerID:   strings.TrimSpace(input.TriggerID),
-		TriggerType: triggerType,
+		ModuleID:        strings.TrimSpace(input.ModuleID),
+		Environment:     strings.TrimSpace(input.Environment),
+		Branch:          strings.TrimSpace(input.Branch),
+		CommitSHA:       strings.TrimSpace(input.CommitSHA),
+		TriggerID:       strings.TrimSpace(input.TriggerID),
+		TriggerType:     triggerType,
+		CreatedByUserID: strings.TrimSpace(input.CreatedByUserID),
 	}
 	if !domain.IsValidModuleID(normalized.ModuleID) || normalized.Environment == "" {
 		return domain.BuildRecordInput{}, domain.ErrInvalidBuildInput
@@ -234,7 +271,8 @@ func validateBuildRecordInput(input domain.BuildRecordInput) (domain.BuildRecord
 	if !domain.IsValidBuildTriggerType(normalized.TriggerType) {
 		return domain.BuildRecordInput{}, domain.ErrInvalidBuildInput
 	}
-	if normalized.TriggerType == domain.BuildTriggerTypePipeline && normalized.TriggerID == "" {
+	// webhook 构建必须构建推送时的 commit；手动构建在 worker 检出后回填 commit_sha。
+	if normalized.TriggerType == domain.BuildTriggerTypeWebhook && (normalized.CommitSHA == "" || normalized.Branch == "") {
 		return domain.BuildRecordInput{}, domain.ErrInvalidBuildInput
 	}
 	return normalized, nil

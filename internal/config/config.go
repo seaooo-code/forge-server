@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ type Config struct {
 	HTTP      HTTPConfig
 	Postgres  PostgresConfig
 	Redis     RedisConfig
+	Security  SecurityConfig
 	Telemetry TelemetryConfig
 	Worker    WorkerConfig
 }
@@ -70,7 +73,14 @@ type GitHubConfig struct {
 	InstallRedirectURL  string
 	ManifestCallbackURL string
 	PrivateKey          string
+	WebhookSecret       string
+	WebhookURL          string
 	WebURL              string
+}
+
+type SecurityConfig struct {
+	// SecretKey 是 secretbox 的 AES-256 主密钥，来自 FORGE_SECRET_KEY（32 字节 base64）。
+	SecretKey []byte
 }
 
 type PostgresConfig struct {
@@ -88,14 +98,24 @@ type RedisConfig struct {
 }
 
 type WorkerConfig struct {
-	ArtifactPrefix string
-	BuildTimeout   time.Duration
-	Dockerfile     string
-	ID             string
-	LeaseDuration  time.Duration
-	PollInterval   time.Duration
-	WorkDir        string
+	// ArtifactDigests 是清单文件项 digests 字段要计算的摘要算法，来自 FORGE_ARTIFACT_DIGESTS。
+	ArtifactDigests []string
+	ArtifactPrefix  string
+	BuildTimeout    time.Duration
+	// Dockerfile 只在模块未配置 dockerfile_path 时兜底，同时作为新建模块的默认值。
+	Dockerfile    string
+	ID            string
+	LeaseDuration time.Duration
+	// LogMaxBytes 是单次构建日志上限，超出后只保留开头和最后一段。
+	LogMaxBytes int64
+	// LogRetention 是构建日志保留期，由 API 进程的后台巡检清理。
+	LogRetention time.Duration
+	PollInterval time.Duration
+	WorkDir      string
 }
+
+// ArtifactDigestAlgorithms 是 FORGE_ARTIFACT_DIGESTS 允许的摘要算法。
+var ArtifactDigestAlgorithms = []string{"sha256", "md5"}
 
 func Load() (Config, error) {
 	if err := loadDotenv(); err != nil {
@@ -147,6 +167,24 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	workerLogMaxBytes, err := intEnv("FORGE_WORKER_LOG_MAX_BYTES", 5*1024*1024)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerLogMaxBytes <= 0 {
+		return Config{}, errors.New("parse FORGE_WORKER_LOG_MAX_BYTES: must be positive")
+	}
+
+	buildLogRetention, err := retentionEnv("FORGE_BUILD_LOG_RETENTION", 30*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+
+	artifactDigests, err := artifactDigestsEnv("FORGE_ARTIFACT_DIGESTS")
+	if err != nil {
+		return Config{}, err
+	}
+
 	otelHeaders, err := stringMapEnv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", nil)
 	if err != nil {
 		return Config{}, err
@@ -167,6 +205,11 @@ func Load() (Config, error) {
 		if err != nil {
 			return Config{}, err
 		}
+	}
+
+	secretKey, err := secretKeyEnv("FORGE_SECRET_KEY")
+	if err != nil {
+		return Config{}, err
 	}
 
 	appEnv := stringEnv("APP_ENV", "local")
@@ -217,6 +260,8 @@ func Load() (Config, error) {
 			InstallRedirectURL:  stringEnv("GITHUB_APP_INSTALL_REDIRECT_URL", defaultGitHubAppInstallRedirectURL),
 			ManifestCallbackURL: stringEnv("GITHUB_APP_MANIFEST_CALLBACK_URL", defaultGitHubAppManifestCallbackURL),
 			PrivateKey:          privateKeyEnv("GITHUB_APP_PRIVATE_KEY", ""),
+			WebhookSecret:       stringEnv("GITHUB_APP_WEBHOOK_SECRET", ""),
+			WebhookURL:          stringEnv("GITHUB_APP_WEBHOOK_URL", ""),
 			WebURL:              stringEnv("GITHUB_WEB_URL", defaultGitHubWebURL),
 		},
 		Postgres: PostgresConfig{
@@ -231,6 +276,9 @@ func Load() (Config, error) {
 			Password: stringEnv("REDIS_PASSWORD", ""),
 			DB:       redisDB,
 		},
+		Security: SecurityConfig{
+			SecretKey: secretKey,
+		},
 		Telemetry: TelemetryConfig{
 			Enabled:         boolEnv("OTEL_ENABLED", false),
 			ServiceName:     stringEnv("OTEL_SERVICE_NAME", "forge-server"),
@@ -242,13 +290,16 @@ func Load() (Config, error) {
 			OTLPLogHeaders:  otelLogHeaders,
 		},
 		Worker: WorkerConfig{
-			ArtifactPrefix: strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
-			BuildTimeout:   workerBuildTimeout,
-			Dockerfile:     stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
-			ID:             stringEnv("FORGE_WORKER_ID", ""),
-			LeaseDuration:  workerLeaseDuration,
-			PollInterval:   workerPollInterval,
-			WorkDir:        stringEnv("FORGE_WORKER_WORK_DIR", "/tmp/forge-worker"),
+			ArtifactDigests: artifactDigests,
+			ArtifactPrefix:  strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
+			BuildTimeout:    workerBuildTimeout,
+			Dockerfile:      stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
+			ID:              stringEnv("FORGE_WORKER_ID", ""),
+			LeaseDuration:   workerLeaseDuration,
+			LogMaxBytes:     int64(workerLogMaxBytes),
+			LogRetention:    buildLogRetention,
+			PollInterval:    workerPollInterval,
+			WorkDir:         stringEnv("FORGE_WORKER_WORK_DIR", "/tmp/forge-worker"),
 		},
 	}
 
@@ -282,6 +333,21 @@ func stringEnv(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func secretKeyEnv(key string) ([]byte, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil, fmt.Errorf("%s is required: generate one with `openssl rand -base64 32`", key)
+	}
+	value, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: expected base64: %w", key, err)
+	}
+	if len(value) != 32 {
+		return nil, fmt.Errorf("parse %s: expected 32 bytes after base64 decoding, got %d", key, len(value))
+	}
+	return value, nil
 }
 
 func privateKeyEnv(key string, fallback string) string {
@@ -353,6 +419,46 @@ func intEnv(key string, fallback int) (int, error) {
 	}
 
 	return value, nil
+}
+
+// retentionEnv 在 time.ParseDuration 的基础上支持按天书写，例如 30d。
+func retentionEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	var value time.Duration
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		count, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, fmt.Errorf("parse %s: %w", key, err)
+		}
+		value = time.Duration(count) * 24 * time.Hour
+	} else {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("parse %s: %w", key, err)
+		}
+		value = parsed
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("parse %s: must be positive", key)
+	}
+	return value, nil
+}
+
+func artifactDigestsEnv(key string) ([]string, error) {
+	values := []string{}
+	for _, item := range stringListEnv(key, []string{"sha256"}) {
+		algorithm := strings.ToLower(item)
+		if !slices.Contains(ArtifactDigestAlgorithms, algorithm) {
+			return nil, fmt.Errorf("parse %s: unsupported digest algorithm %q, expected one of %s", key, item, strings.Join(ArtifactDigestAlgorithms, ","))
+		}
+		if !slices.Contains(values, algorithm) {
+			values = append(values, algorithm)
+		}
+	}
+	return values, nil
 }
 
 func durationEnv(key string, fallback time.Duration) (time.Duration, error) {

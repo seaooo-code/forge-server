@@ -191,54 +191,50 @@ create table code_source_app_configs (
     updated_at timestamptz not null default now()
 );
 
-create table code_source_installations (
-    id bigserial primary key,
-    provider text not null check (provider in ('github')),
-    owner_union_id text not null,
-    provider_installation_id bigint not null,
-    account_login text not null default '',
-    account_type text not null default '',
-    repository_selection text not null default '',
-    status text not null check (status in ('active', 'deleted')),
-    installed_at timestamptz not null default now(),
-    deleted_at timestamptz,
+create table code_source_connections (
+    id text primary key,
+    provider text not null check (provider in ('github', 'gitlab')),
+    name text not null,
+    web_base_url text not null,
+    api_base_url text not null,
+    external_account text not null default '',
+    external_id text not null default '',
+    credential_encrypted text not null default '',
+    credential_preview text not null default '',
+    credential_expires_at timestamptz,
+    webhook_secret_encrypted text not null default '',
+    status text not null check (status in ('active', 'disabled', 'deleted')),
+    created_by_user_id text not null references users(id) on delete restrict,
+    last_verified_at timestamptz,
     created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now(),
-    unique (provider, owner_union_id, provider_installation_id)
+    updated_at timestamptz not null default now()
 );
 
-create index idx_code_source_installations_provider_owner_status
-    on code_source_installations(provider, owner_union_id, status);
+create unique index idx_code_source_connections_external
+    on code_source_connections(provider, api_base_url, external_id)
+    where external_id <> '' and status <> 'deleted';
+
+create index idx_code_source_connections_provider_status
+    on code_source_connections(provider, status);
+
+create index idx_code_source_connections_created_by
+    on code_source_connections(created_by_user_id);
 
 create table code_source_repositories (
-    provider text not null check (provider in ('github')),
-    owner_union_id text not null,
-    provider_repository_id bigint not null,
-    provider_installation_id bigint not null,
-    owner text not null,
-    name text not null,
+    connection_id text not null references code_source_connections(id) on delete cascade,
+    external_repository_id text not null,
     full_name text not null,
-    private boolean not null default false,
-    html_url text not null default '',
+    web_url text not null default '',
     clone_url text not null default '',
-    ssh_url text not null default '',
     default_branch text not null default '',
+    private boolean not null default false,
     description text not null default '',
-    repository_updated_at timestamptz,
     last_synced_at timestamptz not null default now(),
-    created_at timestamptz not null default now(),
-    updated_at timestamptz not null default now(),
-    primary key (provider, owner_union_id, provider_repository_id),
-    foreign key (provider, owner_union_id, provider_installation_id)
-        references code_source_installations(provider, owner_union_id, provider_installation_id)
-        on delete cascade
+    primary key (connection_id, external_repository_id)
 );
 
-create index idx_code_source_repositories_installation
-    on code_source_repositories(provider, owner_union_id, provider_installation_id);
-
 create index idx_code_source_repositories_full_name
-    on code_source_repositories(provider, owner_union_id, full_name);
+    on code_source_repositories(connection_id, full_name);
 
 create table modules (
     id text primary key,
@@ -247,14 +243,18 @@ create table modules (
     common_module_id text references modules(id) on delete restrict,
     application_id text not null references applications(id) on delete restrict,
     owner_user_id text not null references users(id) on delete restrict,
-    repository_provider text not null check (repository_provider in ('github')),
-    provider_repository_id bigint not null,
-    provider_installation_id bigint not null default 0,
+    code_source_connection_id text not null references code_source_connections(id) on delete restrict,
+    external_repository_id text not null,
     repository_full_name text not null,
-    repository_html_url text not null default '',
+    repository_web_url text not null default '',
     repository_clone_url text not null default '',
-    repository_ssh_url text not null default '',
     default_branch text not null default '',
+    dockerfile_path text not null default 'Dockerfile',
+    build_context text not null default '.',
+    auto_build_branches text[] not null default '{}',
+    auto_build_environment_code text references environments(code) on delete set null,
+    auto_preview_release boolean not null default false,
+    auto_preview_ttl_hours integer not null default 168 check (auto_preview_ttl_hours > 0),
     sort_order integer not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
@@ -262,7 +262,8 @@ create table modules (
         (kind = 'Common' and common_module_id is null)
         or (kind = 'Feature' and common_module_id is not null and common_module_id <> id)
     ),
-    unique (repository_provider, provider_repository_id)
+    constraint modules_repository_dockerfile_unique
+        unique (code_source_connection_id, external_repository_id, dockerfile_path)
 );
 
 create index idx_modules_application
@@ -282,10 +283,29 @@ create index idx_modules_kind
     on modules(kind);
 
 create index idx_modules_repository_full_name
-    on modules(repository_provider, repository_full_name);
+    on modules(repository_full_name);
 
-create index idx_modules_repository_installation
-    on modules(repository_provider, provider_installation_id);
+create index idx_modules_auto_build_environment
+    on modules(auto_build_environment_code)
+    where auto_build_environment_code is not null;
+
+create table module_build_variables (
+    module_id text not null references modules(id) on delete cascade,
+    key text not null check (key ~ '^[A-Z][A-Z0-9_]{0,63}$'),
+    value_encrypted text not null,
+    is_secret boolean not null default false,
+    environment_code text references environments(code) on delete cascade,
+    updated_by_user_id text not null references users(id) on delete restrict,
+    updated_at timestamptz not null default now(),
+    unique nulls not distinct (module_id, key, environment_code)
+);
+
+create index idx_module_build_variables_environment
+    on module_build_variables(environment_code)
+    where environment_code is not null;
+
+create index idx_module_build_variables_updated_by
+    on module_build_variables(updated_by_user_id);
 
 create table build_records (
     id uuid primary key,
@@ -293,9 +313,14 @@ create table build_records (
     environment_code text not null references environments(code) on delete restrict,
     storage_configuration_id text not null references storage_configurations(id) on delete restrict,
     branch text not null default '',
+    commit_sha text not null default '',
     status text not null check (status in ('pending', 'running', 'succeeded', 'failed')),
-    trigger_type text not null default 'manual' check (trigger_type in ('manual', 'pipeline')),
+    trigger_type text not null default 'manual' check (trigger_type in ('manual', 'webhook')),
     trigger_id text not null default '',
+    -- 手动构建记录当前登录用户；webhook 构建记录代码源连接的创建人。历史数据为空。
+    created_by_user_id text references users(id) on delete set null,
+    runtime_version text not null default '',
+    platforms text[] not null default '{}',
     worker_id text not null default '',
     lease_expires_at timestamptz,
     artifact_key text not null default '',
@@ -309,7 +334,7 @@ create table build_records (
     finished_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    check (trigger_type <> 'pipeline' or trigger_id <> '')
+    check (status <> 'succeeded' or (commit_sha <> '' and runtime_version <> '' and cardinality(platforms) > 0))
 );
 
 create index idx_build_records_status_queue
@@ -326,6 +351,23 @@ create index idx_build_records_storage_configuration
 
 create index idx_build_records_trigger
     on build_records(trigger_type, trigger_id);
+
+create index idx_build_records_commit
+    on build_records(module_id, environment_code, commit_sha);
+
+create index idx_build_records_created_by_user
+    on build_records(created_by_user_id);
+
+create table build_log_chunks (
+    build_record_id uuid not null references build_records(id) on delete cascade,
+    seq integer not null,
+    content text not null,
+    created_at timestamptz not null default now(),
+    primary key (build_record_id, seq)
+);
+
+create index idx_build_log_chunks_created_at
+    on build_log_chunks(created_at);
 
 create table release_records (
     id uuid primary key,
@@ -368,6 +410,7 @@ create table release_routes (
     module_id text not null references modules(id) on delete restrict,
     environment_code text not null references environments(code) on delete restrict,
     release_id uuid not null references release_records(id) on delete restrict,
+    runtime_version text not null,
     route_type text not null check (route_type in ('default', 'identifier', 'percentage')),
     identifier text not null default '',
     status text not null check (status in ('active', 'inactive')),
@@ -382,15 +425,15 @@ create table release_routes (
 );
 
 create unique index idx_release_routes_default_active
-    on release_routes(module_id, environment_code)
+    on release_routes(module_id, environment_code, runtime_version)
     where route_type = 'default' and status = 'active';
 
 create unique index idx_release_routes_identifier_active
-    on release_routes(module_id, environment_code, identifier)
+    on release_routes(module_id, environment_code, runtime_version, identifier)
     where route_type = 'identifier' and status = 'active';
 
 create unique index idx_release_routes_percentage_active
-    on release_routes(module_id, environment_code)
+    on release_routes(module_id, environment_code, runtime_version)
     where route_type = 'percentage' and status = 'active';
 
 create index idx_release_routes_release

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"forge-server/internal/domain"
 
@@ -21,12 +22,9 @@ type codeSourcesResponse struct {
 	Apps []codeSourceAppResponse `json:"apps"`
 }
 
-type codeSourceAppDetailResponse struct {
-	App codeSourceAppResponse `json:"app"`
-}
-
 type codeSourceAppResponse struct {
 	ConfigurationStatus string `json:"configurationStatus"`
+	ConnectionCount     int    `json:"connectionCount"`
 	Description         string `json:"description"`
 	ID                  string `json:"id"`
 	InstalledAt         string `json:"installedAt,omitempty"`
@@ -44,24 +42,70 @@ type codeSourceAppManifestResponse struct {
 	Manifest  string `json:"manifest"`
 }
 
+type codeSourceConnectionsResponse struct {
+	Connections []codeSourceConnectionResponse `json:"connections"`
+}
+
+type codeSourceConnectionDetailResponse struct {
+	Connection codeSourceConnectionResponse `json:"connection"`
+}
+
+// codeSourceConnectionResponse 不包含凭证和 webhook secret，只返回凭证预览。
+type codeSourceConnectionResponse struct {
+	APIBaseURL          string `json:"apiBaseUrl"`
+	CreatedAt           string `json:"createdAt"`
+	CreatedBy           string `json:"createdBy"`
+	CreatedByUserID     string `json:"createdByUserId"`
+	CredentialExpiresAt string `json:"credentialExpiresAt"`
+	CredentialPreview   string `json:"credentialPreview"`
+	ExternalAccount     string `json:"externalAccount"`
+	ExternalID          string `json:"externalId"`
+	ID                  string `json:"id"`
+	LastVerifiedAt      string `json:"lastVerifiedAt"`
+	Name                string `json:"name"`
+	Provider            string `json:"provider"`
+	Status              string `json:"status"`
+	UpdatedAt           string `json:"updatedAt"`
+	WebBaseURL          string `json:"webBaseUrl"`
+}
+
+type codeSourceConnectionCreateRequest struct {
+	APIBaseURL string `json:"apiBaseUrl"`
+	Credential string `json:"credential"`
+	Name       string `json:"name"`
+	Provider   string `json:"provider"`
+	WebBaseURL string `json:"webBaseUrl"`
+}
+
+type codeSourceConnectionUpdateRequest struct {
+	Credential *string `json:"credential"`
+	Name       *string `json:"name"`
+	Status     *string `json:"status"`
+}
+
+type codeSourceConnectionWebhookResponse struct {
+	Path     string `json:"path"`
+	Provider string `json:"provider"`
+	Secret   string `json:"secret"`
+}
+
 type codeSourceRepositorySearchResponse struct {
+	HasMore      bool                           `json:"hasMore"`
+	Page         int                            `json:"page"`
+	PageSize     int                            `json:"pageSize"`
 	Repositories []codeSourceRepositoryResponse `json:"repositories"`
 }
 
 type codeSourceRepositoryResponse struct {
-	CloneURL       string `json:"cloneUrl"`
-	DefaultBranch  string `json:"defaultBranch"`
-	Description    string `json:"description"`
-	FullName       string `json:"fullName"`
-	HTMLURL        string `json:"htmlUrl"`
-	ID             string `json:"id"`
-	InstallationID string `json:"installationId"`
-	Name           string `json:"name"`
-	Owner          string `json:"owner"`
-	Private        bool   `json:"private"`
-	Provider       string `json:"provider"`
-	SSHURL         string `json:"sshUrl"`
-	UpdatedAt      string `json:"updatedAt"`
+	CloneURL             string `json:"cloneUrl"`
+	ConnectionID         string `json:"connectionId"`
+	DefaultBranch        string `json:"defaultBranch"`
+	Description          string `json:"description"`
+	ExternalRepositoryID string `json:"externalRepositoryId"`
+	FullName             string `json:"fullName"`
+	LastSyncedAt         string `json:"lastSyncedAt"`
+	Private              bool   `json:"private"`
+	WebURL               string `json:"webUrl"`
 }
 
 func registerCodeSourceRoutes(group *echo.Group, publicGroup *echo.Group, service CodeSourceService, authService FeishuAuthService, authorization AuthorizationService, installRedirectURL string) {
@@ -72,48 +116,62 @@ func registerCodeSourceRoutes(group *echo.Group, publicGroup *echo.Group, servic
 		service:            service,
 	}
 
+	// GitHub App 创建与安装流程。
 	group.GET("/code-sources", handler.list)
-	group.GET("/code-sources/:provider/manifest", handler.manifest)
-	publicGroup.GET("/code-sources/:provider/manifest/callback", handler.completeManifest)
-	group.GET("/code-sources/:provider/install-url", handler.installURL)
-	group.GET("/code-sources/:provider/install/callback", handler.completeInstallation)
-	group.DELETE("/code-sources/:provider/installations", handler.deleteInstallations)
-	group.GET("/code-sources/:provider/repositories/search", handler.searchRepositories)
+	group.GET("/code-sources/github/manifest", handler.manifest)
+	publicGroup.GET("/code-sources/github/manifest/callback", handler.completeManifest)
+	group.GET("/code-sources/github/install-url", handler.installURL)
+	group.GET("/code-sources/github/install/callback", handler.completeInstallation)
+
+	// 平台级代码源连接：PlatformAdmin / SuperAdmin 管理，有模块权限的人可读取和使用。
+	group.GET("/code-source-connections", handler.listConnections)
+	group.POST("/code-source-connections", handler.createConnection)
+	group.GET("/code-source-connections/:id", handler.getConnection)
+	group.PATCH("/code-source-connections/:id", handler.updateConnection)
+	group.DELETE("/code-source-connections/:id", handler.deleteConnection)
+	group.POST("/code-source-connections/:id/verify", handler.verifyConnection)
+	group.GET("/code-source-connections/:id/repositories", handler.searchRepositories)
+	group.GET("/code-source-connections/:id/webhook", handler.connectionWebhook)
 }
 
 func (h codeSourceHandler) list(c echo.Context) error {
 	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
-	}
-
-	session, ok, err := h.currentSession(c)
-	if err != nil || !ok {
-		return err
-	}
-
-	apps, err := h.service.ListCodeSources(c.Request().Context(), session.User.UnionID)
-	if err != nil {
-		return codeSourceErrorResponse(c, err)
-	}
-
-	return c.JSON(http.StatusOK, codeSourcesResponse{
-		Apps: newCodeSourceAppResponses(apps),
-	})
-}
-
-func (h codeSourceHandler) manifest(c echo.Context) error {
-	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
+		return codeSourceUnavailable(c)
 	}
 	if _, ok, err := h.currentSession(c); err != nil || !ok {
 		return err
 	}
 
-	manifest, err := h.service.GetAppManifest(c.Request().Context(), domain.CodeSourceProvider(c.Param("provider")))
+	apps, err := h.service.ListCodeSources(c.Request().Context())
 	if err != nil {
 		return codeSourceErrorResponse(c, err)
 	}
 
+	response := codeSourcesResponse{Apps: make([]codeSourceAppResponse, 0, len(apps))}
+	for _, app := range apps {
+		response.Apps = append(response.Apps, codeSourceAppResponse{
+			ConfigurationStatus: string(app.ConfigurationStatus),
+			ConnectionCount:     app.ConnectionCount,
+			Description:         app.Description,
+			ID:                  string(app.ID),
+			InstalledAt:         formatOptionalTime(app.InstalledAt),
+			Name:                app.Name,
+			Provider:            string(app.Provider),
+			Status:              string(app.Status),
+		})
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+func (h codeSourceHandler) manifest(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceManage); err != nil || !ok {
+		return err
+	}
+
+	manifest, err := h.service.GetAppManifest(c.Request().Context())
+	if err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
 	return c.JSON(http.StatusOK, codeSourceAppManifestResponse{
 		ActionURL: manifest.ActionURL,
 		Manifest:  manifest.Payload,
@@ -121,136 +179,214 @@ func (h codeSourceHandler) manifest(c echo.Context) error {
 }
 
 func (h codeSourceHandler) installURL(c echo.Context) error {
-	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
-	}
-
-	session, ok, err := h.currentSession(c)
-	if err != nil || !ok {
-		return err
-	}
-	if err := authorizeCurrentUser(c, h.authorization, domain.ActionCodeSourceManage, domain.AuthorizationResource{}); err != nil {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceManage); err != nil || !ok {
 		return err
 	}
 
-	installURL, err := h.service.GetInstallURL(c.Request().Context(), domain.CodeSourceProvider(c.Param("provider")), session.User.UnionID)
+	installURL, err := h.service.GetInstallURL(c.Request().Context())
 	if err != nil {
 		return codeSourceErrorResponse(c, err)
 	}
-
-	return c.JSON(http.StatusOK, codeSourceInstallURLResponse{
-		URL: installURL.URL,
-	})
+	return c.JSON(http.StatusOK, codeSourceInstallURLResponse{URL: installURL.URL})
 }
 
 func (h codeSourceHandler) completeManifest(c echo.Context) error {
 	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
+		return codeSourceUnavailable(c)
 	}
 
-	installURL, err := h.service.CompleteAppManifest(c.Request().Context(), domain.CodeSourceProvider(c.Param("provider")), c.QueryParam("code"))
+	installURL, err := h.service.CompleteAppManifest(c.Request().Context(), c.QueryParam("code"))
 	if err != nil {
 		return codeSourceErrorResponse(c, err)
 	}
-
 	return c.Redirect(http.StatusFound, installURL.URL)
 }
 
 func (h codeSourceHandler) completeInstallation(c echo.Context) error {
-	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
-	}
-
-	session, ok, err := h.currentSession(c)
+	userID, ok, err := h.authorize(c, domain.ActionCodeSourceManage)
 	if err != nil || !ok {
-		return err
-	}
-	if err := authorizeCurrentUser(c, h.authorization, domain.ActionCodeSourceManage, domain.AuthorizationResource{}); err != nil {
 		return err
 	}
 
 	installationID, err := strconv.ParseInt(c.QueryParam("installation_id"), 10, 64)
 	if err != nil || installationID <= 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid code source request"})
+		return codeSourceErrorResponse(c, domain.ErrInvalidCodeSourceInput)
 	}
-
-	_, err = h.service.CompleteInstallation(
-		c.Request().Context(),
-		domain.CodeSourceProvider(c.Param("provider")),
-		session.User.UnionID,
-		installationID,
-		c.QueryParam("setup_action"),
-	)
-	if err != nil {
+	if _, err := h.service.CompleteInstallation(c.Request().Context(), userID, installationID, c.QueryParam("setup_action")); err != nil {
 		return codeSourceErrorResponse(c, err)
 	}
-
 	return c.Redirect(http.StatusFound, h.installRedirectURL)
 }
 
-func (h codeSourceHandler) deleteInstallations(c echo.Context) error {
-	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
-	}
-
-	session, ok, err := h.currentSession(c)
-	if err != nil || !ok {
-		return err
-	}
-	if err := authorizeCurrentUser(c, h.authorization, domain.ActionCodeSourceManage, domain.AuthorizationResource{}); err != nil {
+func (h codeSourceHandler) listConnections(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceUse); err != nil || !ok {
 		return err
 	}
 
-	if err := h.service.DeleteInstallations(c.Request().Context(), domain.CodeSourceProvider(c.Param("provider")), session.User.UnionID); err != nil {
+	connections, err := h.service.ListConnections(c.Request().Context(), domain.CodeSourceConnectionFilters{
+		Provider: domain.CodeSourceProvider(strings.TrimSpace(c.QueryParam("provider"))),
+		Status:   domain.CodeSourceConnectionStatus(strings.TrimSpace(c.QueryParam("status"))),
+	})
+	if err != nil {
 		return codeSourceErrorResponse(c, err)
 	}
 
+	response := codeSourceConnectionsResponse{Connections: make([]codeSourceConnectionResponse, 0, len(connections))}
+	for _, conn := range connections {
+		response.Connections = append(response.Connections, newCodeSourceConnectionResponse(conn))
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+func (h codeSourceHandler) createConnection(c echo.Context) error {
+	userID, ok, err := h.authorize(c, domain.ActionCodeSourceManage)
+	if err != nil || !ok {
+		return err
+	}
+
+	var request codeSourceConnectionCreateRequest
+	if err := c.Bind(&request); err != nil {
+		return codeSourceErrorResponse(c, domain.ErrInvalidCodeSourceInput)
+	}
+	conn, err := h.service.CreateConnection(c.Request().Context(), domain.CodeSourceConnectionCreateInput{
+		Provider:        domain.CodeSourceProvider(strings.TrimSpace(request.Provider)),
+		Name:            request.Name,
+		WebBaseURL:      request.WebBaseURL,
+		APIBaseURL:      request.APIBaseURL,
+		Credential:      request.Credential,
+		CreatedByUserID: userID,
+	})
+	if err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusCreated, codeSourceConnectionDetailResponse{Connection: newCodeSourceConnectionResponse(conn)})
+}
+
+func (h codeSourceHandler) getConnection(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceUse); err != nil || !ok {
+		return err
+	}
+
+	conn, err := h.service.GetConnection(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, codeSourceConnectionDetailResponse{Connection: newCodeSourceConnectionResponse(conn)})
+}
+
+func (h codeSourceHandler) updateConnection(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceManage); err != nil || !ok {
+		return err
+	}
+
+	var request codeSourceConnectionUpdateRequest
+	if err := c.Bind(&request); err != nil {
+		return codeSourceErrorResponse(c, domain.ErrInvalidCodeSourceInput)
+	}
+	input := domain.CodeSourceConnectionUpdateInput{Name: request.Name, Credential: request.Credential}
+	if request.Status != nil {
+		status := domain.CodeSourceConnectionStatus(strings.TrimSpace(*request.Status))
+		input.Status = &status
+	}
+
+	conn, err := h.service.UpdateConnection(c.Request().Context(), c.Param("id"), input)
+	if err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, codeSourceConnectionDetailResponse{Connection: newCodeSourceConnectionResponse(conn)})
+}
+
+func (h codeSourceHandler) deleteConnection(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceManage); err != nil || !ok {
+		return err
+	}
+
+	if err := h.service.DeleteConnection(c.Request().Context(), c.Param("id")); err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
 	return c.NoContent(http.StatusNoContent)
 }
 
-func (h codeSourceHandler) searchRepositories(c echo.Context) error {
-	if h.service == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
-	}
-
-	session, ok, err := h.currentSession(c)
-	if err != nil || !ok {
+func (h codeSourceHandler) verifyConnection(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceManage); err != nil || !ok {
 		return err
 	}
 
-	pageSize, ok := codeSourceRepositoryPageSize(c)
-	if !ok {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid code source request"})
+	conn, err := h.service.VerifyConnection(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, codeSourceConnectionDetailResponse{Connection: newCodeSourceConnectionResponse(conn)})
+}
+
+func (h codeSourceHandler) searchRepositories(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceUse); err != nil || !ok {
+		return err
 	}
 
-	result, err := h.service.SearchRepositories(c.Request().Context(), domain.CodeSourceRepositorySearchInput{
-		OwnerUnionID: session.User.UnionID,
-		PageSize:     pageSize,
-		Provider:     domain.CodeSourceProvider(c.Param("provider")),
-		Query:        c.QueryParam("query"),
-	})
+	page, pageOK := optionalIntQuery(c, "page")
+	pageSize, pageSizeOK := optionalIntQuery(c, "pageSize")
+	if !pageOK || !pageSizeOK {
+		return codeSourceErrorResponse(c, domain.ErrInvalidCodeSourceInput)
+	}
+	input := domain.RepositorySearchInput{Query: c.QueryParam("query"), Page: page, PageSize: pageSize}
+
+	result, err := h.service.SearchRepositories(c.Request().Context(), c.Param("id"), input)
 	if err != nil {
 		return codeSourceErrorResponse(c, err)
 	}
 
-	return c.JSON(http.StatusOK, codeSourceRepositorySearchResponse{
-		Repositories: newCodeSourceRepositoryResponses(result.Repositories),
+	response := codeSourceRepositorySearchResponse{
+		HasMore:      result.HasMore,
+		Page:         result.Page,
+		PageSize:     result.PageSize,
+		Repositories: make([]codeSourceRepositoryResponse, 0, len(result.Repositories)),
+	}
+	for _, repository := range result.Repositories {
+		response.Repositories = append(response.Repositories, codeSourceRepositoryResponse{
+			CloneURL:             repository.CloneURL,
+			ConnectionID:         repository.ConnectionID,
+			DefaultBranch:        repository.DefaultBranch,
+			Description:          repository.Description,
+			ExternalRepositoryID: repository.ExternalRepositoryID,
+			FullName:             repository.FullName,
+			LastSyncedAt:         formatTime(repository.LastSyncedAt),
+			Private:              repository.Private,
+			WebURL:               repository.WebURL,
+		})
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+func (h codeSourceHandler) connectionWebhook(c echo.Context) error {
+	if _, ok, err := h.authorize(c, domain.ActionCodeSourceUse); err != nil || !ok {
+		return err
+	}
+
+	webhook, err := h.service.GetConnectionWebhook(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, codeSourceConnectionWebhookResponse{
+		Path:     webhook.Path,
+		Provider: string(webhook.Provider),
+		Secret:   webhook.Secret,
 	})
 }
 
-func codeSourceRepositoryPageSize(c echo.Context) (int, bool) {
-	rawPageSize := c.QueryParam("pageSize")
-	if rawPageSize == "" {
-		rawPageSize = c.QueryParam("page_size")
+// authorize 校验会话与平台级代码源权限，返回当前用户的平台 users.id；ok=false 时响应已写出。
+func (h codeSourceHandler) authorize(c echo.Context, action domain.AuthorizationAction) (string, bool, error) {
+	if h.service == nil {
+		return "", false, codeSourceUnavailable(c)
 	}
-	if rawPageSize == "" {
-		return 0, true
+	session, ok, err := h.currentSession(c)
+	if err != nil || !ok {
+		return "", false, err
 	}
-	pageSize, err := strconv.Atoi(rawPageSize)
-	if err != nil {
-		return 0, false
+	if err := authorizeCurrentUser(c, h.authorization, action, domain.AuthorizationResource{}); err != nil {
+		return "", false, err
 	}
-	return pageSize, true
+	return domain.ConsoleUserIDFromFeishu(session.User), true, nil
 }
 
 func (h codeSourceHandler) currentSession(c echo.Context) (domain.FeishuAuthResult, bool, error) {
@@ -285,12 +421,37 @@ func (h codeSourceHandler) currentSession(c echo.Context) (domain.FeishuAuthResu
 	return session, true, nil
 }
 
+func optionalIntQuery(c echo.Context, name string) (int, bool) {
+	raw := strings.TrimSpace(c.QueryParam(name))
+	if raw == "" {
+		return 0, true
+	}
+	value, err := strconv.Atoi(raw)
+	return value, err == nil
+}
+
+func codeSourceUnavailable(c echo.Context) error {
+	return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source service unavailable"})
+}
+
 func codeSourceErrorResponse(c echo.Context, err error) error {
 	switch {
 	case errors.Is(err, domain.ErrInvalidCodeSourceInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid code source request"})
+	case errors.Is(err, domain.ErrCodeSourceCredentialInvalid):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "code source credential is invalid"})
+	case errors.Is(err, domain.ErrCodeSourceConnectionInactive):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "code source connection is not active"})
+	case errors.Is(err, domain.ErrCodeSourceConnectionConflict):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "code source connection already exists"})
+	case errors.Is(err, domain.ErrCodeSourceConnectionInUse):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "code source connection is referenced by modules"})
 	case errors.Is(err, domain.ErrCodeSourceAuthNotConfigured):
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "code source auth not configured"})
+	case errors.Is(err, domain.ErrCodeSourceConnectionNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source connection not found"})
+	case errors.Is(err, domain.ErrCodeSourceRepositoryNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source repository not found"})
 	case errors.Is(err, domain.ErrCodeSourceInstallationNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source installation not found"})
 	case errors.Is(err, domain.ErrCodeSourceProviderNotFound):
@@ -304,58 +465,22 @@ func codeSourceErrorResponse(c echo.Context, err error) error {
 	}
 }
 
-func newCodeSourceAppResponses(apps []domain.CodeSourceApp) []codeSourceAppResponse {
-	response := make([]codeSourceAppResponse, 0, len(apps))
-	for _, app := range apps {
-		response = append(response, newCodeSourceAppResponse(app))
-	}
-	return response
-}
-
-func newCodeSourceAppResponse(app domain.CodeSourceApp) codeSourceAppResponse {
-	installedAt := ""
-	if app.InstalledAt != nil {
-		installedAt = formatTime(*app.InstalledAt)
-	}
-
-	return codeSourceAppResponse{
-		ConfigurationStatus: string(app.ConfigurationStatus),
-		Description:         app.Description,
-		ID:                  string(app.ID),
-		InstalledAt:         installedAt,
-		Name:                app.Name,
-		Provider:            string(app.Provider),
-		Status:              string(app.Status),
-	}
-}
-
-func newCodeSourceRepositoryResponses(repositories []domain.CodeSourceRepository) []codeSourceRepositoryResponse {
-	response := make([]codeSourceRepositoryResponse, 0, len(repositories))
-	for _, repository := range repositories {
-		response = append(response, newCodeSourceRepositoryResponse(repository))
-	}
-	return response
-}
-
-func newCodeSourceRepositoryResponse(repository domain.CodeSourceRepository) codeSourceRepositoryResponse {
-	updatedAt := ""
-	if repository.UpdatedAt != nil {
-		updatedAt = formatTime(*repository.UpdatedAt)
-	}
-
-	return codeSourceRepositoryResponse{
-		CloneURL:       repository.CloneURL,
-		DefaultBranch:  repository.DefaultBranch,
-		Description:    repository.Description,
-		FullName:       repository.FullName,
-		HTMLURL:        repository.HTMLURL,
-		ID:             strconv.FormatInt(repository.RepositoryID, 10),
-		InstallationID: strconv.FormatInt(repository.InstallationID, 10),
-		Name:           repository.Name,
-		Owner:          repository.Owner,
-		Private:        repository.Private,
-		Provider:       string(repository.Provider),
-		SSHURL:         repository.SSHURL,
-		UpdatedAt:      updatedAt,
+func newCodeSourceConnectionResponse(conn domain.CodeSourceConnection) codeSourceConnectionResponse {
+	return codeSourceConnectionResponse{
+		APIBaseURL:          conn.APIBaseURL,
+		CreatedAt:           formatTime(conn.CreatedAt),
+		CreatedBy:           conn.CreatedBy,
+		CreatedByUserID:     conn.CreatedByUserID,
+		CredentialExpiresAt: formatOptionalTime(conn.CredentialExpiresAt),
+		CredentialPreview:   conn.CredentialPreview,
+		ExternalAccount:     conn.ExternalAccount,
+		ExternalID:          conn.ExternalID,
+		ID:                  conn.ID,
+		LastVerifiedAt:      formatOptionalTime(conn.LastVerifiedAt),
+		Name:                conn.Name,
+		Provider:            string(conn.Provider),
+		Status:              string(conn.Status),
+		UpdatedAt:           formatTime(conn.UpdatedAt),
+		WebBaseURL:          conn.WebBaseURL,
 	}
 }

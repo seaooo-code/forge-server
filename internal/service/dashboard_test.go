@@ -100,7 +100,7 @@ func (f dashboardReleaseFake) ListReleases(context.Context, domain.ReleaseRecord
 
 type dashboardCodeSourceFake struct{ apps []domain.CodeSourceApp }
 
-func (f dashboardCodeSourceFake) ListCodeSources(context.Context, string) ([]domain.CodeSourceApp, error) {
+func (f dashboardCodeSourceFake) ListCodeSources(context.Context) ([]domain.CodeSourceApp, error) {
 	return f.apps, nil
 }
 

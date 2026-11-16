@@ -115,15 +115,22 @@ func TestGetModule(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Module.ID != "module-home" || response.Module.RepositoryID != "1001" || response.Module.RepositoryInstallationID != "2001" || response.Module.CommonModuleID != "module-common" {
+	if response.Module.ID != "module-home" || response.Module.RepositoryID != "1001" || response.Module.CodeSourceConnectionID != "code-source-1" ||
+		response.Module.RepositoryProvider != "gitlab" || response.Module.CommonModuleID != "module-common" {
+		t.Fatalf("unexpected module detail: %#v", response.Module)
+	}
+	if response.Module.BuildConfig.DockerfilePath != "Dockerfile" || response.Module.BuildConfig.AutoBuildEnvironment != "qa" ||
+		len(response.Module.BuildConfig.AutoBuildBranches) != 1 || response.Module.BuildConfig.AutoPreviewTTLHours != 168 {
 		t.Fatalf("unexpected module detail: %#v", response.Module)
 	}
 }
 
 func TestCreateModule(t *testing.T) {
+	var lastInput domain.ModuleInput
 	e := newAuthorizedTestServer(Dependencies{
 		ModuleService: fakeModuleService{
-			module: testHTTPModule("module-profile", domain.ModuleKindFeature),
+			module:    testHTTPModule("module-profile", domain.ModuleKindFeature),
+			lastInput: &lastInput,
 		},
 	})
 
@@ -144,6 +151,11 @@ func TestCreateModule(t *testing.T) {
 	}
 	if response.Module.ID != "module-profile" || response.Module.OwnerUserID != "ou-li-ming" {
 		t.Fatalf("unexpected created module: %#v", response.Module)
+	}
+	if lastInput.Repository.ConnectionID != "code-source-1" || lastInput.Repository.ExternalRepositoryID != "1001" ||
+		lastInput.BuildConfig.DockerfilePath != "apps/home/Dockerfile" || lastInput.BuildConfig.AutoBuildEnvironment != "qa" ||
+		!lastInput.BuildConfig.AutoPreviewRelease || len(lastInput.BuildConfig.AutoBuildBranches) != 2 {
+		t.Fatalf("unexpected module input: %#v", lastInput)
 	}
 }
 
@@ -280,6 +292,7 @@ type fakeModuleService struct {
 	createErr error
 	updateErr error
 	deleteErr error
+	lastInput *domain.ModuleInput
 }
 
 func (s fakeModuleService) ListModules(_ context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
@@ -298,7 +311,7 @@ func (s fakeModuleService) ListModules(_ context.Context, filters domain.ModuleL
 		if filters.Owner != "" && module.OwnerUserID != filters.Owner {
 			continue
 		}
-		if filters.Keyword != "" && !strings.Contains(module.Name, filters.Keyword) && !strings.Contains(module.RepositoryFullName, filters.Keyword) {
+		if filters.Keyword != "" && !strings.Contains(module.Name, filters.Keyword) && !strings.Contains(module.Repository.FullName, filters.Keyword) {
 			continue
 		}
 		modules = append(modules, module)
@@ -323,7 +336,10 @@ func (s fakeModuleService) GetModule(context.Context, string) (domain.Module, er
 	return s.module, nil
 }
 
-func (s fakeModuleService) CreateModule(context.Context, domain.ModuleInput) (domain.Module, error) {
+func (s fakeModuleService) CreateModule(_ context.Context, input domain.ModuleInput) (domain.Module, error) {
+	if s.lastInput != nil {
+		*s.lastInput = input
+	}
 	if s.createErr != nil {
 		return domain.Module{}, s.createErr
 	}
@@ -354,28 +370,37 @@ func testHTTPModule(id string, kind domain.ModuleKind) domain.Module {
 	}
 
 	return domain.Module{
-		ApplicationID:            "app-mi-car",
-		ApplicationName:          "小米汽车 App",
-		ApplicationSlug:          "mi-car",
-		CommonModuleID:           commonModuleID,
-		CommonModuleName:         commonModuleName,
-		CreatedAt:                time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
-		DefaultBranch:            "main",
-		ID:                       id,
-		Kind:                     kind,
-		Name:                     name,
-		Owner:                    "li.ming",
-		OwnerAvatarURL:           "https://example.com/li.ming.png",
-		OwnerEmail:               "li.ming@xiaomi.com",
-		OwnerUserID:              "ou-li-ming",
-		RepositoryCloneURL:       "https://github.com/mi-car/" + name + ".git",
-		RepositoryFullName:       "mi-car/" + name,
-		RepositoryHTMLURL:        "https://github.com/mi-car/" + name,
-		RepositoryID:             1001,
-		RepositoryInstallationID: 2001,
-		RepositoryProvider:       domain.CodeSourceProviderGitHub,
-		RepositorySSHURL:         "git@github.com:mi-car/" + name + ".git",
-		UpdatedAt:                time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
+		ApplicationID:    "app-mi-car",
+		ApplicationName:  "小米汽车 App",
+		ApplicationSlug:  "mi-car",
+		CommonModuleID:   commonModuleID,
+		CommonModuleName: commonModuleName,
+		BuildConfig: domain.ModuleBuildConfig{
+			AutoBuildBranches:    []string{"main"},
+			AutoBuildEnvironment: "qa",
+			AutoPreviewTTLHours:  168,
+			BuildContext:         ".",
+			DockerfilePath:       "Dockerfile",
+		},
+		CodeSourceProvider: domain.CodeSourceProviderGitLab,
+		ConnectionName:     "GitLab",
+		CreatedAt:          time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
+		ID:                 id,
+		Kind:               kind,
+		Name:               name,
+		Owner:              "li.ming",
+		OwnerAvatarURL:     "https://example.com/li.ming.png",
+		OwnerEmail:         "li.ming@xiaomi.com",
+		OwnerUserID:        "ou-li-ming",
+		Repository: domain.ModuleRepository{
+			ConnectionID:         "code-source-1",
+			ExternalRepositoryID: "1001",
+			FullName:             "mi-car/" + name,
+			WebURL:               "https://gitlab.example.com/mi-car/" + name,
+			CloneURL:             "https://gitlab.example.com/mi-car/" + name + ".git",
+			DefaultBranch:        "main",
+		},
+		UpdatedAt: time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
 	}
 }
 
@@ -392,14 +417,14 @@ func testModuleRequest(id string) moduleRequest {
 		OwnerEmail:         "li.ming@xiaomi.com",
 		OwnerUserID:        "ou-li-ming",
 		Repository: moduleRepositoryRequest{
-			CloneURL:       "https://github.com/mi-car/profile.git",
-			DefaultBranch:  "main",
-			FullName:       "mi-car/profile",
-			HTMLURL:        "https://github.com/mi-car/profile",
-			ID:             "1001",
-			InstallationID: "2001",
-			Provider:       "github",
-			SSHURL:         "git@github.com:mi-car/profile.git",
+			ConnectionID:         "code-source-1",
+			ExternalRepositoryID: "1001",
+		},
+		BuildConfig: moduleBuildConfigRequest{
+			AutoBuildBranches:    []string{"main", "release/*"},
+			AutoBuildEnvironment: "qa",
+			AutoPreviewRelease:   true,
+			DockerfilePath:       "apps/home/Dockerfile",
 		},
 	}
 }

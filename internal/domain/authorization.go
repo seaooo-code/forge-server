@@ -28,9 +28,11 @@ const (
 	ActionReleaseCreate           AuthorizationAction = "release:create"
 	ActionReleaseRollback         AuthorizationAction = "release:rollback"
 	ActionCodeSourceManage        AuthorizationAction = "code_source:manage"
-	ActionStorageManage           AuthorizationAction = "storage:manage"
-	ActionEnvironmentManage       AuthorizationAction = "environment:manage"
-	ActionAccessTokenManage       AuthorizationAction = "access_token:manage"
+	// ActionCodeSourceUse 表示读取并使用代码源连接（选仓库、查看 webhook 配置），授予能管理模块的人。
+	ActionCodeSourceUse     AuthorizationAction = "code_source:use"
+	ActionStorageManage     AuthorizationAction = "storage:manage"
+	ActionEnvironmentManage AuthorizationAction = "environment:manage"
+	ActionAccessTokenManage AuthorizationAction = "access_token:manage"
 )
 
 type AuthorizationResource struct {

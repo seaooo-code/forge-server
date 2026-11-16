@@ -7,9 +7,9 @@ import (
 	"log/slog"
 
 	"forge-server/internal/config"
-	githubinfra "forge-server/internal/infra/github"
 	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
+	"forge-server/internal/infra/secretbox"
 	"forge-server/internal/service"
 	"forge-server/internal/worker"
 
@@ -45,10 +45,29 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 	}
 
 	buildRepository := postgres.NewBuildRepository(postgresPool)
-	buildService := service.NewBuildService(buildRepository)
 	codeSourceRepository := postgres.NewCodeSourceRepository(postgresPool)
-	githubClient := githubinfra.NewClient(cfg.GitHub, cfg.Telemetry.Enabled)
-	executor := worker.NewExecutor(cfg.Worker, codeSourceRepository, githubClient, domainCodeSourceAppConfig(cfg.GitHub), logger)
+	// 构建成功回调：按模块配置创建预览通道发布，失败只记日志。
+	buildService := service.NewBuildService(buildRepository).
+		WithSucceededHook(newBuildTriggerService(postgresPool, buildRepository, logger))
+	// worker 与 API 共用同一套 provider 获取 clone 凭证；worker 不接收 webhook，因此不需要 PushEventHandler。
+	codeSourceService, err := newCodeSourceService(cfg, codeSourceRepository, nil)
+	if err != nil {
+		postgresPool.Close()
+		cleanupOTel()
+		return nil, err
+	}
+	// worker 与 API 连同一个库：构建变量通过 service + 仓储读取并用 secretbox 解密，日志分片直接写库。
+	buildVariableSecrets, err := secretbox.New(cfg.Security.SecretKey)
+	if err != nil {
+		postgresPool.Close()
+		cleanupOTel()
+		return nil, fmt.Errorf("initialize secretbox: %w", err)
+	}
+	executor := worker.NewExecutor(cfg.Worker, worker.ExecutorDependencies{
+		Credentials: codeSourceService,
+		Logs:        service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool)),
+		Variables:   service.NewBuildVariableService(postgres.NewBuildVariableRepository(postgresPool), buildVariableSecrets),
+	}, logger)
 	buildWorker := worker.New(buildService, executor, logger, worker.Options{
 		BuildTimeout:  cfg.Worker.BuildTimeout,
 		ID:            cfg.Worker.ID,

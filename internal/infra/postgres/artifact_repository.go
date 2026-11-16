@@ -27,6 +27,7 @@ func (r *ArtifactRepository) GetArtifactBuildRecord(ctx context.Context, input d
 	record, err := scanBuildRecord(r.pool.QueryRow(ctx, buildRecordSelectSQL("build_records", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
 		where a.slug = $1
@@ -59,7 +60,17 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			coalesce(selected.gray_strategy, ''),
 			coalesce(selected.gray_percentage, 0),
 			coalesce(selected.identifier, ''),
-			coalesce(selected.build_record_id::text, '')
+			coalesce(selected.build_record_id::text, ''),
+			exists(
+				select 1
+				from release_routes runtime_route
+				join release_records runtime_rr on runtime_rr.id = runtime_route.release_id
+				where runtime_route.module_id = m.id
+					and runtime_route.environment_code = $2
+					and runtime_route.runtime_version = $5
+					and runtime_route.status = 'active'
+					and runtime_rr.status = 'active'
+			) as has_runtime_route
 		from modules m
 		left join lateral (
 			select
@@ -73,6 +84,7 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = m.id
 				and route.environment_code = $2
+				and route.runtime_version = $5
 				and route.status = 'active'
 				and rr.status = 'active'
 				and (
@@ -105,7 +117,7 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 		) selected on true
 		where m.application_id = $1
 		order by m.sort_order asc, m.created_at asc
-	`, source.Application.ID, input.Environment, input.Identifier, input.UserID)
+	`, source.Application.ID, input.Environment, input.Identifier, input.UserID, input.RuntimeVersion)
 	if err != nil {
 		return domain.ArtifactManifestSource{}, fmt.Errorf("query artifact manifest modules: %w", err)
 	}
@@ -126,6 +138,7 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			&module.GrayPercentage,
 			&module.Identifier,
 			&module.BuildRecordID,
+			&module.HasRuntimeRoute,
 		); err != nil {
 			return domain.ArtifactManifestSource{}, fmt.Errorf("scan artifact manifest module: %w", err)
 		}

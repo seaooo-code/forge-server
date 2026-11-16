@@ -37,13 +37,14 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	var environment string
 	var artifactKey string
 	var artifactURL string
+	var runtimeVersion string
 	var buildStatus domain.BuildStatus
 	if err := tx.QueryRow(ctx, `
-		select module_id, environment_code, artifact_key, artifact_url, status
+		select module_id, environment_code, artifact_key, artifact_url, runtime_version, status
 		from build_records
 		where id = $1
 		for update
-	`, input.BuildRecordID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &buildStatus); err != nil {
+	`, input.BuildRecordID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &runtimeVersion, &buildStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrBuildRecordNotFound
 		}
@@ -71,6 +72,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		input.BuildRecordID,
 		moduleID,
 		environment,
+		runtimeVersion,
 		routeType,
 		input.Identifier,
 	)
@@ -81,7 +83,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseAlreadyActive
 	}
 	if routeType == domain.ReleaseRouteTypePercentage {
-		exists, err := activeReleaseRouteExists(ctx, tx, moduleID, environment, routeType, input.Identifier)
+		exists, err := activeReleaseRouteExists(ctx, tx, moduleID, environment, runtimeVersion, routeType, input.Identifier)
 		if err != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 		}
@@ -125,12 +127,14 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("insert release record: %w", err)
 	}
 
+	// 新发布只替换同一 runtime_version 下的同类路由，其他运行时版本的客户端不受影响。
 	if _, err := tx.Exec(ctx, `
 		with deactivated_routes as (
 			update release_routes
 			set status = 'inactive', updated_at = now()
 			where module_id = $1
 				and environment_code = $2
+				and runtime_version = $5
 				and route_type = $3
 				and identifier = $4
 				and status = 'active'
@@ -140,7 +144,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		set status = 'inactive', updated_at = now()
 		from deactivated_routes
 		where rr.id = deactivated_routes.release_id
-	`, moduleID, environment, routeType, input.Identifier); err != nil {
+	`, moduleID, environment, routeType, input.Identifier, runtimeVersion); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("deactivate previous release route: %w", err)
 	}
 
@@ -151,6 +155,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			module_id,
 			environment_code,
 			release_id,
+			runtime_version,
 			route_type,
 			identifier,
 			status,
@@ -160,12 +165,13 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			$2,
 			$3,
 			$4,
+			$8,
 			$5,
 			$6,
 			'active',
 			$7
 		)
-	`, routeID, moduleID, environment, releaseID, routeType, input.Identifier, input.CreatedByUserID); err != nil {
+	`, routeID, moduleID, environment, releaseID, routeType, input.Identifier, input.CreatedByUserID, runtimeVersion); err != nil {
 		if isCheckViolation(err) || isUniqueViolation(err) || isForeignKeyViolation(err) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
 		}
@@ -187,7 +193,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	return record, route, nil
 }
 
-func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID string, moduleID string, environment string, routeType domain.ReleaseRouteType, identifier string) (bool, error) {
+func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID string, moduleID string, environment string, runtimeVersion string, routeType domain.ReleaseRouteType, identifier string) (bool, error) {
 	var exists bool
 	err := tx.QueryRow(ctx, `
 		select exists(
@@ -196,20 +202,21 @@ func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID s
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = $1
 				and route.environment_code = $2
+				and route.runtime_version = $6
 				and route.route_type = $3
 				and route.identifier = $4
 				and route.status = 'active'
 				and rr.status = 'active'
 				and rr.build_record_id = $5
 		)
-	`, moduleID, environment, routeType, identifier, buildRecordID).Scan(&exists)
+	`, moduleID, environment, routeType, identifier, buildRecordID, runtimeVersion).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("query existing active release route: %w", err)
 	}
 	return exists, nil
 }
 
-func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, environment string, routeType domain.ReleaseRouteType, identifier string) (bool, error) {
+func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, environment string, runtimeVersion string, routeType domain.ReleaseRouteType, identifier string) (bool, error) {
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 		select exists(
@@ -218,12 +225,13 @@ func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, e
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = $1
 				and route.environment_code = $2
+				and route.runtime_version = $5
 				and route.route_type = $3
 				and route.identifier = $4
 				and route.status = 'active'
 				and rr.status = 'active'
 		)
-	`, moduleID, environment, routeType, identifier).Scan(&exists); err != nil {
+	`, moduleID, environment, routeType, identifier, runtimeVersion).Scan(&exists); err != nil {
 		return false, fmt.Errorf("query active release route: %w", err)
 	}
 	return exists, nil
@@ -364,6 +372,7 @@ func (r *ReleaseRepository) ResolveReleaseRoute(ctx context.Context, input domai
 				join release_records rr on rr.id = candidate.release_id
 				where candidate.module_id = $1
 					and candidate.environment_code = $2
+					and ($5 = '' or candidate.runtime_version = $5)
 					and candidate.status = 'active'
 					and rr.status = 'active'
 					and (
@@ -394,7 +403,7 @@ func (r *ReleaseRepository) ResolveReleaseRoute(ctx context.Context, input domai
 					candidate.created_at desc
 				limit 1
 			)
-		`, input.ModuleID, input.Environment, input.Identifier, input.UserID))
+		`, input.ModuleID, input.Environment, input.Identifier, input.UserID, input.RuntimeVersion))
 	if err != nil {
 		if errors.Is(err, domain.ErrReleaseRouteNotFound) {
 			return domain.ReleaseRoute{}, r.resolveReleaseRouteMissingDependency(ctx, input)
@@ -418,6 +427,7 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 	var releaseStatus domain.ReleaseStatus
 	var routeID string
 	var routeStatus domain.ReleaseRouteStatus
+	var runtimeVersion string
 	err = tx.QueryRow(ctx, `
 		select
 			rr.module_id,
@@ -426,13 +436,14 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 			rr.gray_strategy,
 			rr.status,
 			route.id,
-			route.status
+			route.status,
+			route.runtime_version
 		from release_records rr
 		join release_routes route on route.release_id = rr.id
 			and route.route_type = 'percentage'
 		where rr.id = $1
 		for update of rr, route
-	`, input.ID).Scan(&moduleID, &environment, &releaseType, &grayStrategy, &releaseStatus, &routeID, &routeStatus)
+	`, input.ID).Scan(&moduleID, &environment, &releaseType, &grayStrategy, &releaseStatus, &routeID, &routeStatus, &runtimeVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if exists, existsErr := r.releaseExists(ctx, tx, input.ID); existsErr != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, existsErr
@@ -452,7 +463,7 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 	}
 
 	if input.GrayPercentage == 100 {
-		if err := r.promotePercentageReleaseToFull(ctx, tx, input.ID, routeID, moduleID, environment); err != nil {
+		if err := r.promotePercentageReleaseToFull(ctx, tx, input.ID, routeID, moduleID, environment, runtimeVersion); err != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 		}
 	} else {
@@ -573,13 +584,15 @@ func (r *ReleaseRepository) releaseExists(ctx context.Context, tx pgx.Tx, id str
 	return exists, nil
 }
 
-func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, tx pgx.Tx, releaseID string, routeID string, moduleID string, environment string) error {
+// promotePercentageReleaseToFull 把百分比灰度转为全量，只顶掉同一 runtime_version 下的默认路由。
+func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, tx pgx.Tx, releaseID string, routeID string, moduleID string, environment string, runtimeVersion string) error {
 	if _, err := tx.Exec(ctx, `
 		with deactivated_routes as (
 			update release_routes
 			set status = 'inactive', updated_at = now()
 			where module_id = $1
 				and environment_code = $2
+				and runtime_version = $4
 				and route_type = 'default'
 				and status = 'active'
 			returning release_id
@@ -589,7 +602,7 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 		from deactivated_routes
 		where rr.id = deactivated_routes.release_id
 			and rr.id <> $3
-	`, moduleID, environment, releaseID); err != nil {
+	`, moduleID, environment, releaseID, runtimeVersion); err != nil {
 		return fmt.Errorf("deactivate previous full release route: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -652,6 +665,7 @@ func releaseRecordSelectSQL() string {
 			rr.environment_code,
 			e.name as environment_name,
 			rr.build_record_id,
+			route.runtime_version,
 			route.identifier,
 			rr.release_type,
 			rr.gray_strategy,
@@ -685,6 +699,7 @@ func releaseRouteSelectSQL() string {
 			e.name as environment_name,
 			route.release_id,
 			rr.build_record_id,
+			route.runtime_version,
 			route.route_type,
 			route.identifier,
 			rr.gray_strategy,
@@ -716,6 +731,7 @@ func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 		&record.Environment,
 		&record.EnvironmentName,
 		&record.BuildRecordID,
+		&record.RuntimeVersion,
 		&record.Identifier,
 		&record.ReleaseType,
 		&record.GrayStrategy,
@@ -752,6 +768,7 @@ func scanReleaseRoute(row releaseRecordRow) (domain.ReleaseRoute, error) {
 		&route.EnvironmentName,
 		&route.ReleaseID,
 		&route.BuildRecordID,
+		&route.RuntimeVersion,
 		&route.RouteType,
 		&route.Identifier,
 		&route.GrayStrategy,

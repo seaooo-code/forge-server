@@ -12,6 +12,7 @@ import (
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
+	"forge-server/internal/service"
 )
 
 func TestDownloadArtifactFile(t *testing.T) {
@@ -86,9 +87,11 @@ func TestDownloadArtifactFileNotFound(t *testing.T) {
 func TestGetArtifactManifest(t *testing.T) {
 	service := &fakeArtifactService{
 		manifest: domain.ArtifactApplicationManifest{
-			Application: domain.ArtifactApplication{ID: "app-seaooo", Name: "seaooo", Slug: "seaooo"},
-			Environment: domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
-			Identifier:  "staff-1",
+			Application:    domain.ArtifactApplication{ID: "app-seaooo", Name: "seaooo", Slug: "seaooo"},
+			Environment:    domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
+			Platform:       domain.PlatformAndroid,
+			RuntimeVersion: "1.0.0",
+			Identifier:     "staff-1",
 			Modules: []domain.ArtifactModuleManifest{
 				{
 					ID:             "module-profile",
@@ -100,6 +103,8 @@ func TestGetArtifactManifest(t *testing.T) {
 					GrayPercentage: 0,
 					Identifier:     "staff-1",
 					BuildRecordID:  "018f4d7a-0a6c-789b-9c12-36a4dfd9c001",
+					Branch:         "feature/login",
+					CommitSHA:      "abc123",
 					ArtifactKey:    "rn-bundles/seaooo/profile/QA/build-1",
 					ManifestKey:    "rn-bundles/seaooo/profile/QA/build-1/manifest.json",
 					Files: []domain.ArtifactManifestResolvedFile{
@@ -109,18 +114,19 @@ func TestGetArtifactManifest(t *testing.T) {
 							ContentType: "image/png",
 							SizeBytes:   12,
 							SHA256:      "hash",
+							Digests:     map[string]string{"sha256": "hash", "md5": "md5-hash"},
 						},
 					},
 				},
 			},
 			MissingModules: []domain.ArtifactMissingModule{
-				{ID: "module-home", Name: "home", Kind: domain.ModuleKindFeature, Reason: "release not found"},
+				{ID: "module-home", Name: "home", Kind: domain.ModuleKindFeature, Reason: domain.ArtifactMissingReasonPlatformUnavailable},
 			},
 		},
 	}
 	e := New(config.Config{}, testArtifactDependencies(service))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?identifier=staff-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?platform=android&runtimeVersion=1.0.0&identifier=staff-1", nil)
 	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
@@ -142,8 +148,56 @@ func TestGetArtifactManifest(t *testing.T) {
 		response.Modules[0].Files[0].URL != "https://cdn.example.com/assets/icon.png" {
 		t.Fatalf("unexpected manifest response: %#v", response)
 	}
-	if service.lastManifestInput.Identifier != "staff-1" {
-		t.Fatalf("expected identifier to be passed to service, got %+v", service.lastManifestInput)
+	if response.Platform != "android" || response.RuntimeVersion != "1.0.0" ||
+		response.Modules[0].Branch != "feature/login" || response.Modules[0].CommitSHA != "abc123" ||
+		response.MissingModules[0].Reason != "platform_unavailable" {
+		t.Fatalf("expected runtime echo and build source fields, got %#v", response)
+	}
+	file := response.Modules[0].Files[0]
+	if file.SHA256 != "hash" || len(file.Digests) != 2 || file.Digests["sha256"] != "hash" || file.Digests["md5"] != "md5-hash" {
+		t.Fatalf("expected sha256 and digests on manifest file, got %#v", file)
+	}
+	if service.lastManifestInput.Identifier != "staff-1" ||
+		service.lastManifestInput.Platform != "android" ||
+		service.lastManifestInput.RuntimeVersion != "1.0.0" {
+		t.Fatalf("expected query params to be passed to service, got %+v", service.lastManifestInput)
+	}
+}
+
+func TestGetArtifactManifestRequiresPlatformAndRuntimeVersion(t *testing.T) {
+	e := New(config.Config{}, testArtifactDependencies(service.NewArtifactService(nil, nil, nil, nil)))
+
+	for _, query := range []string{
+		"",
+		"?platform=android",
+		"?runtimeVersion=1.0.0",
+		"?platform=web&runtimeVersion=1.0.0",
+		"?platform=android&runtimeVersion=" + strings.Repeat("x", 65),
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest"+query, nil)
+		addTestArtifactBearer(req)
+		rec := httptest.NewRecorder()
+
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("query %q: expected status %d, got %d: %s", query, http.StatusBadRequest, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestDownloadArtifactFilePassesPlatform(t *testing.T) {
+	artifacts := &fakeArtifactService{object: domain.ArtifactObject{Body: io.NopCloser(strings.NewReader("js"))}}
+	e := New(config.Config{}, testArtifactDependencies(artifacts))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?platform=ios&path=index.bundle", nil)
+	addTestArtifactBearer(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || artifacts.lastDownloadInput.Platform != "ios" || artifacts.lastDownloadInput.Path != "index.bundle" {
+		t.Fatalf("expected platform relative download, got %d %+v", rec.Code, artifacts.lastDownloadInput)
 	}
 }
 
@@ -287,4 +341,23 @@ func testArtifactDependencies(service ArtifactService) Dependencies {
 
 func addTestArtifactBearer(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer managed-token-123456")
+}
+
+func TestDownloadArtifactFileStopsWhenTokenAndSessionAreInvalid(t *testing.T) {
+	service := &fakeArtifactService{}
+	e := New(config.Config{}, Dependencies{
+		ArtifactService:            service,
+		ArtifactAccessTokenService: &fakeArtifactAccessTokenService{},
+		FeishuAuthService:          testConsoleAuthService(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/modules/module-profile/environments/qa/builds/018f4d7a-0a6c-789b-9c12-36a4dfd9c001/file?path=index.bundle", nil)
+	addTestArtifactBearer(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized || service.lastDownloadInput.Path != "" {
+		t.Fatalf("expected unauthorized without download, got %d (input=%+v): %s", rec.Code, service.lastDownloadInput, rec.Body.String())
+	}
 }

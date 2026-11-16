@@ -13,6 +13,7 @@ type AuthorizationRepository interface {
 	ApplicationIDByReleaseID(ctx context.Context, releaseID string) (string, error)
 	ApplicationIDBySlug(ctx context.Context, slug string) (string, error)
 	GetApplicationRole(ctx context.Context, userID string, applicationID string) (domain.ApplicationMemberRole, error)
+	ListApplicationRoles(ctx context.Context, userID string) ([]domain.ApplicationMemberRole, error)
 	ListGlobalRoles(ctx context.Context, userID string) ([]domain.GlobalRole, error)
 }
 
@@ -78,6 +79,19 @@ func (s *AuthorizationService) Authorize(ctx context.Context, userID string, act
 		return err
 	}
 	if applicationID == "" {
+		// 平台级资源（例如代码源连接）没有所属应用时，只要用户在任一应用里具备该动作即可。
+		if action != domain.ActionCodeSourceUse {
+			return domain.ErrForbidden
+		}
+		appRoles, err := s.repository.ListApplicationRoles(ctx, normalizedUserID)
+		if err != nil {
+			return err
+		}
+		for _, appRole := range appRoles {
+			if applicationActionAllowed(appRole, action) {
+				return nil
+			}
+		}
 		return domain.ErrForbidden
 	}
 
@@ -127,6 +141,7 @@ func globalActionAllowed(roles []domain.GlobalRole, action domain.AuthorizationA
 				domain.ActionModuleDelete,
 				domain.ActionBuildCreate,
 				domain.ActionCodeSourceManage,
+				domain.ActionCodeSourceUse,
 				domain.ActionStorageManage,
 				domain.ActionEnvironmentManage,
 				domain.ActionAccessTokenManage:
@@ -152,6 +167,7 @@ func applicationActionAllowed(role domain.ApplicationMemberRole, action domain.A
 			domain.ActionModuleCreate,
 			domain.ActionModuleUpdate,
 			domain.ActionModuleDelete,
+			domain.ActionCodeSourceUse,
 			domain.ActionBuildCreate,
 			domain.ActionReleaseCreate,
 			domain.ActionReleaseRollback:

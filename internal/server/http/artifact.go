@@ -18,6 +18,8 @@ type artifactHandler struct {
 type artifactManifestResponse struct {
 	Application    artifactApplicationResponse      `json:"application"`
 	Environment    artifactEnvironmentResponse      `json:"environment"`
+	Platform       string                           `json:"platform"`
+	RuntimeVersion string                           `json:"runtimeVersion"`
 	Identifier     string                           `json:"identifier"`
 	Modules        []artifactModuleManifestResponse `json:"modules"`
 	MissingModules []artifactMissingModuleResponse  `json:"missingModules"`
@@ -44,6 +46,8 @@ type artifactModuleManifestResponse struct {
 	GrayPercentage int                            `json:"grayPercentage"`
 	Identifier     string                         `json:"identifier"`
 	BuildRecordID  string                         `json:"buildRecordId"`
+	Branch         string                         `json:"branch"`
+	CommitSHA      string                         `json:"commitSha"`
 	ArtifactKey    string                         `json:"artifactKey"`
 	ManifestKey    string                         `json:"manifestKey"`
 	Files          []artifactManifestFileResponse `json:"files"`
@@ -55,6 +59,8 @@ type artifactManifestFileResponse struct {
 	ContentType string `json:"contentType"`
 	SizeBytes   int64  `json:"sizeBytes"`
 	SHA256      string `json:"sha256"`
+	// Digests 键为算法名（sha256、md5），由 FORGE_ARTIFACT_DIGESTS 决定。
+	Digests map[string]string `json:"digests"`
 }
 
 type artifactMissingModuleResponse struct {
@@ -81,6 +87,7 @@ func (h artifactHandler) downloadFile(c echo.Context) error {
 		ModuleID:        c.Param("moduleId"),
 		Environment:     c.Param("environment"),
 		BuildRecordID:   c.Param("buildId"),
+		Platform:        c.QueryParam("platform"),
 		Path:            c.QueryParam("path"),
 	})
 	if err != nil {
@@ -114,6 +121,8 @@ func (h artifactHandler) manifest(c echo.Context) error {
 	manifest, err := h.service.GetApplicationManifest(c.Request().Context(), domain.ArtifactManifestInput{
 		ApplicationSlug: c.Param("applicationSlug"),
 		Environment:     c.Param("environment"),
+		Platform:        c.QueryParam("platform"),
+		RuntimeVersion:  c.QueryParam("runtimeVersion"),
 		Identifier:      c.QueryParam("identifier"),
 		UserID:          c.QueryParam("userId"),
 	})
@@ -148,6 +157,8 @@ func newArtifactManifestResponse(manifest domain.ArtifactApplicationManifest) ar
 			ID:   manifest.Environment.ID,
 			Name: manifest.Environment.Name,
 		},
+		Platform:       manifest.Platform,
+		RuntimeVersion: manifest.RuntimeVersion,
 		Identifier:     manifest.Identifier,
 		Modules:        newArtifactModuleManifestResponses(manifest.Modules),
 		MissingModules: newArtifactMissingModuleResponses(manifest.MissingModules),
@@ -167,6 +178,8 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 			GrayPercentage: module.GrayPercentage,
 			Identifier:     module.Identifier,
 			BuildRecordID:  module.BuildRecordID,
+			Branch:         module.Branch,
+			CommitSHA:      module.CommitSHA,
 			ArtifactKey:    module.ArtifactKey,
 			ManifestKey:    module.ManifestKey,
 			Files:          newArtifactManifestFileResponses(module.Files),
@@ -178,12 +191,17 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 func newArtifactManifestFileResponses(files []domain.ArtifactManifestResolvedFile) []artifactManifestFileResponse {
 	responses := make([]artifactManifestFileResponse, 0, len(files))
 	for _, file := range files {
+		digests := file.Digests
+		if digests == nil {
+			digests = map[string]string{}
+		}
 		responses = append(responses, artifactManifestFileResponse{
 			Path:        file.Path,
 			URL:         file.URL,
 			ContentType: file.ContentType,
 			SizeBytes:   file.SizeBytes,
 			SHA256:      file.SHA256,
+			Digests:     digests,
 		})
 	}
 	return responses

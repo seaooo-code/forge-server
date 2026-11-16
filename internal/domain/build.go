@@ -22,8 +22,8 @@ const (
 )
 
 const (
-	BuildTriggerTypeManual   BuildTriggerType = "manual"
-	BuildTriggerTypePipeline BuildTriggerType = "pipeline"
+	BuildTriggerTypeManual  BuildTriggerType = "manual"
+	BuildTriggerTypeWebhook BuildTriggerType = "webhook"
 )
 
 type BuildRecord struct {
@@ -33,12 +33,14 @@ type BuildRecord struct {
 	ModuleName               string
 	Environment              string
 	EnvironmentName          string
-	RepositoryProvider       CodeSourceProvider
-	RepositoryID             int64
-	RepositoryInstallationID int64
-	RepositoryFullName       string
-	RepositoryCloneURL       string
+	CodeSourceProvider       CodeSourceProvider
+	Repository               ModuleRepository
+	DockerfilePath           string
+	BuildContext             string
 	Branch                   string
+	CommitSHA                string
+	RuntimeVersion           string
+	Platforms                []string
 	DefaultBranch            string
 	StorageConfigurationID   string
 	StorageConfigurationName string
@@ -57,21 +59,27 @@ type BuildRecord struct {
 	Status                   BuildStatus
 	TriggerID                string
 	TriggerType              BuildTriggerType
-	ErrorMessage             string
-	WorkerID                 string
-	QueuedAt                 time.Time
-	StartedAt                *time.Time
-	FinishedAt               *time.Time
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// CreatedByUserID 为空表示历史构建或创建人已删除。
+	CreatedByUserID string
+	CreatedBy       *UserSummary
+	ErrorMessage    string
+	WorkerID        string
+	QueuedAt        time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type BuildRecordInput struct {
 	ModuleID    string
 	Environment string
 	Branch      string
+	CommitSHA   string
 	TriggerID   string
 	TriggerType BuildTriggerType
+	// CreatedByUserID 手动构建为当前登录用户，webhook 构建为代码源连接创建人。
+	CreatedByUserID string
 }
 
 type BuildRecordFilters struct {
@@ -92,6 +100,9 @@ type BuildRecordSummary struct {
 }
 
 type BuildRecordCompletion struct {
+	CommitSHA      string
+	RuntimeVersion string
+	Platforms      []string
 	ArtifactKey    string
 	ArtifactURL    string
 	ManifestKey    string
@@ -115,6 +126,8 @@ type ArtifactManifestFile struct {
 	SizeBytes   int64  `json:"sizeBytes"`
 	ContentType string `json:"contentType"`
 	SHA256      string `json:"sha256"`
+	// Digests 按配置 FORGE_ARTIFACT_DIGESTS 计算的摘要，键为算法名（sha256、md5）。旧清单没有该字段。
+	Digests map[string]string `json:"digests,omitempty"`
 }
 
 type ArtifactTree struct {
@@ -144,5 +157,5 @@ func IsValidBuildStatus(status BuildStatus) bool {
 }
 
 func IsValidBuildTriggerType(triggerType BuildTriggerType) bool {
-	return triggerType == BuildTriggerTypeManual || triggerType == BuildTriggerTypePipeline
+	return triggerType == BuildTriggerTypeManual || triggerType == BuildTriggerTypeWebhook
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"forge-server/internal/domain"
@@ -65,7 +66,12 @@ func (s *ArtifactService) DownloadArtifactFile(ctx context.Context, input domain
 	if err != nil {
 		return domain.ArtifactObject{}, err
 	}
-	file, ok := artifactManifestFileByPath(manifest, normalized.Path)
+	// 拉包清单里的 path 已去掉平台前缀，带 platform 时拼回完整路径再查找。
+	manifestPath := normalized.Path
+	if normalized.Platform != "" {
+		manifestPath = normalized.Platform + "/" + normalized.Path
+	}
+	file, ok := artifactManifestFileByPath(manifest, manifestPath)
 	if !ok {
 		return domain.ArtifactObject{}, domain.ErrArtifactNotFound
 	}
@@ -102,26 +108,37 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 	result := domain.ArtifactApplicationManifest{
 		Application:    source.Application,
 		Environment:    source.Environment,
+		Platform:       normalized.Platform,
+		RuntimeVersion: normalized.RuntimeVersion,
 		Identifier:     normalized.Identifier,
 		Modules:        []domain.ArtifactModuleManifest{},
 		MissingModules: []domain.ArtifactMissingModule{},
 	}
 	for _, module := range source.Modules {
 		if module.BuildRecordID == "" {
-			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, "release not found"))
+			reason := domain.ArtifactMissingReasonNoReleaseForRuntime
+			if module.HasRuntimeRoute {
+				// 该运行时版本下有路由，但都没有命中本次请求（例如只有其他 identifier 的定向灰度）。
+				reason = domain.ArtifactMissingReasonReleaseNotFound
+			}
+			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, reason))
 			continue
 		}
 
 		record, err := s.buildRepository.GetBuildRecord(ctx, module.BuildRecordID)
 		if err != nil {
 			if errors.Is(err, domain.ErrBuildRecordNotFound) {
-				result.MissingModules = append(result.MissingModules, missingArtifactModule(module, "build not found"))
+				result.MissingModules = append(result.MissingModules, missingArtifactModule(module, domain.ArtifactMissingReasonBuildNotFound))
 				continue
 			}
 			return domain.ArtifactApplicationManifest{}, err
 		}
 		if record.Status != domain.BuildStatusSucceeded || record.ManifestKey == "" {
-			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, "build artifact not available"))
+			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, domain.ArtifactMissingReasonArtifactUnavailable))
+			continue
+		}
+		if !slices.Contains(record.Platforms, normalized.Platform) {
+			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, domain.ArtifactMissingReasonPlatformUnavailable))
 			continue
 		}
 
@@ -140,6 +157,8 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			GrayPercentage: module.GrayPercentage,
 			Identifier:     module.Identifier,
 			BuildRecordID:  record.ID,
+			Branch:         record.Branch,
+			CommitSHA:      record.CommitSHA,
 			ArtifactKey:    record.ArtifactKey,
 			ManifestKey:    record.ManifestKey,
 			Files:          resolvedArtifactManifestFiles(normalized, record, manifest),
@@ -154,6 +173,10 @@ func normalizeArtifactDownloadInput(input domain.ArtifactDownloadInput) (domain.
 		ModuleID:        strings.TrimSpace(input.ModuleID),
 		Environment:     strings.TrimSpace(input.Environment),
 		BuildRecordID:   strings.TrimSpace(input.BuildRecordID),
+		Platform:        strings.TrimSpace(input.Platform),
+	}
+	if normalized.Platform != "" && !domain.IsValidPlatform(normalized.Platform) {
+		return domain.ArtifactDownloadInput{}, domain.ErrInvalidArtifactInput
 	}
 	artifactPath, err := normalizeArtifactFilePath(input.Path)
 	if err != nil {
@@ -175,10 +198,15 @@ func normalizeArtifactManifestInput(input domain.ArtifactManifestInput) (domain.
 	normalized := domain.ArtifactManifestInput{
 		ApplicationSlug: strings.TrimSpace(input.ApplicationSlug),
 		Environment:     strings.TrimSpace(input.Environment),
+		Platform:        strings.TrimSpace(input.Platform),
+		RuntimeVersion:  strings.TrimSpace(input.RuntimeVersion),
 		Identifier:      strings.TrimSpace(input.Identifier),
 		UserID:          strings.TrimSpace(input.UserID),
 	}
-	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) || normalized.Environment == "" {
+	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) ||
+		normalized.Environment == "" ||
+		!domain.IsValidPlatform(normalized.Platform) ||
+		!domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
 		return domain.ArtifactManifestInput{}, domain.ErrInvalidArtifactInput
 	}
 	return normalized, nil
@@ -210,20 +238,30 @@ func artifactManifestFileByPath(manifest domain.ArtifactManifest, filePath strin
 	return domain.ArtifactManifestFile{}, false
 }
 
+// resolvedArtifactManifestFiles 只返回 {platform}/ 下的文件，path 去掉平台前缀。
 func resolvedArtifactManifestFiles(input domain.ArtifactManifestInput, record domain.BuildRecord, manifest domain.ArtifactManifest) []domain.ArtifactManifestResolvedFile {
 	files := make([]domain.ArtifactManifestResolvedFile, 0, len(manifest.Files))
 	for _, file := range manifest.Files {
-		filePath := cleanArtifactRelativePath(file.Path)
-		if filePath == "" {
+		filePath, ok := strings.CutPrefix(cleanArtifactRelativePath(file.Path), input.Platform+"/")
+		if !ok || filePath == "" {
 			continue
 		}
 		objectKey := artifactObjectKey(record, file)
+		// 旧清单没有 digests，用 sha256 补齐，客户端可以只读 digests 做校验。
+		digests := make(map[string]string, len(file.Digests)+1)
+		for algorithm, value := range file.Digests {
+			digests[algorithm] = value
+		}
+		if _, ok := digests["sha256"]; !ok && file.SHA256 != "" {
+			digests["sha256"] = file.SHA256
+		}
 		files = append(files, domain.ArtifactManifestResolvedFile{
 			Path:        filePath,
 			URL:         artifactFileURL(input, record, objectKey, filePath),
 			ContentType: file.ContentType,
 			SizeBytes:   file.SizeBytes,
 			SHA256:      file.SHA256,
+			Digests:     digests,
 		})
 	}
 	return files
@@ -234,6 +272,7 @@ func artifactFileURL(input domain.ArtifactManifestInput, record domain.BuildReco
 		return strings.TrimRight(strings.TrimSpace(record.StoragePublicBaseURL), "/") + "/" + strings.TrimLeft(objectKey, "/")
 	}
 	values := url.Values{}
+	values.Set("platform", input.Platform)
 	values.Set("path", filePath)
 	return "/api/v1/artifacts/applications/" +
 		url.PathEscape(input.ApplicationSlug) +

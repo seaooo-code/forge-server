@@ -27,7 +27,7 @@ func TestModuleUniqueViolationError(t *testing.T) {
 		},
 		{
 			name:       "module repository",
-			constraint: "modules_repository_provider_provider_repository_id_key",
+			constraint: "modules_repository_dockerfile_unique",
 			want:       domain.ErrModuleRepositoryConflict,
 		},
 		{

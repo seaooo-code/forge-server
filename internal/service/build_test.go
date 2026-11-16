@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,8 +18,9 @@ func TestBuildServiceCreateBuildRecordNormalizesInput(t *testing.T) {
 		ModuleID:    " module-profile ",
 		Environment: " qa ",
 		Branch:      " release/1.2.0 ",
-		TriggerID:   " pipeline-main ",
-		TriggerType: " pipeline ",
+		CommitSHA:   " abc123 ",
+		TriggerID:   " delivery-main ",
+		TriggerType: " webhook ",
 	})
 	if err != nil {
 		t.Fatalf("create build record: %v", err)
@@ -27,8 +29,9 @@ func TestBuildServiceCreateBuildRecordNormalizesInput(t *testing.T) {
 	if repository.lastCreateInput.ModuleID != "module-profile" ||
 		repository.lastCreateInput.Environment != "qa" ||
 		repository.lastCreateInput.Branch != "release/1.2.0" ||
-		repository.lastCreateInput.TriggerID != "pipeline-main" ||
-		repository.lastCreateInput.TriggerType != domain.BuildTriggerTypePipeline {
+		repository.lastCreateInput.CommitSHA != "abc123" ||
+		repository.lastCreateInput.TriggerID != "delivery-main" ||
+		repository.lastCreateInput.TriggerType != domain.BuildTriggerTypeWebhook {
 		t.Fatalf("unexpected normalized input: %+v", repository.lastCreateInput)
 	}
 }
@@ -66,14 +69,15 @@ func TestBuildServiceCreateBuildRecordRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestBuildServiceCreateBuildRecordRejectsPipelineWithoutTriggerID(t *testing.T) {
+func TestBuildServiceCreateBuildRecordRejectsWebhookWithoutCommit(t *testing.T) {
 	repository := fakeBuildRecordRepository{}
 	service := NewBuildService(&repository)
 
 	_, err := service.CreateBuildRecord(context.Background(), domain.BuildRecordInput{
 		ModuleID:    "module-profile",
 		Environment: "qa",
-		TriggerType: domain.BuildTriggerTypePipeline,
+		Branch:      "main",
+		TriggerType: domain.BuildTriggerTypeWebhook,
 	})
 	if !errors.Is(err, domain.ErrInvalidBuildInput) {
 		t.Fatalf("expected invalid build input, got %v", err)
@@ -143,7 +147,7 @@ func TestBuildServiceListBuildRecords(t *testing.T) {
 		Environment:   " qa ",
 		ModuleID:      " module-profile ",
 		Status:        " pending ",
-		TriggerType:   " pipeline ",
+		TriggerType:   " webhook ",
 	})
 	if err != nil {
 		t.Fatalf("list build records: %v", err)
@@ -155,7 +159,7 @@ func TestBuildServiceListBuildRecords(t *testing.T) {
 		repository.lastListFilters.Environment != "qa" ||
 		repository.lastListFilters.ModuleID != "module-profile" ||
 		repository.lastListFilters.Status != domain.BuildStatusPending ||
-		repository.lastListFilters.TriggerType != domain.BuildTriggerTypePipeline {
+		repository.lastListFilters.TriggerType != domain.BuildTriggerTypeWebhook {
 		t.Fatalf("unexpected filters: %+v", repository.lastListFilters)
 	}
 }
@@ -353,4 +357,34 @@ func (r *fakeArtifactManifestReader) ReadArtifactManifest(context.Context, domai
 		return domain.ArtifactManifest{}, r.err
 	}
 	return r.manifest, nil
+}
+
+func TestBuildServiceCompleteBuildRecordNormalizesBuildContract(t *testing.T) {
+	repository := fakeBuildRecordRepository{}
+	service := NewBuildService(&repository)
+
+	_, err := service.CompleteBuildRecord(context.Background(), "build-1", domain.BuildRecordCompletion{
+		ArtifactKey:    "rn-bundles/app/module/qa/build-1",
+		CommitSHA:      " abc123 ",
+		RuntimeVersion: " 1.2.0-android.725 ",
+		Platforms:      []string{"android", "ios", "android"},
+	})
+	if err != nil {
+		t.Fatalf("complete build record: %v", err)
+	}
+	completion := repository.lastCompletion
+	if completion.CommitSHA != "abc123" || completion.RuntimeVersion != "1.2.0-android.725" ||
+		len(completion.Platforms) != 2 || completion.Platforms[0] != "android" || completion.Platforms[1] != "ios" {
+		t.Fatalf("unexpected completion: %+v", completion)
+	}
+
+	for _, invalid := range []domain.BuildRecordCompletion{
+		{ArtifactKey: "key", RuntimeVersion: "1.0 beta"},
+		{ArtifactKey: "key", RuntimeVersion: strings.Repeat("a", 65)},
+		{ArtifactKey: "key", RuntimeVersion: "1.0", Platforms: []string{"web"}},
+	} {
+		if _, err := service.CompleteBuildRecord(context.Background(), "build-1", invalid); !errors.Is(err, domain.ErrInvalidBuildInput) {
+			t.Fatalf("expected invalid build input for %+v, got %v", invalid, err)
+		}
+	}
 }

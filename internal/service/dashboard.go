@@ -27,7 +27,7 @@ type DashboardReleaseService interface {
 }
 
 type DashboardCodeSourceService interface {
-	ListCodeSources(ctx context.Context, ownerUnionID string) ([]domain.CodeSourceApp, error)
+	ListCodeSources(ctx context.Context) ([]domain.CodeSourceApp, error)
 }
 
 type DashboardStorageService interface {
@@ -97,7 +97,7 @@ func (s *DashboardService) GetDashboardSnapshot(ctx context.Context, ownerUnionI
 	if err != nil {
 		return domain.DashboardSnapshot{}, err
 	}
-	codeSources, err := s.listCodeSources(ctx, ownerUnionID)
+	codeSources, err := s.listCodeSources(ctx)
 	if err != nil {
 		return domain.DashboardSnapshot{}, err
 	}
@@ -231,11 +231,11 @@ func (s *DashboardService) listReleases(ctx context.Context) ([]domain.ReleaseRe
 	return s.releases.ListReleases(ctx, domain.ReleaseRecordFilters{})
 }
 
-func (s *DashboardService) listCodeSources(ctx context.Context, ownerUnionID string) ([]domain.CodeSourceApp, error) {
+func (s *DashboardService) listCodeSources(ctx context.Context) ([]domain.CodeSourceApp, error) {
 	if s.codeSources == nil {
 		return nil, nil
 	}
-	return s.codeSources.ListCodeSources(ctx, ownerUnionID)
+	return s.codeSources.ListCodeSources(ctx)
 }
 
 func (s *DashboardService) listStorage(ctx context.Context) ([]domain.StorageConfiguration, int, error) {

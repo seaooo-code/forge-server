@@ -2,9 +2,17 @@ package service
 
 import (
 	"context"
+	"errors"
+	"path"
 	"strings"
 
 	"forge-server/internal/domain"
+)
+
+const (
+	maxModuleAutoBuildBranches  = 20
+	maxModuleAutoPreviewTTLHour = 24 * 365
+	maxModuleBuildPathLength    = 255
 )
 
 type ModuleRepository interface {
@@ -15,12 +23,30 @@ type ModuleRepository interface {
 	UpdateModule(ctx context.Context, id string, input domain.ModuleInput) (domain.Module, error)
 }
 
-type ModuleService struct {
-	repository ModuleRepository
+// ModuleCodeSourceStore 用于在绑定仓库时校验连接，并以仓库缓存（code_source_repositories）为准填充仓库信息，
+// 避免客户端提交任意 clone 地址导致 worker 把仓库凭证发往其他主机。
+type ModuleCodeSourceStore interface {
+	GetCodeSourceConnection(ctx context.Context, id string) (domain.CodeSourceConnection, error)
+	GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error)
 }
 
-func NewModuleService(repository ModuleRepository) *ModuleService {
-	return &ModuleService{repository: repository}
+type ModuleService struct {
+	codeSources           ModuleCodeSourceStore
+	defaultDockerfilePath string
+	repository            ModuleRepository
+}
+
+// NewModuleService 的 defaultDockerfilePath 来自 FORGE_WORKER_DOCKERFILE，只作为新建模块时 dockerfile_path 的默认值。
+func NewModuleService(repository ModuleRepository, codeSources ModuleCodeSourceStore, defaultDockerfilePath string) *ModuleService {
+	defaultDockerfilePath = strings.TrimSpace(defaultDockerfilePath)
+	if defaultDockerfilePath == "" {
+		defaultDockerfilePath = domain.DefaultModuleDockerfilePath
+	}
+	return &ModuleService{
+		codeSources:           codeSources,
+		defaultDockerfilePath: defaultDockerfilePath,
+		repository:            repository,
+	}
 }
 
 func (s *ModuleService) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
@@ -41,7 +67,7 @@ func (s *ModuleService) GetModule(ctx context.Context, id string) (domain.Module
 }
 
 func (s *ModuleService) CreateModule(ctx context.Context, input domain.ModuleInput) (domain.Module, error) {
-	normalized, err := validateModuleInput(input, true)
+	normalized, err := s.normalizeModuleInput(ctx, input, true)
 	if err != nil {
 		return domain.Module{}, err
 	}
@@ -54,7 +80,7 @@ func (s *ModuleService) UpdateModule(ctx context.Context, id string, input domai
 		return domain.Module{}, domain.ErrModuleNotFound
 	}
 
-	normalized, err := validateModuleInput(input, false)
+	normalized, err := s.normalizeModuleInput(ctx, input, false)
 	if err != nil {
 		return domain.Module{}, err
 	}
@@ -69,7 +95,45 @@ func (s *ModuleService) DeleteModule(ctx context.Context, id string) error {
 	return s.repository.DeleteModule(ctx, normalizedID)
 }
 
-func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.ModuleInput, error) {
+func (s *ModuleService) normalizeModuleInput(ctx context.Context, input domain.ModuleInput, requireID bool) (domain.ModuleInput, error) {
+	normalized, err := validateModuleInput(input, requireID, s.defaultDockerfilePath)
+	if err != nil {
+		return domain.ModuleInput{}, err
+	}
+	if s.codeSources == nil {
+		return domain.ModuleInput{}, domain.ErrCodeSourceAuthNotConfigured
+	}
+
+	connection, err := s.codeSources.GetCodeSourceConnection(ctx, normalized.Repository.ConnectionID)
+	if err != nil {
+		if errors.Is(err, domain.ErrCodeSourceConnectionNotFound) {
+			return domain.ModuleInput{}, domain.ErrInvalidModuleInput
+		}
+		return domain.ModuleInput{}, err
+	}
+	if connection.Status != domain.CodeSourceConnectionStatusActive {
+		return domain.ModuleInput{}, domain.ErrCodeSourceConnectionInactive
+	}
+
+	repository, err := s.codeSources.GetCodeSourceRepository(ctx, connection.ID, normalized.Repository.ExternalRepositoryID)
+	if err != nil {
+		if errors.Is(err, domain.ErrCodeSourceRepositoryNotFound) {
+			return domain.ModuleInput{}, domain.ErrInvalidModuleInput
+		}
+		return domain.ModuleInput{}, err
+	}
+	normalized.Repository = domain.ModuleRepository{
+		ConnectionID:         connection.ID,
+		ExternalRepositoryID: repository.ExternalRepositoryID,
+		FullName:             repository.FullName,
+		WebURL:               repository.WebURL,
+		CloneURL:             repository.CloneURL,
+		DefaultBranch:        repository.DefaultBranch,
+	}
+	return normalized, nil
+}
+
+func validateModuleInput(input domain.ModuleInput, requireID bool, defaultDockerfilePath string) (domain.ModuleInput, error) {
 	owner := normalizeUserInput(domain.UserInput{
 		ID:            input.OwnerUserID,
 		Name:          input.Owner,
@@ -95,17 +159,16 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 		OwnerFeishuUnionID: owner.FeishuUnionID,
 		OwnerFeishuUserID:  owner.FeishuUserID,
 		OwnerUserID:        owner.ID,
-		Repository: domain.ModuleRepositoryBinding{
-			Provider:       input.Repository.Provider,
-			RepositoryID:   input.Repository.RepositoryID,
-			InstallationID: input.Repository.InstallationID,
-			FullName:       strings.TrimSpace(input.Repository.FullName),
-			HTMLURL:        strings.TrimSpace(input.Repository.HTMLURL),
-			CloneURL:       strings.TrimSpace(input.Repository.CloneURL),
-			SSHURL:         strings.TrimSpace(input.Repository.SSHURL),
-			DefaultBranch:  strings.TrimSpace(input.Repository.DefaultBranch),
+		Repository: domain.ModuleRepository{
+			ConnectionID:         strings.TrimSpace(input.Repository.ConnectionID),
+			ExternalRepositoryID: strings.TrimSpace(input.Repository.ExternalRepositoryID),
 		},
 	}
+	buildConfig, ok := normalizeModuleBuildConfig(input.BuildConfig, defaultDockerfilePath)
+	if !ok {
+		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
+	}
+	normalized.BuildConfig = buildConfig
 
 	if requireID && !domain.IsValidModuleID(normalized.ID) {
 		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
@@ -117,10 +180,8 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 		normalized.Name == "" ||
 		normalized.OwnerUserID == "" ||
 		normalized.Owner == "" ||
-		normalized.Repository.Provider == "" ||
-		normalized.Repository.RepositoryID <= 0 ||
-		normalized.Repository.InstallationID <= 0 ||
-		normalized.Repository.FullName == "" {
+		normalized.Repository.ConnectionID == "" ||
+		normalized.Repository.ExternalRepositoryID == "" {
 		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
 	}
 	if !domain.IsValidModuleKind(normalized.Kind) {
@@ -132,11 +193,61 @@ func validateModuleInput(input domain.ModuleInput, requireID bool) (domain.Modul
 	if normalized.Kind == domain.ModuleKindFeature && normalized.CommonModuleID == "" {
 		return domain.ModuleInput{}, domain.ErrModuleCommonMissing
 	}
-	if normalized.Repository.Provider != domain.CodeSourceProviderGitHub {
-		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
+	return normalized, nil
+}
+
+func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfilePath string) (domain.ModuleBuildConfig, bool) {
+	normalized := domain.ModuleBuildConfig{
+		DockerfilePath:       strings.TrimSpace(config.DockerfilePath),
+		BuildContext:         strings.TrimSpace(config.BuildContext),
+		AutoBuildBranches:    []string{},
+		AutoBuildEnvironment: strings.TrimSpace(config.AutoBuildEnvironment),
+		AutoPreviewRelease:   config.AutoPreviewRelease,
+		AutoPreviewTTLHours:  config.AutoPreviewTTLHours,
+	}
+	if normalized.DockerfilePath == "" {
+		normalized.DockerfilePath = defaultDockerfilePath
+	}
+	if normalized.BuildContext == "" {
+		normalized.BuildContext = domain.DefaultModuleBuildContext
+	}
+	if normalized.AutoPreviewTTLHours == 0 {
+		normalized.AutoPreviewTTLHours = domain.DefaultModuleAutoPreviewTTLHours
 	}
 
-	return normalized, nil
+	// 构建路径必须是仓库内的相对路径。
+	for _, value := range []string{normalized.DockerfilePath, normalized.BuildContext} {
+		cleaned := path.Clean(value)
+		if len(value) > maxModuleBuildPathLength || strings.Contains(value, "\\") || path.IsAbs(value) ||
+			cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+			return domain.ModuleBuildConfig{}, false
+		}
+	}
+	if path.Clean(normalized.DockerfilePath) == "." {
+		return domain.ModuleBuildConfig{}, false
+	}
+
+	seen := map[string]struct{}{}
+	for _, branch := range config.AutoBuildBranches {
+		branch = strings.TrimSpace(branch)
+		if branch == "" {
+			continue
+		}
+		if _, err := path.Match(branch, ""); err != nil {
+			return domain.ModuleBuildConfig{}, false
+		}
+		if _, ok := seen[branch]; ok {
+			continue
+		}
+		seen[branch] = struct{}{}
+		normalized.AutoBuildBranches = append(normalized.AutoBuildBranches, branch)
+	}
+	if len(normalized.AutoBuildBranches) > maxModuleAutoBuildBranches ||
+		(len(normalized.AutoBuildBranches) > 0 && normalized.AutoBuildEnvironment == "") ||
+		normalized.AutoPreviewTTLHours < 1 || normalized.AutoPreviewTTLHours > maxModuleAutoPreviewTTLHour {
+		return domain.ModuleBuildConfig{}, false
+	}
+	return normalized, true
 }
 
 func normalizeModuleListFilters(filters domain.ModuleListFilters) (domain.ModuleListFilters, error) {

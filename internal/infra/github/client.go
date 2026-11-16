@@ -62,6 +62,11 @@ func (c *Client) AppManifest() (domain.CodeSourceAppManifest, error) {
 		SetupURL:    c.cfg.InstallCallbackURL,
 		URL:         c.appHomepageURL(),
 	}
+	// GitHub 不接受 localhost 作为 webhook 地址，只有配置了公网地址才让 App 订阅 push 事件。
+	if webhookURL := strings.TrimSpace(c.cfg.WebhookURL); webhookURL != "" {
+		manifest.DefaultEvents = []string{"push"}
+		manifest.HookAttributes = &appManifestHookAttributes{Active: true, URL: webhookURL}
+	}
 	payload, err := json.Marshal(manifest)
 	if err != nil {
 		return domain.CodeSourceAppManifest{}, fmt.Errorf("%w: encode github app manifest: %w", domain.ErrCodeSourceAuthorization, err)
@@ -158,85 +163,78 @@ func (c *Client) GetInstallation(ctx context.Context, appConfig domain.CodeSourc
 	return domain.CodeSourceInstallation{
 		AccountLogin:        response.Account.Login,
 		AccountType:         response.Account.Type,
+		APIBaseURL:          c.apiBaseURL(),
 		InstallationID:      response.ID,
 		InstalledAt:         response.CreatedAt,
-		Provider:            domain.CodeSourceProviderGitHub,
 		RepositorySelection: response.RepositorySelection,
 		UpdatedAt:           response.UpdatedAt,
+		WebBaseURL:          c.webURL(),
 	}, nil
 }
 
-func (c *Client) DeleteInstallation(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) error {
-	jwt, err := c.appJWT(appConfig)
-	if err != nil {
-		return err
-	}
-
-	req, err := c.newAPIRequest(ctx, http.MethodDelete, "/app/installations/"+strconv.FormatInt(installationID, 10), nil, nil, jwt)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
-}
-
-func (c *Client) ListRepositories(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64, page int, pageSize int) (domain.CodeSourceRepositoryPage, error) {
+func (c *Client) ListRepositories(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64, page int, pageSize int) (domain.RepositoryPage, error) {
 	if page < 1 || pageSize < 1 {
-		return domain.CodeSourceRepositoryPage{}, domain.ErrInvalidCodeSourceInput
+		return domain.RepositoryPage{}, domain.ErrInvalidCodeSourceInput
 	}
 
 	token, err := c.installationAccessToken(ctx, appConfig, installationID)
 	if err != nil {
-		return domain.CodeSourceRepositoryPage{}, err
+		return domain.RepositoryPage{}, err
 	}
+	return c.listInstallationRepositories(ctx, token.Token, page, pageSize)
+}
+
+func (c *Client) listInstallationRepositories(ctx context.Context, token string, page int, pageSize int) (domain.RepositoryPage, error) {
 
 	query := url.Values{}
 	query.Set("page", strconv.Itoa(page))
 	query.Set("per_page", strconv.Itoa(pageSize))
 	req, err := c.newAPIRequest(ctx, http.MethodGet, "/installation/repositories", query, nil, token)
 	if err != nil {
-		return domain.CodeSourceRepositoryPage{}, err
+		return domain.RepositoryPage{}, err
 	}
 
 	var response repositoriesResponse
 	if err := c.do(req, &response); err != nil {
-		return domain.CodeSourceRepositoryPage{}, err
+		return domain.RepositoryPage{}, err
 	}
 
 	repositories := make([]domain.CodeSourceRepository, 0, len(response.Repositories))
 	for _, repository := range response.Repositories {
-		repositories = append(repositories, newCodeSourceRepository(installationID, repository))
+		repositories = append(repositories, newCodeSourceRepository(repository))
 	}
 
-	return domain.CodeSourceRepositoryPage{
+	return domain.RepositoryPage{
 		HasMore:      hasNextPage(req.Response),
 		Repositories: repositories,
 	}, nil
 }
 
-func (c *Client) InstallationAccessToken(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) (string, error) {
-	return c.installationAccessToken(ctx, appConfig, installationID)
+type installationToken struct {
+	ExpiresAt time.Time
+	Token     string
 }
 
-func (c *Client) installationAccessToken(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) (string, error) {
+func (c *Client) installationAccessToken(ctx context.Context, appConfig domain.CodeSourceAppConfig, installationID int64) (installationToken, error) {
 	jwt, err := c.appJWT(appConfig)
 	if err != nil {
-		return "", err
+		return installationToken{}, err
 	}
 
 	req, err := c.newAPIRequest(ctx, http.MethodPost, "/app/installations/"+strconv.FormatInt(installationID, 10)+"/access_tokens", nil, bytes.NewReader([]byte("{}")), jwt)
 	if err != nil {
-		return "", err
+		return installationToken{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	var response accessTokenResponse
 	if err := c.do(req, &response); err != nil {
-		return "", err
+		return installationToken{}, err
 	}
 	if response.Token == "" {
-		return "", fmt.Errorf("%w: github installation token response missing token", domain.ErrCodeSourceAuthorization)
+		return installationToken{}, fmt.Errorf("%w: github installation token response missing token", domain.ErrCodeSourceAuthorization)
 	}
-	return response.Token, nil
+	return installationToken{ExpiresAt: response.ExpiresAt, Token: response.Token}, nil
 }
 
 func (c *Client) appJWT(appConfig domain.CodeSourceAppConfig) (string, error) {
@@ -377,30 +375,16 @@ func hasNextPage(resp *http.Response) bool {
 	return strings.Contains(resp.Header.Get("Link"), `rel="next"`)
 }
 
-func newCodeSourceRepository(installationID int64, repository repositoryResponse) domain.CodeSourceRepository {
+func newCodeSourceRepository(repository repositoryResponse) domain.CodeSourceRepository {
 	return domain.CodeSourceRepository{
-		CloneURL:       repository.CloneURL,
-		DefaultBranch:  repository.DefaultBranch,
-		Description:    repository.Description,
-		FullName:       repository.FullName,
-		HTMLURL:        repository.HTMLURL,
-		InstallationID: installationID,
-		Name:           repository.Name,
-		Owner:          repository.Owner.Login,
-		Private:        repository.Private,
-		Provider:       domain.CodeSourceProviderGitHub,
-		RepositoryID:   repository.ID,
-		SSHURL:         repository.SSHURL,
-		UpdatedAt:      repository.updatedAt(),
+		ExternalRepositoryID: strconv.FormatInt(repository.ID, 10),
+		FullName:             repository.FullName,
+		WebURL:               repository.HTMLURL,
+		CloneURL:             repository.CloneURL,
+		DefaultBranch:        repository.DefaultBranch,
+		Private:              repository.Private,
+		Description:          repository.Description,
 	}
-}
-
-func (r repositoryResponse) updatedAt() *time.Time {
-	if r.UpdatedAt.IsZero() {
-		return nil
-	}
-	updatedAt := r.UpdatedAt
-	return &updatedAt
 }
 
 func (c *Client) apiBaseURL() string {
@@ -453,14 +437,21 @@ type githubAccountResponse struct {
 }
 
 type appManifestRequest struct {
-	CallbackURLs       []string          `json:"callback_urls,omitempty"`
-	DefaultPermissions map[string]string `json:"default_permissions,omitempty"`
-	Description        string            `json:"description,omitempty"`
-	Name               string            `json:"name"`
-	Public             bool              `json:"public"`
-	RedirectURL        string            `json:"redirect_url"`
-	SetupURL           string            `json:"setup_url,omitempty"`
-	URL                string            `json:"url"`
+	CallbackURLs       []string                   `json:"callback_urls,omitempty"`
+	DefaultEvents      []string                   `json:"default_events,omitempty"`
+	DefaultPermissions map[string]string          `json:"default_permissions,omitempty"`
+	Description        string                     `json:"description,omitempty"`
+	HookAttributes     *appManifestHookAttributes `json:"hook_attributes,omitempty"`
+	Name               string                     `json:"name"`
+	Public             bool                       `json:"public"`
+	RedirectURL        string                     `json:"redirect_url"`
+	SetupURL           string                     `json:"setup_url,omitempty"`
+	URL                string                     `json:"url"`
+}
+
+type appManifestHookAttributes struct {
+	Active bool   `json:"active"`
+	URL    string `json:"url"`
 }
 
 type appManifestConversionResponse struct {
@@ -491,17 +482,13 @@ type repositoriesResponse struct {
 }
 
 type repositoryResponse struct {
-	CloneURL      string                `json:"clone_url"`
-	DefaultBranch string                `json:"default_branch"`
-	Description   string                `json:"description"`
-	FullName      string                `json:"full_name"`
-	HTMLURL       string                `json:"html_url"`
-	ID            int64                 `json:"id"`
-	Name          string                `json:"name"`
-	Owner         githubAccountResponse `json:"owner"`
-	Private       bool                  `json:"private"`
-	SSHURL        string                `json:"ssh_url"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	CloneURL      string `json:"clone_url"`
+	DefaultBranch string `json:"default_branch"`
+	Description   string `json:"description"`
+	FullName      string `json:"full_name"`
+	HTMLURL       string `json:"html_url"`
+	ID            int64  `json:"id"`
+	Private       bool   `json:"private"`
 }
 
 type errorResponse struct {

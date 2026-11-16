@@ -30,35 +30,7 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 		return nil, domain.ModuleSummary{}, err
 	}
 
-	rows, err := r.pool.Query(ctx, `
-		select
-			m.id,
-			m.name,
-			m.kind,
-			m.common_module_id,
-			cm.name as common_module_name,
-			m.application_id,
-			a.name as application_name,
-			a.slug as application_slug,
-			m.owner_user_id,
-			u.name as owner,
-			u.email as owner_email,
-			u.avatar_url as owner_avatar_url,
-			u.department_ids as owner_department_ids,
-			m.repository_provider,
-			m.provider_repository_id,
-			m.provider_installation_id,
-			m.repository_full_name,
-			m.repository_html_url,
-			m.repository_clone_url,
-			m.repository_ssh_url,
-			m.default_branch,
-			m.created_at,
-			m.updated_at
-		from modules m
-		join applications a on a.id = m.application_id
-		join users u on u.id = m.owner_user_id
-		left join modules cm on cm.id = m.common_module_id
+	rows, err := r.pool.Query(ctx, moduleSelectSQL()+`
 		where
 			($1 = '' or m.kind = $1)
 			and ($2 = '' or m.owner_user_id = $2)
@@ -152,48 +124,24 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 			common_module_id,
 			application_id,
 			owner_user_id,
-			repository_provider,
-			provider_repository_id,
-			provider_installation_id,
+			code_source_connection_id,
+			external_repository_id,
 			repository_full_name,
-			repository_html_url,
+			repository_web_url,
 			repository_clone_url,
-			repository_ssh_url,
 			default_branch,
+			dockerfile_path,
+			build_context,
+			auto_build_branches,
+			auto_build_environment_code,
+			auto_preview_release,
+			auto_preview_ttl_hours,
 			sort_order
 		) values (
-			$1,
-			$2,
-			$3,
-			$4,
-			$5,
-			$6,
-			$7,
-			$8,
-			$9,
-			$10,
-			$11,
-			$12,
-			$13,
-			$14,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
 			coalesce((select max(sort_order) + 10 from modules), 10)
 		)
-	`,
-		input.ID,
-		input.Name,
-		input.Kind,
-		moduleCommonModuleID(input),
-		input.ApplicationID,
-		input.OwnerUserID,
-		input.Repository.Provider,
-		input.Repository.RepositoryID,
-		input.Repository.InstallationID,
-		input.Repository.FullName,
-		input.Repository.HTMLURL,
-		input.Repository.CloneURL,
-		input.Repository.SSHURL,
-		input.Repository.DefaultBranch,
-	); err != nil {
+	`, moduleWriteArgs(input.ID, input)...); err != nil {
 		if isUniqueViolation(err) {
 			return domain.Module{}, moduleUniqueViolationError(err)
 		}
@@ -259,32 +207,21 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 			common_module_id = $4,
 			application_id = $5,
 			owner_user_id = $6,
-			repository_provider = $7,
-			provider_repository_id = $8,
-			provider_installation_id = $9,
-			repository_full_name = $10,
-			repository_html_url = $11,
-			repository_clone_url = $12,
-			repository_ssh_url = $13,
-			default_branch = $14,
+			code_source_connection_id = $7,
+			external_repository_id = $8,
+			repository_full_name = $9,
+			repository_web_url = $10,
+			repository_clone_url = $11,
+			default_branch = $12,
+			dockerfile_path = $13,
+			build_context = $14,
+			auto_build_branches = $15,
+			auto_build_environment_code = $16,
+			auto_preview_release = $17,
+			auto_preview_ttl_hours = $18,
 			updated_at = now()
 		where id = $1
-	`,
-		id,
-		input.Name,
-		input.Kind,
-		moduleCommonModuleID(input),
-		input.ApplicationID,
-		input.OwnerUserID,
-		input.Repository.Provider,
-		input.Repository.RepositoryID,
-		input.Repository.InstallationID,
-		input.Repository.FullName,
-		input.Repository.HTMLURL,
-		input.Repository.CloneURL,
-		input.Repository.SSHURL,
-		input.Repository.DefaultBranch,
-	); err != nil {
+	`, moduleWriteArgs(id, input)...); err != nil {
 		if isUniqueViolation(err) {
 			return domain.Module{}, moduleUniqueViolationError(err)
 		}
@@ -377,19 +314,26 @@ func moduleSelectSQL() string {
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
 			u.department_ids as owner_department_ids,
-			m.repository_provider,
-			m.provider_repository_id,
-			m.provider_installation_id,
+			m.code_source_connection_id,
+			csc.provider as code_source_provider,
+			csc.name as code_source_connection_name,
+			m.external_repository_id,
 			m.repository_full_name,
-			m.repository_html_url,
+			m.repository_web_url,
 			m.repository_clone_url,
-			m.repository_ssh_url,
 			m.default_branch,
+			m.dockerfile_path,
+			m.build_context,
+			m.auto_build_branches,
+			coalesce(m.auto_build_environment_code, '') as auto_build_environment_code,
+			m.auto_preview_release,
+			m.auto_preview_ttl_hours,
 			m.created_at,
 			m.updated_at
 		from modules m
 		join applications a on a.id = m.application_id
 		join users u on u.id = m.owner_user_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
 		left join modules cm on cm.id = m.common_module_id`
 }
 
@@ -411,14 +355,20 @@ func scanModule(row moduleRow) (domain.Module, error) {
 		&module.OwnerEmail,
 		&module.OwnerAvatarURL,
 		&module.OwnerDepartmentIDs,
-		&module.RepositoryProvider,
-		&module.RepositoryID,
-		&module.RepositoryInstallationID,
-		&module.RepositoryFullName,
-		&module.RepositoryHTMLURL,
-		&module.RepositoryCloneURL,
-		&module.RepositorySSHURL,
-		&module.DefaultBranch,
+		&module.Repository.ConnectionID,
+		&module.CodeSourceProvider,
+		&module.ConnectionName,
+		&module.Repository.ExternalRepositoryID,
+		&module.Repository.FullName,
+		&module.Repository.WebURL,
+		&module.Repository.CloneURL,
+		&module.Repository.DefaultBranch,
+		&module.BuildConfig.DockerfilePath,
+		&module.BuildConfig.BuildContext,
+		&module.BuildConfig.AutoBuildBranches,
+		&module.BuildConfig.AutoBuildEnvironment,
+		&module.BuildConfig.AutoPreviewRelease,
+		&module.BuildConfig.AutoPreviewTTLHours,
 		&module.CreatedAt,
 		&module.UpdatedAt,
 	); err != nil {
@@ -446,6 +396,38 @@ func moduleOwnerUser(input domain.ModuleInput) domain.UserInput {
 		FeishuUnionID: input.OwnerFeishuUnionID,
 		FeishuOpenID:  input.OwnerFeishuOpenID,
 		FeishuUserID:  input.OwnerFeishuUserID,
+	}
+}
+
+// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$18）组织参数。
+func moduleWriteArgs(id string, input domain.ModuleInput) []any {
+	var autoBuildEnvironment *string
+	if input.BuildConfig.AutoBuildEnvironment != "" {
+		autoBuildEnvironment = &input.BuildConfig.AutoBuildEnvironment
+	}
+	autoBuildBranches := input.BuildConfig.AutoBuildBranches
+	if autoBuildBranches == nil {
+		autoBuildBranches = []string{}
+	}
+	return []any{
+		id,
+		input.Name,
+		input.Kind,
+		moduleCommonModuleID(input),
+		input.ApplicationID,
+		input.OwnerUserID,
+		input.Repository.ConnectionID,
+		input.Repository.ExternalRepositoryID,
+		input.Repository.FullName,
+		input.Repository.WebURL,
+		input.Repository.CloneURL,
+		input.Repository.DefaultBranch,
+		input.BuildConfig.DockerfilePath,
+		input.BuildConfig.BuildContext,
+		autoBuildBranches,
+		autoBuildEnvironment,
+		input.BuildConfig.AutoPreviewRelease,
+		input.BuildConfig.AutoPreviewTTLHours,
 	}
 }
 
@@ -526,7 +508,7 @@ func moduleUniqueViolationError(err error) error {
 		return domain.ErrModuleIDConflict
 	case "idx_modules_common_application_unique":
 		return domain.ErrModuleCommonConflict
-	case "modules_repository_provider_provider_repository_id_key":
+	case "modules_repository_dockerfile_unique":
 		return domain.ErrModuleRepositoryConflict
 	default:
 		return domain.ErrModuleIDConflict

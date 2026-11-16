@@ -52,6 +52,7 @@ type ReleaseRecord struct {
 	Environment     string
 	EnvironmentName string
 	BuildRecordID   string
+	RuntimeVersion  string
 	Identifier      string
 	ReleaseType     ReleaseType
 	GrayStrategy    ReleaseGrayStrategy
@@ -76,6 +77,7 @@ type ReleaseRoute struct {
 	EnvironmentName string
 	ReleaseID       string
 	BuildRecordID   string
+	RuntimeVersion  string
 	RouteType       ReleaseRouteType
 	Identifier      string
 	GrayStrategy    ReleaseGrayStrategy
@@ -129,8 +131,10 @@ type ReleaseInactivateInput struct {
 type ReleaseResolveInput struct {
 	ModuleID    string
 	Environment string
-	Identifier  string
-	UserID      string
+	// RuntimeVersion 为空时不限制运行时版本，按创建时间取最新路由；非空时只在该运行时版本下解析。
+	RuntimeVersion string
+	Identifier     string
+	UserID         string
 }
 
 func IsValidReleaseType(releaseType ReleaseType) bool {

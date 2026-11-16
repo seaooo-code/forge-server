@@ -94,6 +94,33 @@ func (r *AuthorizationRepository) GetApplicationRole(ctx context.Context, userID
 	return role, nil
 }
 
+func (r *AuthorizationRepository) ListApplicationRoles(ctx context.Context, userID string) ([]domain.ApplicationMemberRole, error) {
+	rows, err := r.pool.Query(ctx, `
+		select distinct role
+		from application_members
+		where user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query application roles: %w", err)
+	}
+	defer rows.Close()
+
+	roles := make([]domain.ApplicationMemberRole, 0)
+	for rows.Next() {
+		var role domain.ApplicationMemberRole
+		if err := rows.Scan(&role); err != nil {
+			return nil, fmt.Errorf("scan application role: %w", err)
+		}
+		if domain.IsValidApplicationMemberRole(role) {
+			roles = append(roles, role)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate application roles: %w", err)
+	}
+	return roles, nil
+}
+
 func (r *AuthorizationRepository) ApplicationIDBySlug(ctx context.Context, slug string) (string, error) {
 	var id string
 	if err := r.pool.QueryRow(ctx, `select id from applications where slug = $1`, slug).Scan(&id); err != nil {

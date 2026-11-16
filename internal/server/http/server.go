@@ -27,9 +27,12 @@ type Dependencies struct {
 	ArtifactService            ArtifactService
 	ArtifactAccessTokenService ArtifactAccessTokenService
 	BuildService               BuildService
+	BuildLogService            BuildLogService
+	BuildVariableService       BuildVariableService
 	DashboardService           DashboardService
 	AuthorizationService       AuthorizationService
 	CodeSourceService          CodeSourceService
+	WebhookService             WebhookService
 	EnvironmentService         EnvironmentService
 	FeishuAuthService          FeishuAuthService
 	FeishuContactService       FeishuContactService
@@ -100,13 +103,24 @@ type EnvironmentService interface {
 }
 
 type CodeSourceService interface {
-	CompleteAppManifest(ctx context.Context, provider domain.CodeSourceProvider, code string) (domain.CodeSourceInstallURL, error)
-	CompleteInstallation(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string, installationID int64, setupAction string) (domain.CodeSourceApp, error)
-	DeleteInstallations(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string) error
-	GetAppManifest(ctx context.Context, provider domain.CodeSourceProvider) (domain.CodeSourceAppManifest, error)
-	GetInstallURL(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string) (domain.CodeSourceInstallURL, error)
-	ListCodeSources(ctx context.Context, ownerUnionID string) ([]domain.CodeSourceApp, error)
-	SearchRepositories(ctx context.Context, input domain.CodeSourceRepositorySearchInput) (domain.CodeSourceRepositorySearchResult, error)
+	CompleteAppManifest(ctx context.Context, code string) (domain.CodeSourceInstallURL, error)
+	CompleteInstallation(ctx context.Context, userID string, installationID int64, setupAction string) (domain.CodeSourceConnection, error)
+	GetAppManifest(ctx context.Context) (domain.CodeSourceAppManifest, error)
+	GetInstallURL(ctx context.Context) (domain.CodeSourceInstallURL, error)
+	ListCodeSources(ctx context.Context) ([]domain.CodeSourceApp, error)
+
+	CreateConnection(ctx context.Context, input domain.CodeSourceConnectionCreateInput) (domain.CodeSourceConnection, error)
+	DeleteConnection(ctx context.Context, id string) error
+	GetConnection(ctx context.Context, id string) (domain.CodeSourceConnection, error)
+	GetConnectionWebhook(ctx context.Context, id string) (domain.CodeSourceConnectionWebhook, error)
+	ListConnections(ctx context.Context, filters domain.CodeSourceConnectionFilters) ([]domain.CodeSourceConnection, error)
+	SearchRepositories(ctx context.Context, connectionID string, input domain.RepositorySearchInput) (domain.RepositoryPage, error)
+	UpdateConnection(ctx context.Context, id string, input domain.CodeSourceConnectionUpdateInput) (domain.CodeSourceConnection, error)
+	VerifyConnection(ctx context.Context, id string) (domain.CodeSourceConnection, error)
+}
+
+type WebhookService interface {
+	HandleWebhook(ctx context.Context, req domain.WebhookRequest) (domain.WebhookResult, error)
 }
 
 type ModuleService interface {
@@ -154,6 +168,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 		e.Use(logHTTPExchanges(logglobal.Logger("forge-server/internal/server/http")))
 	}
 	e.Use(middleware.Logger())
+	e.Use(swallowWrittenResponseErrors)
 
 	registerHealthRoutes(e, deps)
 	registerOpenAPIRoutes(e)
@@ -168,6 +183,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	})
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
 	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService)
+	registerWebhookRoutes(api, deps.WebhookService)
 
 	protectedAPI := api.Group("")
 	if deps.FeishuAuthService != nil {
@@ -177,11 +193,13 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerArtifactAccessTokenRoutes(protectedAPI, deps.ArtifactAccessTokenService, deps.AuthorizationService)
 	registerApplicationRoutes(protectedAPI, deps.ApplicationService, deps.AuthorizationService)
 	registerBuildRoutes(protectedAPI, deps.BuildService, deps.AuthorizationService)
+	registerBuildLogRoutes(protectedAPI, deps.BuildLogService)
 	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, deps.AuthorizationService, cfg.GitHub.InstallRedirectURL)
 	registerDashboardRoutes(protectedAPI, deps.DashboardService)
 	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService, deps.AuthorizationService)
 	registerFeishuContactRoutes(protectedAPI, deps.FeishuContactService, deps.FeishuAuthService)
 	registerModuleRoutes(protectedAPI, deps.ModuleService, deps.AuthorizationService)
+	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
 	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
 

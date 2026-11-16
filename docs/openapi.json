@@ -1060,12 +1060,20 @@
             "description": "File content type.",
             "type": "string"
           },
+          "digests": {
+            "additionalProperties": {
+              "description": "Hex digest.",
+              "type": "string"
+            },
+            "description": "File digests keyed by algorithm (sha256, md5), configured by FORGE_ARTIFACT_DIGESTS on the worker. Manifests generated before digests existed fall back to {sha256}.",
+            "type": "object"
+          },
           "path": {
-            "description": "Artifact file relative path.",
+            "description": "File path relative to the requested platform directory (platform prefix removed).",
             "type": "string"
           },
           "sha256": {
-            "description": "File SHA-256 digest.",
+            "description": "File SHA-256 digest. Kept for compatibility; prefer digests.",
             "type": "string"
           },
           "sizeBytes": {
@@ -1074,7 +1082,7 @@
             "type": "integer"
           },
           "url": {
-            "description": "Download URL. Uses public base URL when configured, otherwise the artifact download API.",
+            "description": "Download URL. Uses public base URL when configured, otherwise the artifact download API with platform and path.",
             "type": "string"
           }
         },
@@ -1083,7 +1091,8 @@
           "url",
           "contentType",
           "sizeBytes",
-          "sha256"
+          "sha256",
+          "digests"
         ],
         "type": "object"
       },
@@ -1093,8 +1102,16 @@
             "description": "Artifact object key root.",
             "type": "string"
           },
+          "branch": {
+            "description": "Branch of the matched build.",
+            "type": "string"
+          },
           "buildRecordId": {
             "description": "Matched build record UUID.",
+            "type": "string"
+          },
+          "commitSha": {
+            "description": "Commit SHA of the matched build.",
             "type": "string"
           },
           "files": {
@@ -1161,6 +1178,8 @@
           "releaseId",
           "releaseType",
           "buildRecordId",
+          "branch",
+          "commitSha",
           "artifactKey",
           "manifestKey",
           "files"
@@ -1190,11 +1209,26 @@
               "$ref": "#/components/schemas/ArtifactManifestModule"
             },
             "type": "array"
+          },
+          "platform": {
+            "description": "Requested platform.",
+            "enum": [
+              "android",
+              "ios",
+              "harmony"
+            ],
+            "type": "string"
+          },
+          "runtimeVersion": {
+            "description": "Requested runtimeVersion.",
+            "type": "string"
           }
         },
         "required": [
           "application",
           "environment",
+          "platform",
+          "runtimeVersion",
           "identifier",
           "modules",
           "missingModules"
@@ -1220,7 +1254,14 @@
             "type": "string"
           },
           "reason": {
-            "description": "Why this module is absent from the manifest modules list.",
+            "description": "Why this module is absent from the manifest modules list. no_release_for_runtime: no active route under the requested runtimeVersion; release not found: routes exist under the runtimeVersion but none matched; platform_unavailable: the matched build does not contain the requested platform.",
+            "enum": [
+              "no_release_for_runtime",
+              "release not found",
+              "platform_unavailable",
+              "build not found",
+              "build artifact not available"
+            ],
             "type": "string"
           }
         },
@@ -1308,6 +1349,43 @@
         ],
         "type": "object"
       },
+      "BuildLogChunk": {
+        "properties": {
+          "content": {
+            "description": "Redacted git and docker output.",
+            "type": "string"
+          },
+          "seq": {
+            "description": "Chunk sequence number, increasing within one build.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "content"
+        ],
+        "type": "object"
+      },
+      "BuildLogsResponse": {
+        "properties": {
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/BuildLogChunk"
+            },
+            "type": "array"
+          },
+          "finished": {
+            "description": "True when the build has finished and no more chunks remain after this page.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "chunks",
+          "finished"
+        ],
+        "type": "object"
+      },
       "BuildRecord": {
         "properties": {
           "applicationName": {
@@ -1329,10 +1407,27 @@
             "description": "Git branch selected for this build record.",
             "type": "string"
           },
+          "codeSourceConnectionId": {
+            "description": "Code source connection id of the module repository.",
+            "type": "string"
+          },
+          "commitSha": {
+            "description": "Commit built by this record. Webhook builds record the pushed commit; manual builds fill it after checkout.",
+            "type": "string"
+          },
           "createdAt": {
             "description": "Build record creation time.",
             "format": "date-time",
             "type": "string"
+          },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserSummary"
+              }
+            ],
+            "description": "Build creator. Manual builds record the console user; webhook builds record the code source connection creator. Null for historical builds or deleted users.",
+            "nullable": true
           },
           "defaultBranch": {
             "description": "Repository branch used by the worker when configured on the module.",
@@ -1376,6 +1471,13 @@
             "description": "Module display name.",
             "type": "string"
           },
+          "platforms": {
+            "description": "Platform directories produced by the build: android, ios, harmony.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "queuedAt": {
             "description": "Build queue time.",
             "format": "date-time",
@@ -1386,18 +1488,23 @@
             "type": "string"
           },
           "repositoryId": {
-            "description": "Provider repository id.",
-            "type": "string"
-          },
-          "repositoryInstallationId": {
-            "description": "Provider installation id.",
+            "description": "Provider repository id (external repository id).",
             "type": "string"
           },
           "repositoryProvider": {
             "description": "Repository provider.",
             "enum": [
-              "github"
+              "github",
+              "gitlab"
             ],
+            "type": "string"
+          },
+          "repositoryWebUrl": {
+            "description": "Repository web URL.",
+            "type": "string"
+          },
+          "runtimeVersion": {
+            "description": "runtimeVersion from forge.json. Empty until the build succeeds.",
             "type": "string"
           },
           "startedAt": {
@@ -1429,14 +1536,14 @@
             "type": "integer"
           },
           "triggerId": {
-            "description": "Trigger source id. Empty for manual builds.",
+            "description": "Trigger source id, such as the webhook delivery id. Empty for manual builds.",
             "type": "string"
           },
           "triggerType": {
             "description": "Build trigger type.",
             "enum": [
               "manual",
-              "pipeline"
+              "webhook"
             ],
             "type": "string"
           },
@@ -1462,12 +1569,16 @@
           "triggerType",
           "repositoryProvider",
           "repositoryId",
-          "repositoryInstallationId",
           "repositoryFullName",
+          "codeSourceConnectionId",
+          "commitSha",
+          "runtimeVersion",
+          "platforms",
           "storageConfigurationId",
           "storageConfigurationName",
           "queuedAt",
           "createdAt",
+          "createdBy",
           "updatedAt"
         ],
         "type": "object"
@@ -1479,23 +1590,11 @@
             "type": "string"
           },
           "environment": {
-            "description": "Environment code whose storage configuration receives artifacts.",
+            "description": "Environment code whose storage configuration receives artifacts. Console builds are always manual.",
             "type": "string"
           },
           "moduleId": {
             "description": "Module id to build.",
-            "type": "string"
-          },
-          "triggerId": {
-            "description": "Trigger source id. Required when triggerType is pipeline.",
-            "type": "string"
-          },
-          "triggerType": {
-            "description": "Build trigger type. Defaults to manual when omitted.",
-            "enum": [
-              "manual",
-              "pipeline"
-            ],
             "type": "string"
           }
         },
@@ -1575,6 +1674,99 @@
         ],
         "type": "object"
       },
+      "BuildVariable": {
+        "properties": {
+          "environmentCode": {
+            "description": "Environment code. Empty means the variable applies to all environments.",
+            "type": "string"
+          },
+          "isSecret": {
+            "description": "Secrets are passed to docker build via BuildKit --secret and never returned.",
+            "type": "boolean"
+          },
+          "key": {
+            "description": "Variable key, matching ^[A-Z][A-Z0-9_]{0,63}$.",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last update time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "updatedBy": {
+            "description": "Display name of the last updater.",
+            "type": "string"
+          },
+          "updatedByUserId": {
+            "description": "User id of the last updater.",
+            "type": "string"
+          },
+          "value": {
+            "description": "Plain value for normal variables; ****** for secrets.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "environmentCode",
+          "value",
+          "isSecret",
+          "updatedBy",
+          "updatedByUserId",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BuildVariableDetailResponse": {
+        "properties": {
+          "variable": {
+            "$ref": "#/components/schemas/BuildVariable"
+          }
+        },
+        "required": [
+          "variable"
+        ],
+        "type": "object"
+      },
+      "BuildVariableUpsertRequest": {
+        "properties": {
+          "environmentCode": {
+            "description": "Environment code. Empty means the variable applies to all environments.",
+            "type": "string"
+          },
+          "isSecret": {
+            "description": "Store as a secret build variable.",
+            "type": "boolean"
+          },
+          "key": {
+            "description": "Variable key, matching ^[A-Z][A-Z0-9_]{0,63}$. The FORGE_ prefix is reserved.",
+            "type": "string"
+          },
+          "value": {
+            "description": "Plain value. Required and non-empty for secrets.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
+      },
+      "BuildVariablesResponse": {
+        "properties": {
+          "variables": {
+            "items": {
+              "$ref": "#/components/schemas/BuildVariable"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "variables"
+        ],
+        "type": "object"
+      },
       "CodeSourceApp": {
         "properties": {
           "configurationStatus": {
@@ -1584,6 +1776,11 @@
               "notConfigured"
             ],
             "type": "string"
+          },
+          "connectionCount": {
+            "description": "Active installation connection count.",
+            "format": "int32",
+            "type": "integer"
           },
           "description": {
             "description": "Code source app description.",
@@ -1623,22 +1820,12 @@
         },
         "required": [
           "configurationStatus",
+          "connectionCount",
           "description",
           "id",
           "name",
           "provider",
           "status"
-        ],
-        "type": "object"
-      },
-      "CodeSourceAppDetailResponse": {
-        "properties": {
-          "app": {
-            "$ref": "#/components/schemas/CodeSourceApp"
-          }
-        },
-        "required": [
-          "app"
         ],
         "type": "object"
       },
@@ -1656,6 +1843,199 @@
         "required": [
           "actionUrl",
           "manifest"
+        ],
+        "type": "object"
+      },
+      "CodeSourceConnection": {
+        "properties": {
+          "apiBaseUrl": {
+            "description": "Provider API base URL.",
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Connection creation time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "description": "Creator display name.",
+            "type": "string"
+          },
+          "createdByUserId": {
+            "description": "Creator platform user id.",
+            "type": "string"
+          },
+          "credentialExpiresAt": {
+            "description": "Credential expiration time, or empty when unknown or never expires.",
+            "type": "string"
+          },
+          "credentialPreview": {
+            "description": "Masked credential preview. Credential itself is never returned.",
+            "type": "string"
+          },
+          "externalAccount": {
+            "description": "GitHub installation account or GitLab token user.",
+            "type": "string"
+          },
+          "externalId": {
+            "description": "Provider level id, such as GitHub installation id. Empty for GitLab.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Connection id.",
+            "type": "string"
+          },
+          "lastVerifiedAt": {
+            "description": "Last successful verification time, or empty.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Connection display name.",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Code source provider.",
+            "enum": [
+              "github",
+              "gitlab"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Connection status.",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Connection update time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "webBaseUrl": {
+            "description": "Provider web base URL, such as https://github.com or the GitLab instance URL.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "name",
+          "webBaseUrl",
+          "apiBaseUrl",
+          "status",
+          "createdByUserId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "CodeSourceConnectionCreateRequest": {
+        "properties": {
+          "apiBaseUrl": {
+            "description": "Provider API base URL. Defaults to webBaseUrl.",
+            "type": "string"
+          },
+          "credential": {
+            "description": "Access token, such as a GitLab group or project access token with read_api and read_repository scopes.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Connection display name.",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Code source provider. GitHub connections are created by the App installation callback.",
+            "enum": [
+              "github",
+              "gitlab"
+            ],
+            "type": "string"
+          },
+          "webBaseUrl": {
+            "description": "Provider web base URL, such as https://gitlab.example.com.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "name",
+          "webBaseUrl",
+          "credential"
+        ],
+        "type": "object"
+      },
+      "CodeSourceConnectionDetailResponse": {
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/CodeSourceConnection"
+          }
+        },
+        "required": [
+          "connection"
+        ],
+        "type": "object"
+      },
+      "CodeSourceConnectionUpdateRequest": {
+        "properties": {
+          "credential": {
+            "description": "New access token. The connection is re-verified when provided.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Connection display name.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Connection status.",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "CodeSourceConnectionWebhook": {
+        "properties": {
+          "path": {
+            "description": "Webhook path on forge-server, prefix it with the public API origin.",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Code source provider.",
+            "enum": [
+              "github",
+              "gitlab"
+            ],
+            "type": "string"
+          },
+          "secret": {
+            "description": "Webhook secret token. Empty when the provider receives webhooks at App level (GitHub).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "path",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "CodeSourceConnectionsResponse": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/CodeSourceConnection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "connections"
         ],
         "type": "object"
       },
@@ -1677,6 +2057,10 @@
             "description": "HTTPS clone URL.",
             "type": "string"
           },
+          "connectionId": {
+            "description": "Code source connection id.",
+            "type": "string"
+          },
           "defaultBranch": {
             "description": "Default branch name.",
             "type": "string"
@@ -1685,57 +2069,31 @@
             "description": "Repository description.",
             "type": "string"
           },
+          "externalRepositoryId": {
+            "description": "Provider repository id (GitHub repository id, GitLab project id).",
+            "type": "string"
+          },
           "fullName": {
-            "description": "Repository full name, owner/name.",
+            "description": "Repository full name, such as owner/name or group/subgroup/project.",
             "type": "string"
           },
-          "htmlUrl": {
-            "description": "Repository HTML URL.",
-            "type": "string"
-          },
-          "id": {
-            "description": "Provider repository id.",
-            "type": "string"
-          },
-          "installationId": {
-            "description": "Provider installation id that currently grants repository access.",
-            "type": "string"
-          },
-          "name": {
-            "description": "Repository name.",
-            "type": "string"
-          },
-          "owner": {
-            "description": "Repository owner.",
+          "lastSyncedAt": {
+            "description": "Repository cache sync time.",
+            "format": "date-time",
             "type": "string"
           },
           "private": {
             "description": "Whether repository is private.",
             "type": "boolean"
           },
-          "provider": {
-            "description": "Code source provider.",
-            "enum": [
-              "github"
-            ],
-            "type": "string"
-          },
-          "sshUrl": {
-            "description": "SSH clone URL.",
-            "type": "string"
-          },
-          "updatedAt": {
-            "description": "Repository update time.",
-            "format": "date-time",
+          "webUrl": {
+            "description": "Repository web URL.",
             "type": "string"
           }
         },
         "required": [
-          "id",
-          "installationId",
-          "provider",
-          "owner",
-          "name",
+          "connectionId",
+          "externalRepositoryId",
           "fullName",
           "private"
         ],
@@ -1743,6 +2101,20 @@
       },
       "CodeSourceRepositorySearchResponse": {
         "properties": {
+          "hasMore": {
+            "description": "Whether more repositories are available.",
+            "type": "boolean"
+          },
+          "page": {
+            "description": "Effective page number.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "pageSize": {
+            "description": "Effective page size.",
+            "format": "int32",
+            "type": "integer"
+          },
           "repositories": {
             "items": {
               "$ref": "#/components/schemas/CodeSourceRepository"
@@ -1751,7 +2123,10 @@
           }
         },
         "required": [
-          "repositories"
+          "repositories",
+          "hasMore",
+          "page",
+          "pageSize"
         ],
         "type": "object"
       },
@@ -2594,6 +2969,17 @@
             "description": "Linked application slug.",
             "type": "string"
           },
+          "buildConfig": {
+            "$ref": "#/components/schemas/ModuleBuildConfig"
+          },
+          "codeSourceConnectionId": {
+            "description": "Code source connection id.",
+            "type": "string"
+          },
+          "codeSourceConnectionName": {
+            "description": "Code source connection display name.",
+            "type": "string"
+          },
           "commonModuleId": {
             "description": "Common module id for feature modules.",
             "type": "string"
@@ -2655,27 +3041,20 @@
             "description": "Repository full name.",
             "type": "string"
           },
-          "repositoryHtmlUrl": {
-            "description": "Repository HTML URL.",
-            "type": "string"
-          },
           "repositoryId": {
-            "description": "Provider repository id.",
-            "type": "string"
-          },
-          "repositoryInstallationId": {
-            "description": "Provider installation id that currently grants repository access.",
+            "description": "Provider repository id (external repository id).",
             "type": "string"
           },
           "repositoryProvider": {
-            "description": "Repository provider.",
+            "description": "Repository provider, decided by the connection.",
             "enum": [
-              "github"
+              "github",
+              "gitlab"
             ],
             "type": "string"
           },
-          "repositorySshUrl": {
-            "description": "Repository SSH clone URL.",
+          "repositoryWebUrl": {
+            "description": "Repository web URL.",
             "type": "string"
           },
           "updatedAt": {
@@ -2692,11 +3071,46 @@
           "applicationName",
           "ownerUserId",
           "owner",
+          "codeSourceConnectionId",
           "repositoryProvider",
           "repositoryId",
           "repositoryFullName",
-          "repository"
+          "repository",
+          "buildConfig"
         ],
+        "type": "object"
+      },
+      "ModuleBuildConfig": {
+        "properties": {
+          "autoBuildBranches": {
+            "description": "Branch globs that trigger builds on push. Empty disables automatic builds.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "autoBuildEnvironment": {
+            "description": "Environment code for automatic builds. Required when autoBuildBranches is not empty.",
+            "type": "string"
+          },
+          "autoPreviewRelease": {
+            "description": "Create a targeted release named after the branch when an automatic build succeeds.",
+            "type": "boolean"
+          },
+          "autoPreviewTtlHours": {
+            "description": "Preview release lifetime in hours, 1-8760, default 168.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "buildContext": {
+            "description": "Docker build context relative to the repository root, default \".\".",
+            "type": "string"
+          },
+          "dockerfilePath": {
+            "description": "Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE.",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ModuleCreateRequest": {
@@ -2704,6 +3118,9 @@
           "applicationId": {
             "description": "Linked application id.",
             "type": "string"
+          },
+          "buildConfig": {
+            "$ref": "#/components/schemas/ModuleBuildConfig"
           },
           "commonModuleId": {
             "description": "Required for Feature modules. Must point to a Common module of the same application.",
@@ -2788,47 +3205,18 @@
       },
       "ModuleRepositoryRequest": {
         "properties": {
-          "cloneUrl": {
-            "description": "Repository HTTPS clone URL.",
+          "connectionId": {
+            "description": "Code source connection id.",
             "type": "string"
           },
-          "defaultBranch": {
-            "description": "Repository default branch.",
-            "type": "string"
-          },
-          "fullName": {
-            "description": "Repository full name.",
-            "type": "string"
-          },
-          "htmlUrl": {
-            "description": "Repository HTML URL.",
-            "type": "string"
-          },
-          "id": {
-            "description": "Provider repository id.",
-            "type": "string"
-          },
-          "installationId": {
-            "description": "Provider installation id that currently grants repository access.",
-            "type": "string"
-          },
-          "provider": {
-            "description": "Code source provider.",
-            "enum": [
-              "github"
-            ],
-            "type": "string"
-          },
-          "sshUrl": {
-            "description": "Repository SSH clone URL.",
+          "externalRepositoryId": {
+            "description": "Repository id returned by the connection repository search. Repository name and URLs are taken from the server side repository cache.",
             "type": "string"
           }
         },
         "required": [
-          "provider",
-          "id",
-          "installationId",
-          "fullName"
+          "connectionId",
+          "externalRepositoryId"
         ],
         "type": "object"
       },
@@ -2862,6 +3250,9 @@
           "applicationId": {
             "description": "Linked application id.",
             "type": "string"
+          },
+          "buildConfig": {
+            "$ref": "#/components/schemas/ModuleBuildConfig"
           },
           "commonModuleId": {
             "description": "Required for Feature modules. Must point to a Common module of the same application.",
@@ -3177,6 +3568,10 @@
             ],
             "type": "string"
           },
+          "runtimeVersion": {
+            "description": "runtimeVersion of the release route. A release only replaces releases of the same runtimeVersion.",
+            "type": "string"
+          },
           "status": {
             "description": "Release status.",
             "enum": [
@@ -3199,6 +3594,7 @@
           "environmentName",
           "buildRecordId",
           "releaseType",
+          "runtimeVersion",
           "status",
           "artifactKey",
           "createdByUserId",
@@ -3325,6 +3721,10 @@
             ],
             "type": "string"
           },
+          "runtimeVersion": {
+            "description": "runtimeVersion copied from the build record. Routes are isolated per runtimeVersion.",
+            "type": "string"
+          },
           "status": {
             "description": "Release route status.",
             "enum": [
@@ -3347,6 +3747,7 @@
           "environmentName",
           "releaseId",
           "buildRecordId",
+          "runtimeVersion",
           "routeType",
           "status",
           "artifactKey",
@@ -3766,6 +4167,28 @@
         "required": [
           "configurations",
           "pagination"
+        ],
+        "type": "object"
+      },
+      "UserSummary": {
+        "properties": {
+          "avatarUrl": {
+            "description": "Avatar URL. Empty when the user has no avatar.",
+            "type": "string"
+          },
+          "id": {
+            "description": "User id.",
+            "type": "string"
+          },
+          "name": {
+            "description": "User name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "avatarUrl"
         ],
         "type": "object"
       }
@@ -4991,6 +5414,31 @@
             }
           },
           {
+            "description": "Client platform. Only files under the {platform}/ directory are returned, with the platform prefix removed.",
+            "in": "query",
+            "name": "platform",
+            "required": true,
+            "schema": {
+              "description": "Client platform.",
+              "enum": [
+                "android",
+                "ios",
+                "harmony"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client runtimeVersion. Only routes with exactly this runtimeVersion are matched. 1-64 characters of [A-Za-z0-9._-].",
+            "in": "query",
+            "name": "runtimeVersion",
+            "required": true,
+            "schema": {
+              "description": "Client runtimeVersion.",
+              "type": "string"
+            }
+          },
+          {
             "description": "Optional targeting identifier. Targeted gray wins when present, percentage gray may use userId, otherwise default release is used.",
             "in": "query",
             "name": "identifier",
@@ -5028,7 +5476,7 @@
                 }
               }
             },
-            "description": "Invalid artifact manifest request."
+            "description": "Invalid artifact manifest request, including missing or invalid platform or runtimeVersion."
           },
           "401": {
             "content": {
@@ -5117,7 +5565,21 @@
             }
           },
           {
-            "description": "Artifact file relative path from the build artifact manifest.",
+            "description": "Optional platform. When present, path is relative to the platform directory, as returned by the application manifest.",
+            "in": "query",
+            "name": "platform",
+            "schema": {
+              "description": "Artifact platform.",
+              "enum": [
+                "android",
+                "ios",
+                "harmony"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Artifact file relative path. Relative to the artifact root, or to the platform directory when platform is present.",
             "in": "query",
             "name": "path",
             "required": true,
@@ -5459,7 +5921,7 @@
               "description": "Build trigger type filter.",
               "enum": [
                 "manual",
-                "pipeline"
+                "webhook"
               ],
               "type": "string"
             }
@@ -5646,6 +6108,965 @@
         ]
       }
     },
+    "/api/v1/builds/{id}/logs": {
+      "get": {
+        "operationId": "listBuildLogs",
+        "parameters": [
+          {
+            "description": "Build record UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Build record UUID.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return chunks with seq greater than this value. Omit to read from the beginning.",
+            "in": "query",
+            "name": "afterSeq",
+            "schema": {
+              "description": "Last seq the client already has.",
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildLogsResponse"
+                }
+              }
+            },
+            "description": "Build log chunks after afterSeq."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid afterSeq."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Build record not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List build log chunks",
+        "tags": [
+          "Builds"
+        ]
+      }
+    },
+    "/api/v1/code-source-connections": {
+      "get": {
+        "operationId": "listCodeSourceConnections",
+        "parameters": [
+          {
+            "description": "Code source provider filter.",
+            "in": "query",
+            "name": "provider",
+            "schema": {
+              "description": "Code source provider.",
+              "enum": [
+                "github",
+                "gitlab"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connection status filter.",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "Connection status.",
+              "enum": [
+                "active",
+                "disabled"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceConnectionsResponse"
+                }
+              }
+            },
+            "description": "Code source connection list. Deleted connections are excluded."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "List code source connections",
+        "tags": [
+          "CodeSources"
+        ]
+      },
+      "post": {
+        "operationId": "createCodeSourceConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeSourceConnectionCreateRequest"
+              }
+            }
+          },
+          "description": "Code source connection create payload.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceConnectionDetailResponse"
+                }
+              }
+            },
+            "description": "Connection verified and created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Connection already exists."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Create a token based code source connection (GitLab)",
+        "tags": [
+          "CodeSources"
+        ]
+      }
+    },
+    "/api/v1/code-source-connections/{id}": {
+      "delete": {
+        "operationId": "deleteCodeSourceConnection",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Connection was deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Connection is referenced by modules."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Delete code source connection",
+        "tags": [
+          "CodeSources"
+        ]
+      },
+      "get": {
+        "operationId": "getCodeSourceConnection",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceConnectionDetailResponse"
+                }
+              }
+            },
+            "description": "Code source connection detail."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Get code source connection",
+        "tags": [
+          "CodeSources"
+        ]
+      },
+      "patch": {
+        "operationId": "updateCodeSourceConnection",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeSourceConnectionUpdateRequest"
+              }
+            }
+          },
+          "description": "Code source connection update payload. Omitted fields are unchanged.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceConnectionDetailResponse"
+                }
+              }
+            },
+            "description": "Code source connection updated."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Update code source connection name, credential or status",
+        "tags": [
+          "CodeSources"
+        ]
+      }
+    },
+    "/api/v1/code-source-connections/{id}/repositories": {
+      "get": {
+        "operationId": "searchCodeSourceRepositories",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository search keyword.",
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "description": "Repository search keyword.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page number, min 1, default 1.",
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "description": "Page number.",
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Result size, min 1, max 100, default 20.",
+            "in": "query",
+            "name": "pageSize",
+            "schema": {
+              "description": "Page size.",
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceRepositorySearchResponse"
+                }
+              }
+            },
+            "description": "Repository search result."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Search repositories accessible by a connection and refresh the repository cache",
+        "tags": [
+          "CodeSources"
+        ]
+      }
+    },
+    "/api/v1/code-source-connections/{id}/verify": {
+      "post": {
+        "operationId": "verifyCodeSourceConnection",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceConnectionDetailResponse"
+                }
+              }
+            },
+            "description": "Connection verified."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Verify code source connection credential",
+        "tags": [
+          "CodeSources"
+        ]
+      }
+    },
+    "/api/v1/code-source-connections/{id}/webhook": {
+      "get": {
+        "operationId": "getCodeSourceConnectionWebhook",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeSourceConnectionWebhook"
+                }
+              }
+            },
+            "description": "Webhook path and secret."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection, repository or installation not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source auth is not configured."
+          }
+        },
+        "summary": "Get webhook configuration of a connection",
+        "tags": [
+          "CodeSources"
+        ]
+      }
+    },
     "/api/v1/code-sources": {
       "get": {
         "operationId": "listCodeSources",
@@ -5681,30 +7102,15 @@
             "description": "Server error."
           }
         },
-        "summary": "List code source apps",
+        "summary": "List code source apps (GitHub App status)",
         "tags": [
           "CodeSources"
         ]
       }
     },
-    "/api/v1/code-sources/{provider}/install-url": {
+    "/api/v1/code-sources/github/install-url": {
       "get": {
         "operationId": "getCodeSourceInstallURL",
-        "parameters": [
-          {
-            "description": "Code source provider.",
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "description": "Code source provider.",
-              "enum": [
-                "github"
-              ],
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -5714,7 +7120,17 @@
                 }
               }
             },
-            "description": "Code source installation URL."
+            "description": "GitHub App installation URL."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
           },
           "401": {
             "content": {
@@ -5734,7 +7150,7 @@
                 }
               }
             },
-            "description": "Current user cannot manage code sources."
+            "description": "Current user cannot manage or use code source connections."
           },
           "404": {
             "content": {
@@ -5744,7 +7160,7 @@
                 }
               }
             },
-            "description": "Code source provider not found."
+            "description": "Code source connection, repository or installation not found."
           },
           "500": {
             "content": {
@@ -5777,29 +7193,16 @@
             "description": "Code source auth is not configured."
           }
         },
-        "summary": "Get code source app installation URL",
+        "summary": "Get GitHub App installation URL",
         "tags": [
           "CodeSources"
         ]
       }
     },
-    "/api/v1/code-sources/{provider}/install/callback": {
+    "/api/v1/code-sources/github/install/callback": {
       "get": {
         "operationId": "completeCodeSourceInstallation",
         "parameters": [
-          {
-            "description": "Code source provider.",
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "description": "Code source provider.",
-              "enum": [
-                "github"
-              ],
-              "type": "string"
-            }
-          },
           {
             "description": "GitHub App installation id returned by setup URL.",
             "in": "query",
@@ -5838,7 +7241,7 @@
             "content": {
               "application/json": {}
             },
-            "description": "Code source app installation completed and redirects to console."
+            "description": "Installation connection saved and redirects to console."
           },
           "400": {
             "content": {
@@ -5848,7 +7251,7 @@
                 }
               }
             },
-            "description": "Invalid code source callback."
+            "description": "Invalid code source request or credential."
           },
           "401": {
             "content": {
@@ -5868,7 +7271,7 @@
                 }
               }
             },
-            "description": "Current user cannot manage code sources."
+            "description": "Current user cannot manage or use code source connections."
           },
           "404": {
             "content": {
@@ -5878,7 +7281,7 @@
                 }
               }
             },
-            "description": "Code source provider or installation not found."
+            "description": "Code source connection, repository or installation not found."
           },
           "500": {
             "content": {
@@ -5911,119 +7314,15 @@
             "description": "Code source auth is not configured."
           }
         },
-        "summary": "Complete code source app installation callback",
+        "summary": "Complete GitHub App installation callback and upsert the installation connection",
         "tags": [
           "CodeSources"
         ]
       }
     },
-    "/api/v1/code-sources/{provider}/installations": {
-      "delete": {
-        "operationId": "deleteCodeSourceInstallations",
-        "parameters": [
-          {
-            "description": "Code source provider.",
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "description": "Code source provider.",
-              "enum": [
-                "github"
-              ],
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Current user's code source app authorizations and repository cache were deleted."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Current user cannot manage code sources."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source provider or installation not found."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Server error."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source provider request failed."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source auth is not configured."
-          }
-        },
-        "summary": "Delete current user's code source app authorizations and repository cache",
-        "tags": [
-          "CodeSources"
-        ]
-      }
-    },
-    "/api/v1/code-sources/{provider}/manifest": {
+    "/api/v1/code-sources/github/manifest": {
       "get": {
         "operationId": "getCodeSourceAppManifest",
-        "parameters": [
-          {
-            "description": "Code source provider.",
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "description": "Code source provider.",
-              "enum": [
-                "github"
-              ],
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -6033,7 +7332,17 @@
                 }
               }
             },
-            "description": "Code source app manifest creation payload."
+            "description": "GitHub App manifest creation payload."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid code source request or credential."
           },
           "401": {
             "content": {
@@ -6045,6 +7354,16 @@
             },
             "description": "Authentication is required."
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage or use code source connections."
+          },
           "404": {
             "content": {
               "application/json": {
@@ -6053,7 +7372,7 @@
                 }
               }
             },
-            "description": "Code source provider not found."
+            "description": "Code source connection, repository or installation not found."
           },
           "500": {
             "content": {
@@ -6086,29 +7405,16 @@
             "description": "Code source auth is not configured."
           }
         },
-        "summary": "Get code source app manifest creation payload",
+        "summary": "Get GitHub App manifest creation payload",
         "tags": [
           "CodeSources"
         ]
       }
     },
-    "/api/v1/code-sources/{provider}/manifest/callback": {
+    "/api/v1/code-sources/github/manifest/callback": {
       "get": {
         "operationId": "completeCodeSourceAppManifest",
         "parameters": [
-          {
-            "description": "Code source provider.",
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "description": "Code source provider.",
-              "enum": [
-                "github"
-              ],
-              "type": "string"
-            }
-          },
           {
             "description": "Temporary GitHub App manifest code returned by GitHub.",
             "in": "query",
@@ -6136,16 +7442,6 @@
             },
             "description": "Invalid code source manifest callback."
           },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source provider not found."
-          },
           "500": {
             "content": {
               "application/json": {
@@ -6177,122 +7473,7 @@
             "description": "Code source auth is not configured."
           }
         },
-        "summary": "Complete code source app manifest callback",
-        "tags": [
-          "CodeSources"
-        ]
-      }
-    },
-    "/api/v1/code-sources/{provider}/repositories/search": {
-      "get": {
-        "operationId": "searchCodeSourceRepositories",
-        "parameters": [
-          {
-            "description": "Code source provider.",
-            "in": "path",
-            "name": "provider",
-            "required": true,
-            "schema": {
-              "description": "Code source provider.",
-              "enum": [
-                "github"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "description": "Repository search keyword. Matches owner, name, full name or description.",
-            "in": "query",
-            "name": "query",
-            "schema": {
-              "description": "Repository search keyword.",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Result size, min 1, max 100, default 20.",
-            "in": "query",
-            "name": "pageSize",
-            "schema": {
-              "description": "Page size.",
-              "format": "int32",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CodeSourceRepositorySearchResponse"
-                }
-              }
-            },
-            "description": "Authorized repository search result."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Invalid repository search request."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication is required."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source provider or installation not found."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Server error."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source provider request failed."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Code source auth is not configured."
-          }
-        },
-        "summary": "Search authorized code source repositories",
+        "summary": "Complete GitHub App manifest callback",
         "tags": [
           "CodeSources"
         ]
@@ -7079,6 +8260,234 @@
         ]
       }
     },
+    "/api/v1/modules/{id}/build-variables": {
+      "delete": {
+        "operationId": "deleteModuleBuildVariable",
+        "parameters": [
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Build variable key.",
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "description": "Build variable key.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Environment code. Omit or leave empty for the variable shared by all environments.",
+            "in": "query",
+            "name": "environmentCode",
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Build variable deleted."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid build variable request."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this module."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module or build variable not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Delete a module build variable",
+        "tags": [
+          "Modules"
+        ]
+      },
+      "get": {
+        "operationId": "listModuleBuildVariables",
+        "parameters": [
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildVariablesResponse"
+                }
+              }
+            },
+            "description": "Module build variables. Secret values are masked as ******."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this module."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List module build variables",
+        "tags": [
+          "Modules"
+        ]
+      },
+      "put": {
+        "operationId": "upsertModuleBuildVariable",
+        "parameters": [
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildVariableUpsertRequest"
+              }
+            }
+          },
+          "description": "Build variable payload. Upserts by key and environmentCode.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildVariableDetailResponse"
+                }
+              }
+            },
+            "description": "Build variable saved. Secret values are masked as ******."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid build variable request."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this module."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module or environment not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Create or update a module build variable",
+        "tags": [
+          "Modules"
+        ]
+      }
+    },
     "/api/v1/ping": {
       "get": {
         "operationId": "ping",
@@ -7317,6 +8726,15 @@
             "required": true,
             "schema": {
               "description": "Environment code.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional runtimeVersion. When present only routes of this runtimeVersion are resolved, otherwise the newest matching route of any runtimeVersion wins.",
+            "in": "query",
+            "name": "runtimeVersion",
+            "schema": {
+              "description": "Route runtimeVersion.",
               "type": "string"
             }
           },
@@ -7945,6 +9363,252 @@
         ]
       }
     },
+    "/api/v1/webhooks/github": {
+      "post": {
+        "description": "Shared by all GitHub App installations. Verified with X-Hub-Signature-256 (HMAC-SHA256 of the App webhook secret); only push events are processed.",
+        "operationId": "receiveGitHubWebhook",
+        "parameters": [
+          {
+            "description": "Provider webhook header X-Hub-Signature-256.",
+            "in": "header",
+            "name": "X-Hub-Signature-256",
+            "schema": {
+              "description": "X-Hub-Signature-256",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Provider webhook header X-GitHub-Event.",
+            "in": "header",
+            "name": "X-GitHub-Event",
+            "schema": {
+              "description": "X-GitHub-Event",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Provider webhook header X-GitHub-Delivery.",
+            "in": "header",
+            "name": "X-GitHub-Delivery",
+            "schema": {
+              "description": "X-GitHub-Delivery",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "description": "Raw GitHub webhook payload.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Push event matched at least one module auto build rule. Builds were created, or skipped because the same commit already has a pending, running or succeeded build."
+          },
+          "204": {
+            "description": "Event ignored (not a branch push, branch deleted, tag push, connection disabled, or no module auto build rule matched)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid webhook payload."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Webhook signature or secret is invalid."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection not found."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Webhook payload too large."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Webhook secret is not configured."
+          }
+        },
+        "summary": "Receive GitHub App webhook",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/gitlab/{connectionId}": {
+      "post": {
+        "description": "Configured per GitLab project. Verified with X-Gitlab-Token against the connection webhook secret; only Push Hook branch pushes are processed.",
+        "operationId": "receiveGitLabWebhook",
+        "parameters": [
+          {
+            "description": "Code source connection id.",
+            "in": "path",
+            "name": "connectionId",
+            "required": true,
+            "schema": {
+              "description": "Code source connection id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Provider webhook header X-Gitlab-Token.",
+            "in": "header",
+            "name": "X-Gitlab-Token",
+            "schema": {
+              "description": "X-Gitlab-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Provider webhook header X-Gitlab-Event.",
+            "in": "header",
+            "name": "X-Gitlab-Event",
+            "schema": {
+              "description": "X-Gitlab-Event",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Provider webhook header X-Gitlab-Event-UUID.",
+            "in": "header",
+            "name": "X-Gitlab-Event-UUID",
+            "schema": {
+              "description": "X-Gitlab-Event-UUID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "description": "Raw GitLab webhook payload.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Push event matched at least one module auto build rule. Builds were created, or skipped because the same commit already has a pending, running or succeeded build."
+          },
+          "204": {
+            "description": "Event ignored (not a branch push, branch deleted, tag push, connection disabled, or no module auto build rule matched)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid webhook payload."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Webhook signature or secret is invalid."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection not found."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Webhook payload too large."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Webhook secret is not configured."
+          }
+        },
+        "summary": "Receive GitLab project webhook",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
     "/healthz": {
       "get": {
         "operationId": "getHealth",
@@ -8042,8 +9706,12 @@
       "name": "Releases"
     },
     {
-      "description": "Code source provider installation and repository discovery.",
+      "description": "Code source connections (GitHub App installations, GitLab access tokens) and repository discovery.",
       "name": "CodeSources"
+    },
+    {
+      "description": "Code source provider webhook receivers. No console session; verified by each provider.",
+      "name": "Webhooks"
     },
     {
       "description": "S3-compatible storage configuration management.",

@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"forge-server/internal/config"
-	"forge-server/internal/domain"
 	feishuinfra "forge-server/internal/infra/feishu"
 	githubinfra "forge-server/internal/infra/github"
+	gitlabinfra "forge-server/internal/infra/gitlab"
 	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
 	redisinfra "forge-server/internal/infra/redis"
 	s3infra "forge-server/internal/infra/s3"
+	"forge-server/internal/infra/secretbox"
 	httpserver "forge-server/internal/server/http"
 	"forge-server/internal/service"
 
@@ -28,13 +29,17 @@ type App struct {
 	cfg            config.Config
 	logger         *slog.Logger
 	releaseService *service.ReleaseService
-	server         *echo.Echo
-	postgres       *pgxpool.Pool
-	redis          *redis.Client
-	otel           otelinfra.ShutdownFunc
+	// buildLogService 用于后台巡检清理过期的构建日志。
+	buildLogService *service.BuildLogService
+	server          *echo.Echo
+	postgres        *pgxpool.Pool
+	redis           *redis.Client
+	otel            otelinfra.ShutdownFunc
 }
 
 const releaseExpirationInterval = time.Minute
+
+const buildLogCleanupInterval = time.Hour
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
 	otelShutdown, err := otelinfra.NewTracerProvider(ctx, cfg.Telemetry)
@@ -71,14 +76,29 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	authorizationRepository := postgres.NewAuthorizationRepository(postgresPool)
 	authorizationService := service.NewAuthorizationService(authorizationRepository)
 	codeSourceRepository := postgres.NewCodeSourceRepository(postgresPool)
-	githubClient := githubinfra.NewClient(cfg.GitHub, cfg.Telemetry.Enabled)
-	codeSourceService := service.NewCodeSourceService(codeSourceRepository, githubClient, domainCodeSourceAppConfig(cfg.GitHub))
-	moduleRepository := postgres.NewModuleRepository(postgresPool)
-	moduleService := service.NewModuleService(moduleRepository)
 	buildRepository := postgres.NewBuildRepository(postgresPool)
+	buildTriggerService := newBuildTriggerService(postgresPool, buildRepository, logger)
+	codeSourceService, err := newCodeSourceService(cfg, codeSourceRepository, buildTriggerService)
+	if err != nil {
+		_ = redisClient.Close()
+		postgresPool.Close()
+		cleanupOTel()
+		return nil, err
+	}
+	buildVariableSecrets, err := secretbox.New(cfg.Security.SecretKey)
+	if err != nil {
+		_ = redisClient.Close()
+		postgresPool.Close()
+		cleanupOTel()
+		return nil, fmt.Errorf("initialize secretbox: %w", err)
+	}
+	buildVariableService := service.NewBuildVariableService(postgres.NewBuildVariableRepository(postgresPool), buildVariableSecrets)
+	buildLogService := service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool))
+	moduleRepository := postgres.NewModuleRepository(postgresPool)
+	moduleService := service.NewModuleService(moduleRepository, codeSourceRepository, cfg.Worker.Dockerfile)
 	artifactManifestReader := s3infra.NewManifestReader()
 	artifactObjectReader := s3infra.NewObjectReader()
-	buildService := service.NewBuildServiceWithManifestReader(buildRepository, artifactManifestReader)
+	buildService := service.NewBuildServiceWithManifestReader(buildRepository, artifactManifestReader).WithSucceededHook(buildTriggerService)
 	artifactRepository := postgres.NewArtifactRepository(postgresPool)
 	artifactService := service.NewArtifactService(artifactRepository, buildRepository, artifactManifestReader, artifactObjectReader)
 	artifactAccessTokenRepository := postgres.NewArtifactAccessTokenRepository(postgresPool)
@@ -108,8 +128,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ArtifactAccessTokenService: artifactAccessTokenService,
 		AuthorizationService:       authorizationService,
 		BuildService:               buildService,
+		BuildLogService:            buildLogService,
+		BuildVariableService:       buildVariableService,
 		DashboardService:           dashboardService,
 		CodeSourceService:          codeSourceService,
+		WebhookService:             codeSourceService,
 		EnvironmentService:         environmentService,
 		FeishuAuthService:          feishuAuthService,
 		FeishuContactService:       feishuContactService,
@@ -121,23 +144,45 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 
 	return &App{
-		cfg:            cfg,
-		logger:         logger,
-		releaseService: releaseService,
-		server:         server,
-		postgres:       postgresPool,
-		redis:          redisClient,
-		otel:           otelShutdown,
+		cfg:             cfg,
+		logger:          logger,
+		releaseService:  releaseService,
+		buildLogService: buildLogService,
+		server:          server,
+		postgres:        postgresPool,
+		redis:           redisClient,
+		otel:            otelShutdown,
 	}, nil
 }
 
-func domainCodeSourceAppConfig(cfg config.GitHubConfig) domain.CodeSourceAppConfig {
-	return domain.CodeSourceAppConfig{
-		AppID:      cfg.AppID,
-		AppSlug:    cfg.AppSlug,
-		PrivateKey: cfg.PrivateKey,
-		Provider:   domain.CodeSourceProviderGitHub,
+// newCodeSourceService 装配代码源 provider 注册表与 secretbox，API 与 worker 共用同一套实现。
+func newCodeSourceService(cfg config.Config, store *postgres.CodeSourceRepository, pushHandler service.PushEventHandler) (*service.CodeSourceService, error) {
+	secrets, err := secretbox.New(cfg.Security.SecretKey)
+	if err != nil {
+		return nil, fmt.Errorf("initialize secretbox: %w", err)
 	}
+	githubProvider := githubinfra.NewProvider(githubinfra.NewClient(cfg.GitHub, cfg.Telemetry.Enabled), store)
+	return service.NewCodeSourceService(service.CodeSourceServiceDependencies{
+		GitHubApp:   githubProvider,
+		PushHandler: pushHandler,
+		Registry: service.NewCodeSourceProviderRegistry(
+			githubProvider,
+			gitlabinfra.NewProvider(cfg.Telemetry.Enabled),
+		),
+		Secrets: secrets,
+		Store:   store,
+	}), nil
+}
+
+// newBuildTriggerService 装配 push 自动构建与预览通道发布，API 与 worker 共用。
+// API 进程用它处理 webhook，worker 进程用它作为构建成功回调创建预览发布。
+func newBuildTriggerService(pool *pgxpool.Pool, buildRepository *postgres.BuildRepository, logger *slog.Logger) *service.BuildTriggerService {
+	return service.NewBuildTriggerService(service.BuildTriggerServiceDependencies{
+		Builds:   buildRepository,
+		Logger:   logger,
+		Modules:  postgres.NewModuleRepository(pool),
+		Releases: service.NewReleaseService(postgres.NewReleaseRepository(pool)),
+	})
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -145,6 +190,9 @@ func (a *App) Run(ctx context.Context) error {
 
 	if a.releaseService != nil {
 		go a.runReleaseExpirationLoop(ctx)
+	}
+	if a.buildLogService != nil {
+		go a.runBuildLogCleanupLoop(ctx)
 	}
 
 	go func() {
@@ -190,6 +238,37 @@ func (a *App) expireTargetedGrayReleases(ctx context.Context) {
 	}
 	if expired > 0 {
 		a.logger.Info("targeted gray releases expired", "count", expired)
+	}
+}
+
+// runBuildLogCleanupLoop 按 FORGE_BUILD_LOG_RETENTION 定期删除过期的构建日志分片。
+func (a *App) runBuildLogCleanupLoop(ctx context.Context) {
+	a.cleanupExpiredBuildLogs(ctx)
+
+	ticker := time.NewTicker(buildLogCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.cleanupExpiredBuildLogs(ctx)
+		}
+	}
+}
+
+func (a *App) cleanupExpiredBuildLogs(ctx context.Context) {
+	cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	deleted, err := a.buildLogService.DeleteExpiredBuildLogs(cleanupCtx, a.cfg.Worker.LogRetention)
+	if err != nil {
+		a.logger.Error("delete expired build logs failed", "error", err)
+		return
+	}
+	if deleted > 0 {
+		a.logger.Info("expired build logs deleted", "chunks", deleted)
 	}
 }
 

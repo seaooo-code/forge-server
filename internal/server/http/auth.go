@@ -13,11 +13,32 @@ import (
 
 const consoleSessionContextKey = "forge_console_session_context"
 
+// errResponseWritten 表示鉴权辅助函数已经写出错误响应，调用方必须立即返回、不能继续执行业务逻辑。
+// c.JSON 写出响应后返回 nil，如果直接把它当作错误返回值，调用方会误以为鉴权通过。
+var errResponseWritten = errors.New("error response already written")
+
+func writeErrorResponse(c echo.Context, status int, message string) error {
+	if err := c.JSON(status, map[string]string{"error": message}); err != nil {
+		return err
+	}
+	return errResponseWritten
+}
+
+// swallowWrittenResponseErrors 让已写出响应的 errResponseWritten 不再进入 Echo 的错误处理与日志。
+func swallowWrittenResponseErrors(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if err := next(c); !errors.Is(err, errResponseWritten) {
+			return err
+		}
+		return nil
+	}
+}
+
 func requireConsoleSession(service FeishuAuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if service == nil {
-				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
+				return writeErrorResponse(c, http.StatusServiceUnavailable, "feishu auth unavailable")
 			}
 
 			session, err := resolveConsoleSession(c, service)
@@ -66,12 +87,14 @@ func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAcces
 				}
 			}
 			if service != nil {
-				if session, err := resolveConsoleSession(c, service); err == nil {
-					c.Set(consoleSessionContextKey, session)
-					return next(c)
+				session, err := resolveConsoleSession(c, service)
+				if err != nil {
+					return err
 				}
+				c.Set(consoleSessionContextKey, session)
+				return next(c)
 			}
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 		}
 	}
 }
@@ -79,7 +102,7 @@ func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAcces
 func resolveConsoleSession(c echo.Context, service FeishuAuthService) (domain.FeishuAuthResult, error) {
 	sessionToken, ok := feishuSessionToken(c)
 	if !ok {
-		return domain.FeishuAuthResult{}, c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return domain.FeishuAuthResult{}, writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 	}
 
 	session, err := service.GetSession(c.Request().Context(), sessionToken)
@@ -97,21 +120,21 @@ func consoleSession(c echo.Context) (domain.FeishuAuthResult, bool) {
 
 func authorizeCurrentUser(c echo.Context, service AuthorizationService, action domain.AuthorizationAction, resource domain.AuthorizationResource) error {
 	if service == nil {
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return writeErrorResponse(c, http.StatusForbidden, "forbidden")
 	}
 	session, ok := consoleSession(c)
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 	}
 	userID := domain.ConsoleUserIDFromFeishu(session.User)
 	if userID == "" {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 	}
 	if err := service.Authorize(c.Request().Context(), userID, action, resource); err != nil {
 		if errors.Is(err, domain.ErrForbidden) {
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return writeErrorResponse(c, http.StatusForbidden, "forbidden")
 		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return writeErrorResponse(c, http.StatusInternalServerError, "internal server error")
 	}
 	return nil
 }
@@ -121,12 +144,12 @@ func consoleSessionErrorResponse(c echo.Context, err error) error {
 		errors.Is(err, domain.ErrFeishuSessionExpired) ||
 		errors.Is(err, domain.ErrFeishuAuthorization) {
 		clearFeishuSessionCookie(c)
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 	}
 	if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
+		return writeErrorResponse(c, http.StatusServiceUnavailable, "feishu auth not configured")
 	}
-	return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	return writeErrorResponse(c, http.StatusInternalServerError, "internal server error")
 }
 
 type artifactBearerTokenResult struct {

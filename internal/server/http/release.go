@@ -65,6 +65,7 @@ type releaseRecordResponse struct {
 	ModuleID        string `json:"moduleId"`
 	ModuleName      string `json:"moduleName"`
 	ReleaseType     string `json:"releaseType"`
+	RuntimeVersion  string `json:"runtimeVersion"`
 	GrayStrategy    string `json:"grayStrategy"`
 	GrayPercentage  int    `json:"grayPercentage"`
 	ExpiresAt       string `json:"expiresAt"`
@@ -88,6 +89,7 @@ type releaseRouteResponse struct {
 	ModuleName      string `json:"moduleName"`
 	ReleaseID       string `json:"releaseId"`
 	RouteType       string `json:"routeType"`
+	RuntimeVersion  string `json:"runtimeVersion"`
 	GrayStrategy    string `json:"grayStrategy"`
 	GrayPercentage  int    `json:"grayPercentage"`
 	Status          string `json:"status"`
@@ -255,10 +257,11 @@ func (h releaseHandler) resolve(c echo.Context) error {
 	}
 
 	route, err := h.service.ResolveReleaseRoute(c.Request().Context(), domain.ReleaseResolveInput{
-		ModuleID:    c.QueryParam("moduleId"),
-		Environment: c.QueryParam("environment"),
-		Identifier:  c.QueryParam("identifier"),
-		UserID:      c.QueryParam("userId"),
+		ModuleID:       c.QueryParam("moduleId"),
+		Environment:    c.QueryParam("environment"),
+		RuntimeVersion: c.QueryParam("runtimeVersion"),
+		Identifier:     c.QueryParam("identifier"),
+		UserID:         c.QueryParam("userId"),
 	})
 	if err != nil {
 		return releaseErrorResponse(c, err)
@@ -315,6 +318,7 @@ func newReleaseRecordResponse(record domain.ReleaseRecord) releaseRecordResponse
 		ModuleID:        record.ModuleID,
 		ModuleName:      record.ModuleName,
 		ReleaseType:     string(record.ReleaseType),
+		RuntimeVersion:  record.RuntimeVersion,
 		GrayStrategy:    string(record.GrayStrategy),
 		GrayPercentage:  record.GrayPercentage,
 		ExpiresAt:       formatOptionalTime(record.ExpiresAt),
@@ -340,6 +344,7 @@ func newReleaseRouteResponse(route domain.ReleaseRoute) releaseRouteResponse {
 		ModuleName:      route.ModuleName,
 		ReleaseID:       route.ReleaseID,
 		RouteType:       string(route.RouteType),
+		RuntimeVersion:  route.RuntimeVersion,
 		GrayStrategy:    string(route.GrayStrategy),
 		GrayPercentage:  route.GrayPercentage,
 		Status:          string(route.Status),

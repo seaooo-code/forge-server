@@ -24,41 +24,42 @@ const (
 	ModuleKindFeature ModuleKind = "Feature"
 )
 
-type ModuleRepositoryBinding struct {
-	Provider       CodeSourceProvider
-	RepositoryID   int64
-	InstallationID int64
-	FullName       string
-	HTMLURL        string
-	CloneURL       string
-	SSHURL         string
-	DefaultBranch  string
+const (
+	DefaultModuleDockerfilePath      = "Dockerfile"
+	DefaultModuleBuildContext        = "."
+	DefaultModuleAutoPreviewTTLHours = 168
+)
+
+// ModuleBuildConfig 是模块的构建与自动触发配置。
+type ModuleBuildConfig struct {
+	DockerfilePath       string
+	BuildContext         string
+	AutoBuildBranches    []string
+	AutoBuildEnvironment string
+	AutoPreviewRelease   bool
+	AutoPreviewTTLHours  int
 }
 
 type Module struct {
-	ApplicationID            string
-	ApplicationName          string
-	ApplicationSlug          string
-	CreatedAt                time.Time
-	DefaultBranch            string
-	ID                       string
-	Kind                     ModuleKind
-	CommonModuleID           string
-	CommonModuleName         string
-	Name                     string
-	Owner                    string
-	OwnerAvatarURL           string
-	OwnerDepartmentIDs       []string
-	OwnerEmail               string
-	OwnerUserID              string
-	RepositoryCloneURL       string
-	RepositoryFullName       string
-	RepositoryHTMLURL        string
-	RepositoryID             int64
-	RepositoryInstallationID int64
-	RepositoryProvider       CodeSourceProvider
-	RepositorySSHURL         string
-	UpdatedAt                time.Time
+	ApplicationID      string
+	ApplicationName    string
+	ApplicationSlug    string
+	BuildConfig        ModuleBuildConfig
+	CodeSourceProvider CodeSourceProvider
+	ConnectionName     string
+	CreatedAt          time.Time
+	ID                 string
+	Kind               ModuleKind
+	CommonModuleID     string
+	CommonModuleName   string
+	Name               string
+	Owner              string
+	OwnerAvatarURL     string
+	OwnerDepartmentIDs []string
+	OwnerEmail         string
+	OwnerUserID        string
+	Repository         ModuleRepository
+	UpdatedAt          time.Time
 }
 
 type ModuleInput struct {
@@ -75,7 +76,8 @@ type ModuleInput struct {
 	OwnerFeishuUnionID string
 	OwnerFeishuUserID  string
 	OwnerUserID        string
-	Repository         ModuleRepositoryBinding
+	Repository         ModuleRepository
+	BuildConfig        ModuleBuildConfig
 }
 
 type ModuleListFilters struct {

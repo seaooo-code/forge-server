@@ -2,9 +2,12 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"forge-server/internal/domain"
 
@@ -33,88 +36,6 @@ func (r *CodeSourceRepository) GetCodeSourceAppConfig(ctx context.Context, provi
 		from code_source_app_configs
 		where provider = $1
 	`, provider))
-}
-
-func (r *CodeSourceRepository) ListCodeSourceInstallations(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string) ([]domain.CodeSourceInstallation, error) {
-	rows, err := r.pool.Query(ctx, `
-		select
-			provider,
-			owner_union_id,
-			provider_installation_id,
-			account_login,
-			account_type,
-			repository_selection,
-			installed_at,
-			updated_at,
-			deleted_at
-		from code_source_installations
-		where provider = $1 and owner_union_id = $2 and status = 'active'
-		order by installed_at desc, id desc
-	`, provider, ownerUnionID)
-	if err != nil {
-		return nil, fmt.Errorf("query code source installations: %w", err)
-	}
-	defer rows.Close()
-
-	installations := make([]domain.CodeSourceInstallation, 0)
-	for rows.Next() {
-		installation, err := scanCodeSourceInstallation(rows)
-		if err != nil {
-			return nil, err
-		}
-		installations = append(installations, installation)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate code source installations: %w", err)
-	}
-	return installations, nil
-}
-
-func (r *CodeSourceRepository) UpsertCodeSourceInstallation(ctx context.Context, installation domain.CodeSourceInstallation) (domain.CodeSourceInstallation, error) {
-	saved, err := scanCodeSourceInstallation(r.pool.QueryRow(ctx, `
-		insert into code_source_installations (
-			provider,
-			owner_union_id,
-			provider_installation_id,
-			account_login,
-			account_type,
-			repository_selection,
-			status,
-			installed_at
-		) values (
-			$1, $2, $3, $4, $5, $6, 'active', $7
-		)
-		on conflict (provider, owner_union_id, provider_installation_id) do update set
-			account_login = excluded.account_login,
-			account_type = excluded.account_type,
-			repository_selection = excluded.repository_selection,
-			status = 'active',
-			installed_at = excluded.installed_at,
-			deleted_at = null,
-			updated_at = now()
-		returning
-			provider,
-			owner_union_id,
-			provider_installation_id,
-			account_login,
-			account_type,
-			repository_selection,
-			installed_at,
-			updated_at,
-			deleted_at
-	`,
-		installation.Provider,
-		installation.OwnerUnionID,
-		installation.InstallationID,
-		installation.AccountLogin,
-		installation.AccountType,
-		installation.RepositorySelection,
-		installation.InstalledAt,
-	))
-	if err != nil {
-		return domain.CodeSourceInstallation{}, fmt.Errorf("upsert code source installation: %w", err)
-	}
-	return saved, nil
 }
 
 func (r *CodeSourceRepository) UpsertCodeSourceAppConfig(ctx context.Context, config domain.CodeSourceAppConfig) (domain.CodeSourceAppConfig, error) {
@@ -175,56 +96,187 @@ func (r *CodeSourceRepository) DeleteCodeSourceAppConfig(ctx context.Context, pr
 	return nil
 }
 
-func (r *CodeSourceRepository) HasOtherCodeSourceInstallationOwner(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string, installationID int64) (bool, error) {
-	var exists bool
-	if err := r.pool.QueryRow(ctx, `
-		select exists(
-			select 1
-			from code_source_installations
-			where provider = $1
-			  and provider_installation_id = $2
-			  and owner_union_id <> $3
-			  and status = 'active'
-		)
-	`, provider, installationID, ownerUnionID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("query other code source installation owner: %w", err)
+func (r *CodeSourceRepository) ListCodeSourceConnections(ctx context.Context, filters domain.CodeSourceConnectionFilters) ([]domain.CodeSourceConnection, error) {
+	rows, err := r.pool.Query(ctx, codeSourceConnectionSelectSQL()+`
+		where c.status <> 'deleted'
+			and ($1 = '' or c.provider = $1)
+			and ($2 = '' or c.status = $2)
+		order by c.created_at desc, c.id desc
+	`, string(filters.Provider), string(filters.Status))
+	if err != nil {
+		return nil, fmt.Errorf("query code source connections: %w", err)
 	}
-	return exists, nil
+	defer rows.Close()
+
+	connections := make([]domain.CodeSourceConnection, 0)
+	for rows.Next() {
+		conn, err := scanCodeSourceConnection(rows)
+		if err != nil {
+			return nil, err
+		}
+		connections = append(connections, conn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate code source connections: %w", err)
+	}
+	return connections, nil
 }
 
-func (r *CodeSourceRepository) DeleteCodeSourceInstallations(ctx context.Context, provider domain.CodeSourceProvider, ownerUnionID string) error {
+func (r *CodeSourceRepository) GetCodeSourceConnection(ctx context.Context, id string) (domain.CodeSourceConnection, error) {
+	return scanCodeSourceConnection(r.pool.QueryRow(ctx, codeSourceConnectionSelectSQL()+`
+		where c.id = $1 and c.status <> 'deleted'
+	`, id))
+}
+
+func (r *CodeSourceRepository) FindCodeSourceConnectionByExternalID(ctx context.Context, provider domain.CodeSourceProvider, externalID string) (domain.CodeSourceConnection, error) {
+	return scanCodeSourceConnection(r.pool.QueryRow(ctx, codeSourceConnectionSelectSQL()+`
+		where c.provider = $1
+			and c.external_id = $2
+			and c.external_id <> ''
+			and c.status <> 'deleted'
+		order by c.created_at desc
+		limit 1
+	`, provider, externalID))
+}
+
+func (r *CodeSourceRepository) CreateCodeSourceConnection(ctx context.Context, conn domain.CodeSourceConnection) (domain.CodeSourceConnection, error) {
+	id := newCodeSourceConnectionID()
+	if _, err := r.pool.Exec(ctx, `
+		insert into code_source_connections (
+			id,
+			provider,
+			name,
+			web_base_url,
+			api_base_url,
+			external_account,
+			external_id,
+			credential_encrypted,
+			credential_preview,
+			credential_expires_at,
+			webhook_secret_encrypted,
+			status,
+			created_by_user_id,
+			last_verified_at
+		) values (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+		)
+	`,
+		id,
+		conn.Provider,
+		conn.Name,
+		conn.WebBaseURL,
+		conn.APIBaseURL,
+		conn.ExternalAccount,
+		conn.ExternalID,
+		conn.CredentialEncrypted,
+		conn.CredentialPreview,
+		conn.CredentialExpiresAt,
+		conn.WebhookSecretEncrypted,
+		conn.Status,
+		conn.CreatedByUserID,
+		conn.LastVerifiedAt,
+	); err != nil {
+		switch {
+		case isUniqueViolation(err):
+			return domain.CodeSourceConnection{}, domain.ErrCodeSourceConnectionConflict
+		case isForeignKeyViolation(err), isCheckViolation(err):
+			return domain.CodeSourceConnection{}, domain.ErrInvalidCodeSourceInput
+		}
+		return domain.CodeSourceConnection{}, fmt.Errorf("insert code source connection: %w", err)
+	}
+	return r.GetCodeSourceConnection(ctx, id)
+}
+
+func (r *CodeSourceRepository) UpdateCodeSourceConnection(ctx context.Context, conn domain.CodeSourceConnection) (domain.CodeSourceConnection, error) {
+	commandTag, err := r.pool.Exec(ctx, `
+		update code_source_connections set
+			name = $2,
+			external_account = $3,
+			credential_encrypted = $4,
+			credential_preview = $5,
+			credential_expires_at = $6,
+			webhook_secret_encrypted = $7,
+			status = $8,
+			last_verified_at = $9,
+			updated_at = now()
+		where id = $1 and status <> 'deleted'
+	`,
+		conn.ID,
+		conn.Name,
+		conn.ExternalAccount,
+		conn.CredentialEncrypted,
+		conn.CredentialPreview,
+		conn.CredentialExpiresAt,
+		conn.WebhookSecretEncrypted,
+		conn.Status,
+		conn.LastVerifiedAt,
+	)
+	if err != nil {
+		if isCheckViolation(err) {
+			return domain.CodeSourceConnection{}, domain.ErrInvalidCodeSourceInput
+		}
+		return domain.CodeSourceConnection{}, fmt.Errorf("update code source connection: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return domain.CodeSourceConnection{}, domain.ErrCodeSourceConnectionNotFound
+	}
+	return r.GetCodeSourceConnection(ctx, conn.ID)
+}
+
+func (r *CodeSourceRepository) DeleteCodeSourceConnection(ctx context.Context, id string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin delete code source installations: %w", err)
+		return fmt.Errorf("begin delete code source connection: %w", err)
 	}
 	defer rollbackMigration(ctx, tx)
 
+	var status string
+	if err := tx.QueryRow(ctx, `
+		select status from code_source_connections where id = $1 for update
+	`, id).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrCodeSourceConnectionNotFound
+		}
+		return fmt.Errorf("query code source connection for delete: %w", err)
+	}
+	if status == string(domain.CodeSourceConnectionStatusDeleted) {
+		return domain.ErrCodeSourceConnectionNotFound
+	}
+
+	var inUse bool
+	if err := tx.QueryRow(ctx, `
+		select exists(select 1 from modules where code_source_connection_id = $1)
+	`, id).Scan(&inUse); err != nil {
+		return fmt.Errorf("query code source connection modules: %w", err)
+	}
+	if inUse {
+		return domain.ErrCodeSourceConnectionInUse
+	}
+
+	// 软删除保留创建人等审计信息，同时清空凭证密文和仓库缓存。
 	if _, err := tx.Exec(ctx, `
-		delete from code_source_repositories
-		where provider = $1 and owner_union_id = $2
-	`, provider, ownerUnionID); err != nil {
+		update code_source_connections set
+			status = 'deleted',
+			credential_encrypted = '',
+			webhook_secret_encrypted = '',
+			updated_at = now()
+		where id = $1
+	`, id); err != nil {
+		return fmt.Errorf("delete code source connection: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from code_source_repositories where connection_id = $1
+	`, id); err != nil {
 		return fmt.Errorf("delete code source repositories: %w", err)
 	}
 
-	installationCommandTag, err := tx.Exec(ctx, `
-		delete from code_source_installations
-		where provider = $1 and owner_union_id = $2
-	`, provider, ownerUnionID)
-	if err != nil {
-		return fmt.Errorf("delete code source installations: %w", err)
-	}
-
-	if installationCommandTag.RowsAffected() == 0 {
-		return domain.ErrCodeSourceInstallationNotFound
-	}
-
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit delete code source installations: %w", err)
+		return fmt.Errorf("commit delete code source connection: %w", err)
 	}
 	return nil
 }
 
-func (r *CodeSourceRepository) UpsertCodeSourceRepositories(ctx context.Context, ownerUnionID string, repositories []domain.CodeSourceRepository) error {
+func (r *CodeSourceRepository) UpsertCodeSourceRepositories(ctx context.Context, repositories []domain.CodeSourceRepository) error {
 	if len(repositories) == 0 {
 		return nil
 	}
@@ -236,66 +288,61 @@ func (r *CodeSourceRepository) UpsertCodeSourceRepositories(ctx context.Context,
 	defer rollbackMigration(ctx, tx)
 
 	for _, repository := range repositories {
+		syncedAt := repository.LastSyncedAt
+		if syncedAt.IsZero() {
+			syncedAt = time.Now().UTC()
+		}
 		if _, err := tx.Exec(ctx, `
 			insert into code_source_repositories (
-				provider,
-				owner_union_id,
-				provider_repository_id,
-				provider_installation_id,
-				owner,
-				name,
+				connection_id,
+				external_repository_id,
 				full_name,
-				private,
-				html_url,
+				web_url,
 				clone_url,
-				ssh_url,
 				default_branch,
+				private,
 				description,
-				repository_updated_at
+				last_synced_at
 			) values (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+				$1, $2, $3, $4, $5, $6, $7, $8, $9
 			)
-			on conflict (provider, owner_union_id, provider_repository_id) do update set
-				provider_installation_id = excluded.provider_installation_id,
-				owner = excluded.owner,
-				name = excluded.name,
+			on conflict (connection_id, external_repository_id) do update set
 				full_name = excluded.full_name,
-				private = excluded.private,
-				html_url = excluded.html_url,
+				web_url = excluded.web_url,
 				clone_url = excluded.clone_url,
-				ssh_url = excluded.ssh_url,
 				default_branch = excluded.default_branch,
+				private = excluded.private,
 				description = excluded.description,
-				repository_updated_at = excluded.repository_updated_at,
-				last_synced_at = now(),
-				updated_at = now()
+				last_synced_at = excluded.last_synced_at
 		`,
-			repository.Provider,
-			ownerUnionID,
-			repository.RepositoryID,
-			repository.InstallationID,
-			repository.Owner,
-			repository.Name,
+			repository.ConnectionID,
+			repository.ExternalRepositoryID,
 			repository.FullName,
-			repository.Private,
-			repository.HTMLURL,
+			repository.WebURL,
 			repository.CloneURL,
-			repository.SSHURL,
 			repository.DefaultBranch,
+			repository.Private,
 			repository.Description,
-			repository.UpdatedAt,
+			syncedAt,
 		); err != nil {
+			if isForeignKeyViolation(err) {
+				return domain.ErrCodeSourceConnectionNotFound
+			}
 			return fmt.Errorf("upsert code source repository %s: %w", repository.FullName, err)
 		}
 
+		// 仓库改名或迁移后，同步刷新已绑定模块上的仓库快照，保证 worker 使用最新的 clone 地址。
 		if _, err := tx.Exec(ctx, `
-			update modules
-			set provider_installation_id = $3,
-			    updated_at = now()
-			where repository_provider = $1
-			  and provider_repository_id = $2
-		`, repository.Provider, repository.RepositoryID, repository.InstallationID); err != nil {
-			return fmt.Errorf("refresh module repository installation %s: %w", repository.FullName, err)
+			update modules set
+				repository_full_name = $3,
+				repository_web_url = $4,
+				repository_clone_url = $5,
+				updated_at = now()
+			where code_source_connection_id = $1
+				and external_repository_id = $2
+				and (repository_full_name, repository_web_url, repository_clone_url) is distinct from ($3, $4, $5)
+		`, repository.ConnectionID, repository.ExternalRepositoryID, repository.FullName, repository.WebURL, repository.CloneURL); err != nil {
+			return fmt.Errorf("refresh module repository %s: %w", repository.FullName, err)
 		}
 	}
 
@@ -305,15 +352,106 @@ func (r *CodeSourceRepository) UpsertCodeSourceRepositories(ctx context.Context,
 	return nil
 }
 
-type codeSourceInstallationRow interface {
+func (r *CodeSourceRepository) GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error) {
+	var repository domain.CodeSourceRepository
+	if err := r.pool.QueryRow(ctx, `
+		select
+			connection_id,
+			external_repository_id,
+			full_name,
+			web_url,
+			clone_url,
+			default_branch,
+			private,
+			description,
+			last_synced_at
+		from code_source_repositories
+		where connection_id = $1 and external_repository_id = $2
+	`, connectionID, externalRepositoryID).Scan(
+		&repository.ConnectionID,
+		&repository.ExternalRepositoryID,
+		&repository.FullName,
+		&repository.WebURL,
+		&repository.CloneURL,
+		&repository.DefaultBranch,
+		&repository.Private,
+		&repository.Description,
+		&repository.LastSyncedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.CodeSourceRepository{}, domain.ErrCodeSourceRepositoryNotFound
+		}
+		return domain.CodeSourceRepository{}, fmt.Errorf("query code source repository: %w", err)
+	}
+	return repository, nil
+}
+
+type codeSourceRow interface {
 	Scan(dest ...any) error
 }
 
-type codeSourceAppConfigRow interface {
-	Scan(dest ...any) error
+func codeSourceConnectionSelectSQL() string {
+	return `
+		select
+			c.id,
+			c.provider,
+			c.name,
+			c.web_base_url,
+			c.api_base_url,
+			c.external_account,
+			c.external_id,
+			c.credential_encrypted,
+			c.credential_preview,
+			c.credential_expires_at,
+			c.webhook_secret_encrypted,
+			c.status,
+			c.created_by_user_id,
+			u.name as created_by,
+			c.last_verified_at,
+			c.created_at,
+			c.updated_at
+		from code_source_connections c
+		join users u on u.id = c.created_by_user_id`
 }
 
-func scanCodeSourceAppConfig(row codeSourceAppConfigRow) (domain.CodeSourceAppConfig, error) {
+func scanCodeSourceConnection(row codeSourceRow) (domain.CodeSourceConnection, error) {
+	var conn domain.CodeSourceConnection
+	var credentialExpiresAt sql.NullTime
+	var lastVerifiedAt sql.NullTime
+	if err := row.Scan(
+		&conn.ID,
+		&conn.Provider,
+		&conn.Name,
+		&conn.WebBaseURL,
+		&conn.APIBaseURL,
+		&conn.ExternalAccount,
+		&conn.ExternalID,
+		&conn.CredentialEncrypted,
+		&conn.CredentialPreview,
+		&credentialExpiresAt,
+		&conn.WebhookSecretEncrypted,
+		&conn.Status,
+		&conn.CreatedByUserID,
+		&conn.CreatedBy,
+		&lastVerifiedAt,
+		&conn.CreatedAt,
+		&conn.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.CodeSourceConnection{}, domain.ErrCodeSourceConnectionNotFound
+		}
+		return domain.CodeSourceConnection{}, fmt.Errorf("scan code source connection: %w", err)
+	}
+	if credentialExpiresAt.Valid {
+		conn.CredentialExpiresAt = &credentialExpiresAt.Time
+	}
+	if lastVerifiedAt.Valid {
+		conn.LastVerifiedAt = &lastVerifiedAt.Time
+	}
+	return conn, nil
+}
+
+func scanCodeSourceAppConfig(row codeSourceRow) (domain.CodeSourceAppConfig, error) {
 	var config domain.CodeSourceAppConfig
 	if err := row.Scan(
 		&config.Provider,
@@ -332,27 +470,10 @@ func scanCodeSourceAppConfig(row codeSourceAppConfigRow) (domain.CodeSourceAppCo
 	return config, nil
 }
 
-func scanCodeSourceInstallation(row codeSourceInstallationRow) (domain.CodeSourceInstallation, error) {
-	var installation domain.CodeSourceInstallation
-	var deletedAt sql.NullTime
-	if err := row.Scan(
-		&installation.Provider,
-		&installation.OwnerUnionID,
-		&installation.InstallationID,
-		&installation.AccountLogin,
-		&installation.AccountType,
-		&installation.RepositorySelection,
-		&installation.InstalledAt,
-		&installation.UpdatedAt,
-		&deletedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.CodeSourceInstallation{}, domain.ErrCodeSourceInstallationNotFound
-		}
-		return domain.CodeSourceInstallation{}, fmt.Errorf("scan code source installation: %w", err)
+func newCodeSourceConnectionID() string {
+	var value [8]byte
+	if _, err := rand.Read(value[:]); err == nil {
+		return "code-source-" + hex.EncodeToString(value[:])
 	}
-	if deletedAt.Valid {
-		installation.DeletedAt = &deletedAt.Time
-	}
-	return installation, nil
+	return "code-source-" + time.Now().UTC().Format("20060102150405.000000000")
 }
