@@ -12,7 +12,7 @@ Forge 的目标是一个通用的 RN Bundle 构建与交付平台：平台提供
 | --- | --- | --- |
 | 核心 | 应用、模块、环境、构建、发布路由、`forge.json` 构建契约、`runtimeVersion` 匹配、拉包协议 | 无关 |
 | 适配器 | 代码源（GitHub、GitLab）、对象存储（S3 兼容）、身份源（飞书）、密钥加密 | 按接口实现，通过配置启用 |
-| 接入约定 | [小米 RN 接入指南](xiaomi-rn-integration.md)：`runtimeVersion` 拼接规则、Dockerfile 模板、产物格式、GitLab 配置步骤 | 只写在文档里，不进入平台代码 |
+| 接入约定 | [小米 RN 接入指南](xiaomi-rn-integration.md)、[客户端需求](xiaomi-rn-client-requirements.md)：`runtimeVersion` 拼接规则、Dockerfile 模板、产物格式、GitLab 配置步骤 | 只写在文档里，不进入平台代码 |
 
 构建方式采用 **平台构建**，与 Vercel、Netlify、EAS Build 一致：平台连接代码仓库，由平台的 worker 拉取代码、执行仓库自己的 Dockerfile、上传产物。
 
@@ -62,7 +62,7 @@ dist/
   <platform>/...     # 每个平台一个目录，至少一个
 ```
 
-- **平台**：一级目录名就是平台名，取值为 `android`、`ios`、`harmony`。这份列表定义在 domain 层，新增平台只需要改常量，不涉及表结构。一次构建可以包含多个平台，发布时一起生效，相当于 EAS 的 update group。
+- **平台**：一级目录名就是平台名，取值为 `android`、`ios`、`harmonyos`。这份列表定义在 domain 层，新增平台只需要改常量，不涉及表结构。一次构建可以包含多个平台，发布时一起生效，相当于 EAS 的 update group。
 - **runtimeVersion**：一个不透明字符串，长度 1-64，字符集 `[A-Za-z0-9._-]`。平台不解释它的含义，只在拉包时做精确匹配。它的作用是保证"包与客户端原生版本兼容"，具体怎么生成由接入方自己约定（参见各接入指南）。
 - worker 在上传之前做校验：如果 `forge.json` 缺失或不合法，或者平台目录不符合约定，构建直接失败，失败原因写入日志。
 - `forge.json` 只放平台需要的字段，以后需要扩展时（例如声明产物入口文件）再加，不允许接入方塞自定义字段。
@@ -371,6 +371,9 @@ GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/
 - **构建资源**：所有构建共用 worker。先观察排队情况，再决定是否水平扩容。现有的租约机制已经支持多 worker。
 
 ## 8. P0 之后
+
+- **构建适配器**（下一步，设计见 [build-adapters.md](build-adapters.md)）：兼容现有打包工具链的构建配方作为数据在界面维护，业务仓库无需新增 Dockerfile。
+- **构建详情二维码**：生成带环境与通道的二维码，供测试包扫码切换包源（客户端需求 R1）。
 
 - **身份源抽象**：登录改为标准的 OIDC/OAuth，飞书作为其中一种身份源适配器。负责人搜索改为可选的"目录服务"适配器，未配置时退化为输入用户 ID。
 - **存量明文密钥迁移**：S3 的 `secret_access_key` 和 GitHub App 的 `private_key` 改用 secretbox 加密。
