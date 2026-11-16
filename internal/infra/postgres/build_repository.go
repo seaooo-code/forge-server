@@ -427,6 +427,7 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 		select
 			br.id,
 			br.number,
+			a.slug as application_slug,
 			a.name as application_name,
 			br.module_id,
 			m.name as module_name,
@@ -491,6 +492,7 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	if err := row.Scan(
 		&record.ID,
 		&record.Number,
+		&record.ApplicationSlug,
 		&record.ApplicationName,
 		&record.ModuleID,
 		&record.ModuleName,

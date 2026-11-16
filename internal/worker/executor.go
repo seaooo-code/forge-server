@@ -732,16 +732,14 @@ func artifactFiles(artifactRoot string) ([]artifactFile, error) {
 	return files, nil
 }
 
+// artifactKey 用应用 slug、模块 id 和环境 code 组成对象路径。这些标识创建后不变，
+// 也都是 URL 安全的字符；显示名可以随时改名，且可能含中文和空格，不适合放进路径。
 func (e *Executor) artifactKey(record domain.BuildRecord) string {
 	prefix := strings.Trim(strings.TrimSpace(e.cfg.ArtifactPrefix), "/")
-	environmentName := strings.TrimSpace(record.EnvironmentName)
-	if environmentName == "" {
-		environmentName = record.Environment
-	}
 	parts := []string{
-		artifactPathSegment(record.ApplicationName),
-		artifactPathSegment(record.ModuleName),
-		artifactPathSegment(environmentName),
+		artifactPathSegment(record.ApplicationSlug),
+		artifactPathSegment(record.ModuleID),
+		artifactPathSegment(record.Environment),
 		artifactPathSegment(recordBuildKeySegment(record)),
 	}
 	if prefix != "" {

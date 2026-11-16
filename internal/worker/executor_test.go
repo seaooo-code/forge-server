@@ -161,16 +161,19 @@ func TestDockerImageTagNormalizesBuildID(t *testing.T) {
 	}
 }
 
-func TestArtifactKeyUsesNamesAndBuildID(t *testing.T) {
+func TestArtifactKeyUsesStableIdentifiersAndBuildID(t *testing.T) {
 	executor := Executor{cfg: config.WorkerConfig{ArtifactPrefix: "rn-bundles"}}
 	got := executor.artifactKey(domain.BuildRecord{
 		ID:              "274c3210-bf60-4c5a-b2bd-6893538c991b",
-		ApplicationName: "seaooo",
-		ModuleName:      "test-bundle",
+		ApplicationSlug: "seaooo",
+		ApplicationName: "示例 应用",
+		ModuleID:        "test-bundle",
+		ModuleName:      "测试 模块",
 		Environment:     "qa",
-		EnvironmentName: "QA",
+		EnvironmentName: "QA 环境",
 	})
-	want := "rn-bundles/seaooo/test-bundle/QA/274c3210-bf60-4c5a-b2bd-6893538c991b"
+	// 显示名含中文和空格，路径只用 slug、模块 id、环境 code。
+	want := "rn-bundles/seaooo/test-bundle/qa/274c3210-bf60-4c5a-b2bd-6893538c991b"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -179,13 +182,12 @@ func TestArtifactKeyUsesNamesAndBuildID(t *testing.T) {
 func TestArtifactKeyFallsBackToCreatedAtForEmptyBuildID(t *testing.T) {
 	executor := Executor{cfg: config.WorkerConfig{ArtifactPrefix: "rn-bundles"}}
 	got := executor.artifactKey(domain.BuildRecord{
-		ApplicationName: "小米汽车",
-		ModuleName:      "测试模块-通用",
+		ApplicationSlug: "demo-app",
+		ModuleID:        "common",
 		Environment:     "qa",
-		EnvironmentName: "QA",
 		CreatedAt:       time.Date(2026, 6, 17, 13, 5, 9, 0, time.Local),
 	})
-	want := "rn-bundles/小米汽车/测试模块-通用/QA/20260617130509"
+	want := "rn-bundles/demo-app/common/qa/20260617130509"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

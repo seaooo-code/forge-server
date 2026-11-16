@@ -30,6 +30,7 @@ type BuildRecord struct {
 	ID string
 	// Number 是模块内单调递增的构建号。
 	Number             int64
+	ApplicationSlug    string
 	ApplicationName    string
 	ModuleID           string
 	ModuleName         string
