@@ -236,3 +236,34 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
+
+func TestSearchUsersReturnsResultsWhenEmailEnrichmentUnauthorized(t *testing.T) {
+	client := NewClient(config.FeishuConfig{
+		AppID:         "cli_test",
+		AppSecret:     "secret",
+		UserSearchURL: "https://open.feishu.cn/open-apis/search/v1/user",
+		UserBatchURL:  "https://open.feishu.cn/open-apis/contact/v3/users/batch",
+	}, false)
+	client.httpClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var body string
+			switch r.URL.Path {
+			case "/open-apis/search/v1/user":
+				body = `{"code":0,"msg":"success","data":{"users":[{"open_id":"ou-1","name":"张三"}],"has_more":false}}`
+			case "/open-apis/contact/v3/users/batch":
+				body = `{"code":99991679,"msg":"Unauthorized. You do not have permission to perform the requested operation on the resource."}`
+			default:
+				t.Fatalf("unexpected request %s", r.URL.Path)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		}),
+	}
+
+	page, err := client.SearchUsers(context.Background(), "user-access-token", "张", 20, "")
+	if err != nil {
+		t.Fatalf("search should succeed without email permission: %v", err)
+	}
+	if len(page.Users) != 1 || page.Users[0].Name != "张三" || page.Users[0].Email != "" {
+		t.Fatalf("expected user without email, got %#v", page.Users)
+	}
+}

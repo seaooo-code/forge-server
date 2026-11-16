@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -207,8 +208,14 @@ func (c *Client) SearchUsers(ctx context.Context, accessToken string, query stri
 			DepartmentIDs: departmentIDs,
 		})
 	}
+	// 邮箱只是补充信息：应用或用户未授权通讯录字段权限时，仍返回搜索结果，只是不带邮箱。
+	// 只有配置缺失这类非飞书接口错误才让整个搜索失败。
 	if err := c.appendUserEmails(ctx, accessToken, users); err != nil {
-		return domain.FeishuUserSearchPage{}, err
+		var apiErr *domain.FeishuAPIError
+		if !errors.As(err, &apiErr) {
+			return domain.FeishuUserSearchPage{}, err
+		}
+		slog.WarnContext(ctx, "feishu user search: skip email enrichment", "code", apiErr.Code, "endpoint", apiErr.Endpoint, "msg", apiErr.Msg)
 	}
 
 	return domain.FeishuUserSearchPage{
