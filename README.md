@@ -78,7 +78,7 @@ HTTP_CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 HTTP_CORS_ALLOW_CREDENTIALS=true
 ```
 
-`FEISHU_OAUTH_SCOPE` 默认留空并使用飞书应用已配置的权限。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
+`FEISHU_OAUTH_SCOPE` 为空格分隔的权限列表，必须包含 `offline_access`：飞书只有在授权请求显式申请该权限时才返回 refresh token，缺少时登录态会在 access token 过期（约 2 小时）后失效。应用后台也需要开通「持续访问已授权数据」（`offline_access`）。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
 
 ### 启动 API
 
