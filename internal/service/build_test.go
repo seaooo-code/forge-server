@@ -106,7 +106,7 @@ func TestBuildServiceCompleteRequiresArtifactKey(t *testing.T) {
 	repository := fakeBuildRecordRepository{}
 	service := NewBuildService(&repository)
 
-	_, err := service.CompleteBuildRecord(context.Background(), "build-1", domain.BuildRecordCompletion{})
+	_, err := service.CompleteBuildRecord(context.Background(), "build-1", "worker-1", domain.BuildRecordCompletion{})
 	if !errors.Is(err, domain.ErrInvalidBuildInput) {
 		t.Fatalf("expected invalid build input, got %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildServiceCompleteNormalizesManifestSummary(t *testing.T) {
 	repository := fakeBuildRecordRepository{}
 	service := NewBuildService(&repository)
 
-	_, err := service.CompleteBuildRecord(context.Background(), "build-1", domain.BuildRecordCompletion{
+	_, err := service.CompleteBuildRecord(context.Background(), "build-1", "worker-1", domain.BuildRecordCompletion{
 		ArtifactKey:    " /rn-bundles/app/module/qa/build-1/ ",
 		ArtifactURL:    " https://cdn.example.com/build-1 ",
 		ManifestKey:    " /rn-bundles/app/module/qa/build-1/manifest.json ",
@@ -317,7 +317,7 @@ func (r *fakeBuildRecordRepository) AcquireNextBuildRecord(context.Context, stri
 	return domain.BuildRecord{ID: "build-1"}, nil
 }
 
-func (r *fakeBuildRecordRepository) CompleteBuildRecord(_ context.Context, id string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
+func (r *fakeBuildRecordRepository) CompleteBuildRecord(_ context.Context, id string, _ string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
 	r.lastCompletion = completion
 	return domain.BuildRecord{
 		ID:             id,
@@ -329,8 +329,20 @@ func (r *fakeBuildRecordRepository) CompleteBuildRecord(_ context.Context, id st
 	}, nil
 }
 
-func (r *fakeBuildRecordRepository) FailBuildRecord(_ context.Context, id string, message string) (domain.BuildRecord, error) {
+func (r *fakeBuildRecordRepository) FailBuildRecord(_ context.Context, id string, _ string, message string) (domain.BuildRecord, error) {
 	return domain.BuildRecord{ID: id, ErrorMessage: message}, nil
+}
+
+func (r *fakeBuildRecordRepository) RenewBuildLease(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func (r *fakeBuildRecordRepository) RequeueBuildRecord(context.Context, string, string) error {
+	return nil
+}
+
+func (r *fakeBuildRecordRepository) GetBuildQueueStats(context.Context) (domain.BuildQueueStats, error) {
+	return domain.BuildQueueStats{}, nil
 }
 
 func (r *fakeBuildRecordRepository) GetBuildRecord(_ context.Context, id string) (domain.BuildRecord, error) {
@@ -363,7 +375,7 @@ func TestBuildServiceCompleteBuildRecordNormalizesBuildContract(t *testing.T) {
 	repository := fakeBuildRecordRepository{}
 	service := NewBuildService(&repository)
 
-	_, err := service.CompleteBuildRecord(context.Background(), "build-1", domain.BuildRecordCompletion{
+	_, err := service.CompleteBuildRecord(context.Background(), "build-1", "worker-1", domain.BuildRecordCompletion{
 		ArtifactKey:    "rn-bundles/app/module/qa/build-1",
 		CommitSHA:      " abc123 ",
 		RuntimeVersion: " 1.2.0-android.725 ",
@@ -383,7 +395,7 @@ func TestBuildServiceCompleteBuildRecordNormalizesBuildContract(t *testing.T) {
 		{ArtifactKey: "key", RuntimeVersion: strings.Repeat("a", 65)},
 		{ArtifactKey: "key", RuntimeVersion: "1.0", Platforms: []string{"web"}},
 	} {
-		if _, err := service.CompleteBuildRecord(context.Background(), "build-1", invalid); !errors.Is(err, domain.ErrInvalidBuildInput) {
+		if _, err := service.CompleteBuildRecord(context.Background(), "build-1", "worker-1", invalid); !errors.Is(err, domain.ErrInvalidBuildInput) {
 			t.Fatalf("expected invalid build input for %+v, got %v", invalid, err)
 		}
 	}

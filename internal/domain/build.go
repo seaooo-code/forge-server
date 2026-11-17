@@ -9,6 +9,8 @@ var (
 	ErrBuildRecordNotFound = errors.New("build record not found")
 	ErrInvalidBuildInput   = errors.New("invalid build request")
 	ErrNoBuildRecord       = errors.New("no build record available")
+	// ErrBuildLeaseLost 表示构建已不归当前 worker 所有：租约过期后被其他 worker 接管，或记录已结束。
+	ErrBuildLeaseLost = errors.New("build lease lost")
 )
 
 type BuildStatus string
@@ -135,6 +137,18 @@ type BuildRecordSummary struct {
 	Running   int
 	Succeeded int
 	Total     int
+}
+
+// BuildQueueStats 是构建队列的即时状态，供扩缩容判断使用。
+type BuildQueueStats struct {
+	// Waiting 是等待 worker 领取的构建数，包括租约已过期、等待其他 worker 接管的构建。
+	Waiting int
+	// OldestWaitSeconds 是等待最久的构建已排队的秒数，没有等待中的构建时为 0。
+	OldestWaitSeconds float64
+	// Running 是租约有效、正在执行的构建数。
+	Running int
+	// ActiveWorkers 是持有有效租约的 worker 数。
+	ActiveWorkers int
 }
 
 type BuildRecordCompletion struct {

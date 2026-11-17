@@ -77,9 +77,11 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 	}, logger)
 	buildWorker := worker.New(buildService, executor, logger, worker.Options{
 		BuildTimeout:  cfg.Worker.BuildTimeout,
+		Concurrency:   cfg.Worker.Concurrency,
 		ID:            cfg.Worker.ID,
 		LeaseDuration: cfg.Worker.LeaseDuration,
 		PollInterval:  cfg.Worker.PollInterval,
+		ShutdownGrace: cfg.Worker.ShutdownGrace,
 	})
 
 	return &WorkerApp{

@@ -35,6 +35,8 @@ type HTTPConfig struct {
 	CORSAllowOrigins     []string
 	CORSAllowHeaders     []string
 	CORSAllowCredentials bool
+	// MetricsToken 非空时，GET /metrics 要求 Authorization: Bearer <MetricsToken>，来自 FORGE_METRICS_TOKEN。
+	MetricsToken string
 }
 
 type TelemetryConfig struct {
@@ -102,18 +104,24 @@ type WorkerConfig struct {
 	ArtifactDigests []string
 	ArtifactPrefix  string
 	BuildTimeout    time.Duration
+	// Concurrency 是单个 worker 进程同时执行的构建数，来自 FORGE_WORKER_CONCURRENCY，默认 1。
+	Concurrency int
 	// DepsMaxBytes 是单次构建注入依赖产物的总大小上限，来自 FORGE_WORKER_DEPS_MAX_BYTES，超出时构建失败。
 	DepsMaxBytes int64
 	// Dockerfile 只在模块未配置 dockerfile_path 时兜底，同时作为新建模块的默认值。
-	Dockerfile    string
-	ID            string
+	Dockerfile string
+	// ID 是 worker 的唯一标识，多个 worker 进程不能重复；不能包含 #（并发槽位用 # 拼接序号）。
+	ID string
+	// LeaseDuration 是构建租约时长，执行期间每 1/3 时长续租一次；worker 异常退出后，构建最多等这么久就会被其他 worker 接管。
 	LeaseDuration time.Duration
 	// LogMaxBytes 是单次构建日志上限，超出后只保留开头和最后一段。
 	LogMaxBytes int64
 	// LogRetention 是构建日志保留期，由 API 进程的后台巡检清理。
 	LogRetention time.Duration
 	PollInterval time.Duration
-	WorkDir      string
+	// ShutdownGrace 是 worker 收到退出信号后等待进行中构建完成的时长，超时后中断构建并放回队列，来自 FORGE_WORKER_SHUTDOWN_GRACE。
+	ShutdownGrace time.Duration
+	WorkDir       string
 }
 
 // ArtifactDigestAlgorithms 是 FORGE_ARTIFACT_DIGESTS 允许的摘要算法。
@@ -159,9 +167,33 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	workerLeaseDuration, err := durationEnv("FORGE_WORKER_LEASE_DURATION", 30*time.Minute)
+	workerLeaseDuration, err := durationEnv("FORGE_WORKER_LEASE_DURATION", 2*time.Minute)
 	if err != nil {
 		return Config{}, err
+	}
+	if workerLeaseDuration < 15*time.Second {
+		return Config{}, errors.New("parse FORGE_WORKER_LEASE_DURATION: must be at least 15s")
+	}
+
+	workerConcurrency, err := intEnv("FORGE_WORKER_CONCURRENCY", 1)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerConcurrency < 1 || workerConcurrency > 64 {
+		return Config{}, errors.New("parse FORGE_WORKER_CONCURRENCY: must be between 1 and 64")
+	}
+
+	workerShutdownGrace, err := durationEnv("FORGE_WORKER_SHUTDOWN_GRACE", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerShutdownGrace <= 0 {
+		return Config{}, errors.New("parse FORGE_WORKER_SHUTDOWN_GRACE: must be positive")
+	}
+
+	workerID := strings.TrimSpace(stringEnv("FORGE_WORKER_ID", ""))
+	if strings.Contains(workerID, "#") {
+		return Config{}, errors.New("parse FORGE_WORKER_ID: must not contain #")
 	}
 
 	workerBuildTimeout, err := durationEnv("FORGE_WORKER_BUILD_TIMEOUT", 30*time.Minute)
@@ -245,6 +277,7 @@ func Load() (Config, error) {
 				"X-Request-Id",
 			}),
 			CORSAllowCredentials: boolEnv("HTTP_CORS_ALLOW_CREDENTIALS", true),
+			MetricsToken:         strings.TrimSpace(stringEnv("FORGE_METRICS_TOKEN", "")),
 		},
 		Feishu: FeishuConfig{
 			AppID:                  stringEnv("FEISHU_APP_ID", ""),
@@ -303,13 +336,15 @@ func Load() (Config, error) {
 			ArtifactDigests: artifactDigests,
 			ArtifactPrefix:  strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
 			BuildTimeout:    workerBuildTimeout,
+			Concurrency:     workerConcurrency,
 			DepsMaxBytes:    int64(workerDepsMaxBytes),
 			Dockerfile:      stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
-			ID:              stringEnv("FORGE_WORKER_ID", ""),
+			ID:              workerID,
 			LeaseDuration:   workerLeaseDuration,
 			LogMaxBytes:     int64(workerLogMaxBytes),
 			LogRetention:    buildLogRetention,
 			PollInterval:    workerPollInterval,
+			ShutdownGrace:   workerShutdownGrace,
 			WorkDir:         stringEnv("FORGE_WORKER_WORK_DIR", "/tmp/forge-worker"),
 		},
 	}

@@ -37,6 +37,7 @@ type commandRunner func(ctx context.Context, cmd command) (string, error)
 func execCommand(ctx context.Context, c command) (string, error) {
 	cmd := exec.CommandContext(ctx, c.name, c.args...)
 	cmd.Dir = c.dir
+	detachProcessGroup(cmd)
 	if len(c.env) > 0 {
 		cmd.Env = append(os.Environ(), c.env...)
 	}

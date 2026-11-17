@@ -27,6 +27,7 @@ type Dependencies struct {
 	ArtifactService            ArtifactService
 	ArtifactAccessTokenService ArtifactAccessTokenService
 	BuildService               BuildService
+	BuildQueueService          BuildQueueService
 	BuildAdapterService        BuildAdapterService
 	BuildLogService            BuildLogService
 	BuildVariableService       BuildVariableService
@@ -82,6 +83,10 @@ type BuildService interface {
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
 	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
 	ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+}
+
+type BuildQueueService interface {
+	GetBuildQueueStats(ctx context.Context) (domain.BuildQueueStats, error)
 }
 
 type DashboardService interface {
@@ -172,6 +177,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	e.Use(swallowWrittenResponseErrors)
 
 	registerHealthRoutes(e, deps)
+	registerMetricsRoutes(e, cfg.HTTP.MetricsToken, deps.BuildQueueService)
 	registerOpenAPIRoutes(e)
 
 	api := e.Group("/api/v1")

@@ -103,6 +103,15 @@ func openAPIDocument() *openapi3.T {
 					response(http.StatusServiceUnavailable, "One or more dependencies are unavailable.", schemaRef("ReadinessResponse")),
 				)),
 			}),
+			openapi3.WithPath("/metrics", &openapi3.PathItem{
+				Get: operation("getMetrics", "Build queue metrics in Prometheus text format", []string{"System"}, responses(
+					openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: openapi3.NewResponse().
+						WithDescription("Prometheus text exposition: forge_build_queue_waiting, forge_build_queue_oldest_wait_seconds, forge_build_running, forge_build_workers_active.").
+						WithContent(openapi3.NewContentWithSchema(openapi3.NewStringSchema(), []string{"text/plain"}))}),
+					responseNoBody(http.StatusUnauthorized, "FORGE_METRICS_TOKEN is configured and the bearer token is missing or wrong."),
+					responseNoBody(http.StatusServiceUnavailable, "Queue stats could not be read."),
+				)),
+			}),
 			openapi3.WithPath("/api/v1/ping", &openapi3.PathItem{
 				Get: operation("ping", "API smoke check", []string{"System"}, responses(
 					response(http.StatusOK, "API is reachable.", schemaRef("PingResponse")),

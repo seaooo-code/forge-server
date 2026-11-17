@@ -118,7 +118,8 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | `REDIS_*` | Redis 地址、密码和 DB |
 | `FEISHU_*` | 飞书应用凭证、OAuth 回调、scope 和调试开关 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
-| `FORGE_WORKER_*` | worker ID、轮询、租约、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`） |
+| `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |
+| `FORGE_METRICS_TOKEN` | `GET /metrics` 的可选 Bearer 令牌 |
 | `OTEL_*` | OTLP trace 与 log 导出 |
 
 ## GitHub 代码源
@@ -178,6 +179,7 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 | --- | --- |
 | `GET /healthz` | 进程存活检查 |
 | `GET /readyz` | PostgreSQL 与 Redis 就绪检查 |
+| `GET /metrics` | 构建队列指标（Prometheus 文本格式），见 [worker 扩缩容](docs/worker-scaling.md) |
 | `GET /api/v1/ping` | API 连通性检查 |
 | `GET /openapi.json` | 完整 OpenAPI 3.0 文档，可直接导入 Apifox |
 

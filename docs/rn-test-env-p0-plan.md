@@ -368,7 +368,7 @@ GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/
 - **部署前提**：worker 所在的网络必须能访问代码托管服务和构建依赖源，宿主机需要安装支持 BuildKit 的 Docker。forge-server 也必须能收到托管方的 webhook 回调。
 - **按 SHA fetch 不一定被支持**：如果托管方不支持，就会走 2.3 节的回退逻辑。分支推送频繁时，会出现"构建失败，需要重新触发"。
 - **访问令牌会过期**：GitLab 的 Access Token 有有效期，到期后该连接下的所有构建都会失败。控制台需要提前提示，并指定专人负责续期。
-- **构建资源**：所有构建共用 worker。先观察排队情况，再决定是否水平扩容。现有的租约机制已经支持多 worker。
+- **构建资源**：所有构建共用 worker。先通过 `/metrics` 观察排队情况，再决定是否水平扩容。租约续期、归属校验和退出排空见 [worker 扩缩容](worker-scaling.md)。
 
 ## 8. P0 之后
 

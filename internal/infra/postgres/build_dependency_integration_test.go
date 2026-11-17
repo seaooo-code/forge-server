@@ -49,7 +49,10 @@ func TestIntegrationListActiveDefaultReleaseBuildsAndRecordDependencies(t *testi
 		if err != nil {
 			t.Fatalf("create build: %v", err)
 		}
-		if _, err := repository.CompleteBuildRecord(ctx, record.ID, domain.BuildRecordCompletion{
+		if _, err := pool.Exec(ctx, `update build_records set status = 'running', worker_id = 'worker-1' where id = $1`, record.ID); err != nil {
+			t.Fatalf("mark build running: %v", err)
+		}
+		if _, err := repository.CompleteBuildRecord(ctx, record.ID, "worker-1", domain.BuildRecordCompletion{
 			CommitSHA: fmt.Sprintf("%040d", record.Number), RuntimeVersion: runtimeVersion, Platforms: []string{"android"},
 			ArtifactKey: "k/" + record.ID, ManifestKey: "k/" + record.ID + "/manifest.json", FileCount: 1, TotalSizeBytes: 1,
 		}); err != nil {

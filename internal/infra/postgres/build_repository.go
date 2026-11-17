@@ -440,7 +440,9 @@ func (r *BuildRepository) AcquireNextBuildRecord(ctx context.Context, workerID s
 	return record, nil
 }
 
-func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
+// CompleteBuildRecord 只在构建仍由 workerID 持有（status = 'running' 且 worker_id 一致）时写入结果，否则返回 ErrBuildLeaseLost，
+// 避免租约过期被接管后，原 worker 覆盖新一次执行的结果。
+func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, workerID string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
 	record, err := scanBuildRecord(r.pool.QueryRow(ctx, `
 		with updated as (
 			update build_records br
@@ -458,7 +460,7 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, co
 				platforms = $10,
 				finished_at = now(),
 				updated_at = now()
-			where id = $1
+			where id = $1 and worker_id = $11 and status = 'running'
 			returning br.*
 		)
 	`+buildRecordSelectSQL("updated", `
@@ -467,14 +469,18 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, co
 		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms)))
+	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms), workerID))
+	if errors.Is(err, domain.ErrBuildRecordNotFound) {
+		return domain.BuildRecord{}, domain.ErrBuildLeaseLost
+	}
 	if err != nil {
 		return domain.BuildRecord{}, err
 	}
 	return record, nil
 }
 
-func (r *BuildRepository) FailBuildRecord(ctx context.Context, id string, message string) (domain.BuildRecord, error) {
+// FailBuildRecord 与 CompleteBuildRecord 一样按 workerID 做归属校验。
+func (r *BuildRepository) FailBuildRecord(ctx context.Context, id string, workerID string, message string) (domain.BuildRecord, error) {
 	record, err := scanBuildRecord(r.pool.QueryRow(ctx, `
 		with updated as (
 			update build_records br
@@ -484,7 +490,7 @@ func (r *BuildRepository) FailBuildRecord(ctx context.Context, id string, messag
 				error_message = $2,
 				finished_at = now(),
 				updated_at = now()
-			where id = $1
+			where id = $1 and worker_id = $3 and status = 'running'
 			returning br.*
 		)
 	`+buildRecordSelectSQL("updated", `
@@ -493,11 +499,73 @@ func (r *BuildRepository) FailBuildRecord(ctx context.Context, id string, messag
 		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), id, message))
+	`), id, message, workerID))
+	if errors.Is(err, domain.ErrBuildRecordNotFound) {
+		return domain.BuildRecord{}, domain.ErrBuildLeaseLost
+	}
 	if err != nil {
 		return domain.BuildRecord{}, err
 	}
 	return record, nil
+}
+
+// RenewBuildLease 把仍由 workerID 持有的构建租约延长到 now() + leaseDuration。
+// 构建已被其他 worker 接管或已结束时返回 ErrBuildLeaseLost，worker 据此停止执行。
+func (r *BuildRepository) RenewBuildLease(ctx context.Context, id string, workerID string, leaseDuration time.Duration) error {
+	tag, err := r.pool.Exec(ctx, `
+		update build_records
+		set lease_expires_at = now() + $3::interval, updated_at = now()
+		where id = $1 and worker_id = $2 and status = 'running'
+	`, id, workerID, intervalString(leaseDuration))
+	if err != nil {
+		return fmt.Errorf("renew build lease: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrBuildLeaseLost
+	}
+	return nil
+}
+
+// RequeueBuildRecord 把仍由 workerID 持有的构建放回队列（worker 退出时中断的构建）。queued_at 不变，所以它仍排在队首。
+func (r *BuildRepository) RequeueBuildRecord(ctx context.Context, id string, workerID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		update build_records
+		set status = 'pending', worker_id = '', lease_expires_at = null, started_at = null, updated_at = now()
+		where id = $1 and worker_id = $2 and status = 'running'
+	`, id, workerID)
+	if err != nil {
+		return fmt.Errorf("requeue build record: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrBuildLeaseLost
+	}
+	return nil
+}
+
+// GetBuildQueueStats 统计等待中和执行中的构建。租约过期的 running 构建会被下一个 worker 重新领取，计入等待。
+// 并发槽位的 worker_id 形如 {workerID}#{序号}，统计 worker 数时按 # 前的部分去重。
+func (r *BuildRepository) GetBuildQueueStats(ctx context.Context) (domain.BuildQueueStats, error) {
+	var stats domain.BuildQueueStats
+	err := r.pool.QueryRow(ctx, `
+		with queue as (
+			select
+				worker_id,
+				queued_at,
+				status = 'pending' or lease_expires_at < now() as waiting
+			from build_records
+			where status in ('pending', 'running')
+		)
+		select
+			count(*) filter (where waiting),
+			coalesce(extract(epoch from now() - min(queued_at) filter (where waiting)), 0)::float8,
+			count(*) filter (where not waiting),
+			count(distinct split_part(worker_id, '#', 1)) filter (where not waiting)
+		from queue
+	`).Scan(&stats.Waiting, &stats.OldestWaitSeconds, &stats.Running, &stats.ActiveWorkers)
+	if err != nil {
+		return domain.BuildQueueStats{}, fmt.Errorf("query build queue stats: %w", err)
+	}
+	return stats, nil
 }
 
 type buildRecordRow interface {

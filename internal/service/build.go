@@ -15,11 +15,14 @@ import (
 
 type BuildRecordRepository interface {
 	AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration) (domain.BuildRecord, error)
-	CompleteBuildRecord(ctx context.Context, id string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error)
+	CompleteBuildRecord(ctx context.Context, id string, workerID string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error)
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
-	FailBuildRecord(ctx context.Context, id string, message string) (domain.BuildRecord, error)
+	FailBuildRecord(ctx context.Context, id string, workerID string, message string) (domain.BuildRecord, error)
+	GetBuildQueueStats(ctx context.Context) (domain.BuildQueueStats, error)
 	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
 	ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+	RenewBuildLease(ctx context.Context, id string, workerID string, leaseDuration time.Duration) error
+	RequeueBuildRecord(ctx context.Context, id string, workerID string) error
 }
 
 type ArtifactManifestReader interface {
@@ -102,7 +105,8 @@ func (s *BuildService) AcquireNextBuildRecord(ctx context.Context, workerID stri
 	return s.repository.AcquireNextBuildRecord(ctx, workerID, leaseDuration)
 }
 
-func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
+// CompleteBuildRecord 写入构建结果。构建已不归 workerID 所有时返回 ErrBuildLeaseLost。
+func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, workerID string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
 	normalizedID := strings.TrimSpace(id)
 	if normalizedID == "" {
 		return domain.BuildRecord{}, domain.ErrBuildRecordNotFound
@@ -133,7 +137,7 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, compl
 			normalized.Platforms = append(normalized.Platforms, platform)
 		}
 	}
-	record, err := s.repository.CompleteBuildRecord(ctx, normalizedID, normalized)
+	record, err := s.repository.CompleteBuildRecord(ctx, normalizedID, strings.TrimSpace(workerID), normalized)
 	if err != nil {
 		return domain.BuildRecord{}, err
 	}
@@ -143,7 +147,8 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, compl
 	return record, nil
 }
 
-func (s *BuildService) FailBuildRecord(ctx context.Context, id string, message string) (domain.BuildRecord, error) {
+// FailBuildRecord 把构建标记为失败。构建已不归 workerID 所有时返回 ErrBuildLeaseLost。
+func (s *BuildService) FailBuildRecord(ctx context.Context, id string, workerID string, message string) (domain.BuildRecord, error) {
 	normalizedID := strings.TrimSpace(id)
 	if normalizedID == "" {
 		return domain.BuildRecord{}, domain.ErrBuildRecordNotFound
@@ -153,7 +158,27 @@ func (s *BuildService) FailBuildRecord(ctx context.Context, id string, message s
 	if normalizedMessage == "" {
 		normalizedMessage = "build failed"
 	}
-	return s.repository.FailBuildRecord(ctx, normalizedID, normalizedMessage)
+	return s.repository.FailBuildRecord(ctx, normalizedID, strings.TrimSpace(workerID), normalizedMessage)
+}
+
+// RenewBuildLease 延长 workerID 持有的构建租约，构建已不归它所有时返回 ErrBuildLeaseLost。
+func (s *BuildService) RenewBuildLease(ctx context.Context, id string, workerID string, leaseDuration time.Duration) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(workerID) == "" || leaseDuration <= 0 {
+		return domain.ErrInvalidBuildInput
+	}
+	return s.repository.RenewBuildLease(ctx, strings.TrimSpace(id), strings.TrimSpace(workerID), leaseDuration)
+}
+
+// RequeueBuildRecord 把 workerID 持有、因 worker 退出而中断的构建放回队列。
+func (s *BuildService) RequeueBuildRecord(ctx context.Context, id string, workerID string) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(workerID) == "" {
+		return domain.ErrInvalidBuildInput
+	}
+	return s.repository.RequeueBuildRecord(ctx, strings.TrimSpace(id), strings.TrimSpace(workerID))
+}
+
+func (s *BuildService) GetBuildQueueStats(ctx context.Context) (domain.BuildQueueStats, error) {
+	return s.repository.GetBuildQueueStats(ctx)
 }
 
 func DecodeArtifactManifest(reader io.Reader) (domain.ArtifactManifest, error) {

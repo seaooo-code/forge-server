@@ -113,3 +113,56 @@ func TestLoadWorkerDepsMaxBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadWorkerScalingConfig(t *testing.T) {
+	keys := []string{"FORGE_WORKER_CONCURRENCY", "FORGE_WORKER_LEASE_DURATION", "FORGE_WORKER_SHUTDOWN_GRACE", "FORGE_WORKER_ID", "FORGE_METRICS_TOKEN"}
+	load := func(t *testing.T, env string) (Config, error) {
+		t.Helper()
+		envPath := filepath.Join(t.TempDir(), ".env")
+		if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
+			t.Fatalf("write env file: %v", err)
+		}
+		unsetEnv(t, keys...)
+		t.Setenv("ENV_FILE", envPath)
+		return Load()
+	}
+
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := load(t, "")
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		if cfg.Worker.Concurrency != 1 || cfg.Worker.LeaseDuration != 2*time.Minute || cfg.Worker.ShutdownGrace != 10*time.Minute || cfg.HTTP.MetricsToken != "" {
+			t.Fatalf("unexpected defaults: worker=%+v metricsToken=%q", cfg.Worker, cfg.HTTP.MetricsToken)
+		}
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		cfg, err := load(t, "FORGE_WORKER_CONCURRENCY=3\nFORGE_WORKER_LEASE_DURATION=45s\nFORGE_WORKER_SHUTDOWN_GRACE=30m\nFORGE_WORKER_ID=build-host-1\nFORGE_METRICS_TOKEN= scrape-token \n")
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		if cfg.Worker.Concurrency != 3 || cfg.Worker.LeaseDuration != 45*time.Second || cfg.Worker.ShutdownGrace != 30*time.Minute || cfg.Worker.ID != "build-host-1" || cfg.HTTP.MetricsToken != "scrape-token" {
+			t.Fatalf("unexpected overrides: worker=%+v metricsToken=%q", cfg.Worker, cfg.HTTP.MetricsToken)
+		}
+	})
+
+	invalid := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "zero concurrency", env: "FORGE_WORKER_CONCURRENCY=0\n", want: "FORGE_WORKER_CONCURRENCY"},
+		{name: "too many slots", env: "FORGE_WORKER_CONCURRENCY=65\n", want: "FORGE_WORKER_CONCURRENCY"},
+		{name: "short lease", env: "FORGE_WORKER_LEASE_DURATION=5s\n", want: "FORGE_WORKER_LEASE_DURATION"},
+		{name: "zero grace", env: "FORGE_WORKER_SHUTDOWN_GRACE=0s\n", want: "FORGE_WORKER_SHUTDOWN_GRACE"},
+		{name: "worker id with slot separator", env: "FORGE_WORKER_ID=host#1\n", want: "FORGE_WORKER_ID"},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := load(t, tt.env); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error mentioning %s, got %v", tt.want, err)
+			}
+		})
+	}
+}

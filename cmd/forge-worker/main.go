@@ -22,6 +22,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// 第一次信号进入排空：不再领取新构建，等进行中的构建完成（最多 FORGE_WORKER_SHUTDOWN_GRACE）。
+	// 之后恢复默认信号处理，再发一次信号立即退出，未完成的构建在租约过期后由其他 worker 接管。
+	go func() {
+		<-ctx.Done()
+		stop()
+		logger.Info("shutdown signal received, draining builds; send the signal again to exit immediately")
+	}()
 
 	workerApp, err := app.NewWorker(ctx, cfg, logger)
 	if err != nil {

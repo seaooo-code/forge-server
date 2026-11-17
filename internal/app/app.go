@@ -134,6 +134,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ArtifactAccessTokenService: artifactAccessTokenService,
 		AuthorizationService:       authorizationService,
 		BuildService:               buildService,
+		BuildQueueService:          buildService,
 		BuildAdapterService:        buildAdapterService,
 		BuildLogService:            buildLogService,
 		BuildVariableService:       buildVariableService,

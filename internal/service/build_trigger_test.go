@@ -206,7 +206,7 @@ func TestBuildServiceCompleteInvokesSucceededHookAndIgnoresPreviewFailure(t *tes
 	repository := &succeededBuildRepository{record: testSucceededWebhookBuild()}
 	service := NewBuildService(repository).WithSucceededHook(trigger)
 
-	record, err := service.CompleteBuildRecord(context.Background(), "build-1", domain.BuildRecordCompletion{
+	record, err := service.CompleteBuildRecord(context.Background(), "build-1", "worker-1", domain.BuildRecordCompletion{
 		ArtifactKey:    "rn-bundles/app/module/qa/build-1",
 		RuntimeVersion: "1.0.0",
 		Platforms:      []string{domain.PlatformAndroid},
@@ -334,7 +334,7 @@ type succeededBuildRepository struct {
 	record domain.BuildRecord
 }
 
-func (r *succeededBuildRepository) CompleteBuildRecord(context.Context, string, domain.BuildRecordCompletion) (domain.BuildRecord, error) {
+func (r *succeededBuildRepository) CompleteBuildRecord(context.Context, string, string, domain.BuildRecordCompletion) (domain.BuildRecord, error) {
 	return r.record, nil
 }
 
