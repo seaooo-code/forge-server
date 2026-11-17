@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,40 @@ func TestGetBuildRecord(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "secret") {
 		t.Fatalf("build response must not expose storage secrets: %s", rec.Body.String())
+	}
+}
+
+func TestGetBuildRecordReturnsDependencyBuilds(t *testing.T) {
+	record := testHTTPBuildRecord()
+	record.DependencyBuilds = []domain.BuildDependency{{
+		ModuleID: "common", ModuleName: "Common", RuntimeVersion: "1.0", BuildRecordID: "build-common", BuildNumber: 9,
+	}}
+	e := New(config.Config{}, Dependencies{BuildService: &fakeBuildService{record: record}})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/builds/build-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Build struct {
+			DependencyBuilds []map[string]any `json:"dependencyBuilds"`
+		} `json:"build"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := map[string]any{"moduleId": "common", "moduleName": "Common", "runtimeVersion": "1.0", "buildRecordId": "build-common", "buildNumber": float64(9)}
+	if len(response.Build.DependencyBuilds) != 1 || !reflect.DeepEqual(response.Build.DependencyBuilds[0], want) {
+		t.Fatalf("unexpected dependencyBuilds: %#v", response.Build.DependencyBuilds)
+	}
+
+	// 没有依赖时序列化为空数组而不是 null。
+	rec = httptest.NewRecorder()
+	e = New(config.Config{}, Dependencies{BuildService: &fakeBuildService{record: testHTTPBuildRecord()}})
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/builds/build-1", nil))
+	if !strings.Contains(rec.Body.String(), `"dependencyBuilds":[]`) {
+		t.Fatalf("expected empty dependencyBuilds array, got %s", rec.Body.String())
 	}
 }
 

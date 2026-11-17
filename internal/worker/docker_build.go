@@ -124,6 +124,8 @@ func dockerBuildVariableOptions(record domain.BuildRecord, commitSHA string, var
 		{"FORGE_COMMIT_SHA", commitSHA},
 		{"FORGE_BUILD_ID", record.ID},
 		{"FORGE_MODULE_ID", record.ModuleID},
+		// 依赖产物目录相对构建上下文；只有注入了依赖时目录才存在。
+		{domain.BuildDependenciesDirArg, buildDependenciesDirArgValue},
 	} {
 		options = append(options, "--build-arg", item[0]+"="+item[1])
 	}

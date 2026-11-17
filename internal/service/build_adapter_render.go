@@ -109,6 +109,9 @@ func ValidateBuildAdapterDefinition(input domain.BuildAdapterInput) (domain.Buil
 		if !domain.IsValidBuildAdapterFilePath(filePath) {
 			return domain.BuildAdapterInput{}, fmt.Errorf("%w: 辅助文件路径 %q 必须是不含 .. 的相对路径", domain.ErrInvalidBuildAdapterInput, filePath)
 		}
+		if domain.IsReservedBuildAdapterFilePath(filePath) {
+			return domain.BuildAdapterInput{}, fmt.Errorf("%w: 辅助文件路径 %q 不能使用平台保留目录 %s/", domain.ErrInvalidBuildAdapterInput, filePath, domain.BuildDependenciesDir)
+		}
 		if len(content) > domain.MaxBuildAdapterFileBytes {
 			return domain.BuildAdapterInput{}, fmt.Errorf("%w: 辅助文件 %s 超过 %d 字节", domain.ErrInvalidBuildAdapterInput, filePath, domain.MaxBuildAdapterFileBytes)
 		}
@@ -230,6 +233,9 @@ func RenderBuildAdapter(adapter domain.BuildAdapter, context domain.BuildAdapter
 		content := adapter.Files[filePath]
 		if !domain.IsValidBuildAdapterFilePath(filePath) {
 			return domain.BuildAdapterRenderResult{}, fmt.Errorf("%w: 辅助文件路径 %q 必须是不含 .. 的相对路径", domain.ErrInvalidBuildAdapterInput, filePath)
+		}
+		if domain.IsReservedBuildAdapterFilePath(filePath) {
+			return domain.BuildAdapterRenderResult{}, fmt.Errorf("%w: 辅助文件路径 %q 不能使用平台保留目录 %s/", domain.ErrInvalidBuildAdapterInput, filePath, domain.BuildDependenciesDir)
 		}
 		if len(content) > domain.MaxBuildAdapterFileBytes {
 			return domain.BuildAdapterRenderResult{}, fmt.Errorf("%w: 辅助文件 %s 超过 %d 字节", domain.ErrInvalidBuildAdapterInput, filePath, domain.MaxBuildAdapterFileBytes)

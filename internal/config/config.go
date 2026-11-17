@@ -102,6 +102,8 @@ type WorkerConfig struct {
 	ArtifactDigests []string
 	ArtifactPrefix  string
 	BuildTimeout    time.Duration
+	// DepsMaxBytes 是单次构建注入依赖产物的总大小上限，来自 FORGE_WORKER_DEPS_MAX_BYTES，超出时构建失败。
+	DepsMaxBytes int64
 	// Dockerfile 只在模块未配置 dockerfile_path 时兜底，同时作为新建模块的默认值。
 	Dockerfile    string
 	ID            string
@@ -173,6 +175,14 @@ func Load() (Config, error) {
 	}
 	if workerLogMaxBytes <= 0 {
 		return Config{}, errors.New("parse FORGE_WORKER_LOG_MAX_BYTES: must be positive")
+	}
+
+	workerDepsMaxBytes, err := intEnv("FORGE_WORKER_DEPS_MAX_BYTES", 200*1024*1024)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerDepsMaxBytes <= 0 {
+		return Config{}, errors.New("parse FORGE_WORKER_DEPS_MAX_BYTES: must be positive")
 	}
 
 	buildLogRetention, err := retentionEnv("FORGE_BUILD_LOG_RETENTION", 30*24*time.Hour)
@@ -293,6 +303,7 @@ func Load() (Config, error) {
 			ArtifactDigests: artifactDigests,
 			ArtifactPrefix:  strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
 			BuildTimeout:    workerBuildTimeout,
+			DepsMaxBytes:    int64(workerDepsMaxBytes),
 			Dockerfile:      stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
 			ID:              stringEnv("FORGE_WORKER_ID", ""),
 			LeaseDuration:   workerLeaseDuration,

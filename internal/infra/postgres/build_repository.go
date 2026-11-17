@@ -74,6 +74,88 @@ func (r *BuildRepository) RecordBuildAdapterUsage(ctx context.Context, id string
 	return nil
 }
 
+// buildDependencyRow 是 dependency_builds 的 JSON 形态。落库只写 moduleId、runtimeVersion、buildRecordId，
+// 读取时 select 语句补上 moduleName 和 buildNumber。
+type buildDependencyRow struct {
+	ModuleID       string `json:"moduleId"`
+	ModuleName     string `json:"moduleName,omitempty"`
+	RuntimeVersion string `json:"runtimeVersion"`
+	BuildRecordID  string `json:"buildRecordId"`
+	BuildNumber    int64  `json:"buildNumber,omitempty"`
+}
+
+// RecordBuildDependencies 由 worker 在依赖产物注入完成后写回本次注入的依赖构建，重复执行时整体覆盖。
+func (r *BuildRepository) RecordBuildDependencies(ctx context.Context, id string, dependencies []domain.BuildDependency) error {
+	rows := make([]buildDependencyRow, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		rows = append(rows, buildDependencyRow{
+			ModuleID:       dependency.ModuleID,
+			RuntimeVersion: dependency.RuntimeVersion,
+			BuildRecordID:  dependency.BuildRecordID,
+		})
+	}
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("encode build dependencies: %w", err)
+	}
+	tag, err := r.pool.Exec(ctx, `
+		update build_records set
+			dependency_builds = $2::jsonb,
+			updated_at = now()
+		where id = $1
+	`, id, string(payload))
+	if err != nil {
+		return fmt.Errorf("record build dependencies: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrBuildRecordNotFound
+	}
+	return nil
+}
+
+// ListActiveDefaultReleaseBuilds 返回模块在环境下所有生效中的默认路由（route_type = 'default'、status = 'active'）
+// 指向的构建，按 runtime_version 排序。唯一索引保证每个运行时版本最多一条生效默认路由。
+// 构建记录的存储配置取构建自己的 storage_configuration_id。
+func (r *BuildRepository) ListActiveDefaultReleaseBuilds(ctx context.Context, moduleID string, environment string) ([]domain.BuildRecord, error) {
+	rows, err := r.pool.Query(ctx, `
+		with routed as (
+			select distinct on (rr.runtime_version) br.*
+			from release_routes rr
+			join release_records rel on rel.id = rr.release_id
+			join build_records br on br.id = rel.build_record_id
+			where rr.module_id = $1
+				and rr.environment_code = $2
+				and rr.route_type = 'default'
+				and rr.status = 'active'
+			order by rr.runtime_version, rr.updated_at desc
+		)
+	`+buildRecordSelectSQL("routed", `
+		join modules m on m.id = br.module_id
+		join applications a on a.id = m.application_id
+		join code_source_connections csc on csc.id = m.code_source_connection_id
+		join environments e on e.code = br.environment_code
+		join storage_configurations s on s.id = br.storage_configuration_id
+		order by br.runtime_version
+	`), moduleID, environment)
+	if err != nil {
+		return nil, fmt.Errorf("query active default release builds: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]domain.BuildRecord, 0)
+	for rows.Next() {
+		record, err := scanBuildRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active default release builds: %w", err)
+	}
+	return records, nil
+}
+
 // CreateBuildRecordUnlessActive 用于 webhook 幂等创建构建：同一 (module_id, environment_code, commit_sha)
 // 已有 pending/running/succeeded 构建时不再创建，返回已有构建且 created=false。
 // 并发重投通过事务级 advisory lock 串行化，锁在事务提交或回滚时自动释放。
@@ -431,6 +513,8 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			a.name as application_name,
 			br.module_id,
 			m.name as module_name,
+			m.kind as module_kind,
+			coalesce(m.common_module_id, '') as common_module_id,
 			br.environment_code,
 			e.name as environment_name,
 			csc.provider as code_source_provider,
@@ -447,6 +531,19 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			coalesce(br.build_adapter_id, ''),
 			br.build_adapter_version,
 			br.rendered_dockerfile_sha256,
+			-- 依赖构建只落库 id，构建号和模块名在读取时关联，依赖构建或模块不存在时为空。
+			coalesce((
+				select jsonb_agg(jsonb_build_object(
+					'moduleId', dependency.item->>'moduleId',
+					'moduleName', coalesce(dependency_module.name, ''),
+					'runtimeVersion', dependency.item->>'runtimeVersion',
+					'buildRecordId', dependency.item->>'buildRecordId',
+					'buildNumber', coalesce(dependency_build.number, 0)
+				) order by dependency.position)
+				from jsonb_array_elements(br.dependency_builds) with ordinality as dependency(item, position)
+				left join build_records dependency_build on dependency_build.id = (dependency.item->>'buildRecordId')::uuid
+				left join modules dependency_module on dependency_module.id = dependency.item->>'moduleId'
+			), '[]'::jsonb) as dependency_builds,
 			br.branch,
 			br.commit_sha,
 			br.runtime_version,
@@ -489,6 +586,7 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	var finishedAt sql.NullTime
 	var createdByName, createdByAvatarURL string
 	var moduleAdapterParams []byte
+	var dependencyBuilds []byte
 	if err := row.Scan(
 		&record.ID,
 		&record.Number,
@@ -496,6 +594,8 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.ApplicationName,
 		&record.ModuleID,
 		&record.ModuleName,
+		&record.ModuleKind,
+		&record.CommonModuleID,
 		&record.Environment,
 		&record.EnvironmentName,
 		&record.CodeSourceProvider,
@@ -512,6 +612,7 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.BuildAdapterID,
 		&record.BuildAdapterVersion,
 		&record.RenderedDockerfileSHA256,
+		&dependencyBuilds,
 		&record.Branch,
 		&record.CommitSHA,
 		&record.RuntimeVersion,
@@ -553,6 +654,20 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	record.ModuleBuildAdapterParams = map[string]string{}
 	if err := json.Unmarshal(moduleAdapterParams, &record.ModuleBuildAdapterParams); err != nil {
 		return domain.BuildRecord{}, fmt.Errorf("decode module build adapter params: %w", err)
+	}
+	var dependencies []buildDependencyRow
+	if err := json.Unmarshal(dependencyBuilds, &dependencies); err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("decode build dependencies: %w", err)
+	}
+	record.DependencyBuilds = make([]domain.BuildDependency, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		record.DependencyBuilds = append(record.DependencyBuilds, domain.BuildDependency{
+			ModuleID:       dependency.ModuleID,
+			ModuleName:     dependency.ModuleName,
+			RuntimeVersion: dependency.RuntimeVersion,
+			BuildRecordID:  dependency.BuildRecordID,
+			BuildNumber:    dependency.BuildNumber,
+		})
 	}
 	if record.CreatedByUserID != "" {
 		record.CreatedBy = &domain.UserSummary{ID: record.CreatedByUserID, Name: createdByName, AvatarURL: createdByAvatarURL}

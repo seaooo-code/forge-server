@@ -103,6 +103,7 @@ func TestDockerBuildVariableOptionsKeepsSecretsOutOfArgs(t *testing.T) {
 		"--build-arg", "FORGE_COMMIT_SHA=" + testCommitSHA,
 		"--build-arg", "FORGE_BUILD_ID=build-1",
 		"--build-arg", "FORGE_MODULE_ID=module-1",
+		"--build-arg", "FORGE_DEPS_DIR=.forge/deps",
 	}
 	if !slices.Equal(options, want) {
 		t.Fatalf("expected %#v, got %#v", want, options)

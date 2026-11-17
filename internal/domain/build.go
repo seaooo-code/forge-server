@@ -29,11 +29,14 @@ const (
 type BuildRecord struct {
 	ID string
 	// Number 是模块内单调递增的构建号。
-	Number             int64
-	ApplicationSlug    string
-	ApplicationName    string
-	ModuleID           string
-	ModuleName         string
+	Number          int64
+	ApplicationSlug string
+	ApplicationName string
+	ModuleID        string
+	ModuleName      string
+	// ModuleKind、CommonModuleID 来自模块当前配置，worker 据此决定是否注入所属 Common 模块的产物。
+	ModuleKind         ModuleKind
+	CommonModuleID     string
 	Environment        string
 	EnvironmentName    string
 	CodeSourceProvider CodeSourceProvider
@@ -48,6 +51,8 @@ type BuildRecord struct {
 	BuildAdapterID           string
 	BuildAdapterVersion      *int
 	RenderedDockerfileSHA256 string
+	// DependencyBuilds 是 worker 注入到构建上下文的依赖构建，没有注入时为空。
+	DependencyBuilds         []BuildDependency
 	Branch                   string
 	CommitSHA                string
 	RuntimeVersion           string
@@ -80,6 +85,28 @@ type BuildRecord struct {
 	FinishedAt      *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// 依赖产物注入的目录约定：{构建上下文}/.forge/deps/common/index.json 与 {runtimeVersion}/{platform}/...。
+const (
+	// BuildDependenciesDir 是依赖产物在 .forge 下的目录，构建适配器的辅助文件不能使用。
+	BuildDependenciesDir = "deps"
+	// BuildCommonDependencyDir 是所属 Common 模块产物在依赖目录下的子目录。
+	BuildCommonDependencyDir = "common"
+	// BuildDependencyIndexFileName 是依赖目录下描述注入内容的索引文件。
+	BuildDependencyIndexFileName = "index.json"
+	// BuildDependenciesDirArg 是传给 docker build 的 build-arg 名，值为相对构建上下文的依赖目录。
+	BuildDependenciesDirArg = "FORGE_DEPS_DIR"
+)
+
+// BuildDependency 是一次构建注入的依赖构建。落库只保存 ModuleID、RuntimeVersion、BuildRecordID，
+// ModuleName 和 BuildNumber 在读取时按 id 关联得到，依赖构建或模块不存在时为空。
+type BuildDependency struct {
+	ModuleID       string
+	ModuleName     string
+	RuntimeVersion string
+	BuildRecordID  string
+	BuildNumber    int64
 }
 
 type BuildRecordInput struct {

@@ -366,6 +366,9 @@ create table build_records (
     build_adapter_id text,
     build_adapter_version integer,
     rendered_dockerfile_sha256 text not null default '',
+    -- 构建时注入到构建上下文的依赖构建：[{moduleId, runtimeVersion, buildRecordId}]。
+    -- Feature 模块注入所属 Common 模块在当前环境下生效中的默认路由产物，其他构建为空数组。
+    dependency_builds jsonb not null default '[]',
     worker_id text not null default '',
     lease_expires_at timestamptz,
     artifact_key text not null default '',

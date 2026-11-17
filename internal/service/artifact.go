@@ -76,7 +76,7 @@ func (s *ArtifactService) DownloadArtifactFile(ctx context.Context, input domain
 		return domain.ArtifactObject{}, domain.ErrArtifactNotFound
 	}
 
-	objectKey := artifactObjectKey(record, file)
+	objectKey := ArtifactObjectKey(record, file)
 	object, err := s.objectReader.GetArtifactObject(ctx, record, objectKey)
 	if err != nil {
 		return domain.ArtifactObject{}, err
@@ -246,7 +246,7 @@ func resolvedArtifactManifestFiles(input domain.ArtifactManifestInput, record do
 		if !ok || filePath == "" {
 			continue
 		}
-		objectKey := artifactObjectKey(record, file)
+		objectKey := ArtifactObjectKey(record, file)
 		// 旧清单没有 digests，用 sha256 补齐，客户端可以只读 digests 做校验。
 		digests := make(map[string]string, len(file.Digests)+1)
 		for algorithm, value := range file.Digests {
@@ -286,7 +286,9 @@ func artifactFileURL(input domain.ArtifactManifestInput, record domain.BuildReco
 		values.Encode()
 }
 
-func artifactObjectKey(record domain.BuildRecord, file domain.ArtifactManifestFile) string {
+// ArtifactObjectKey 返回清单文件项在对象存储中的 key：优先用清单记录的 objectKey，旧清单按 {artifactKey}/{path} 推算。
+// API 下载和 worker 读取依赖产物共用这条规则。
+func ArtifactObjectKey(record domain.BuildRecord, file domain.ArtifactManifestFile) string {
 	objectKey := strings.Trim(strings.TrimSpace(file.ObjectKey), "/")
 	if objectKey != "" {
 		return objectKey

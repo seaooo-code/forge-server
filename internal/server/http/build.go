@@ -32,45 +32,55 @@ type buildRecordsResponse struct {
 }
 
 type buildRecordResponse struct {
-	ApplicationName          string                `json:"applicationName"`
-	ArtifactTree             *artifactTreeResponse `json:"artifactTree,omitempty"`
-	ArtifactKey              string                `json:"artifactKey"`
-	ArtifactURL              string                `json:"artifactUrl"`
-	CreatedAt                string                `json:"createdAt"`
-	CreatedBy                *userSummaryResponse  `json:"createdBy"`
-	Branch                   string                `json:"branch"`
-	DefaultBranch            string                `json:"defaultBranch"`
-	Environment              string                `json:"environment"`
-	EnvironmentName          string                `json:"environmentName"`
-	ErrorMessage             string                `json:"errorMessage"`
-	FinishedAt               string                `json:"finishedAt"`
-	ID                       string                `json:"id"`
-	Number                   int64                 `json:"number"`
-	BuildAdapterID           string                `json:"buildAdapterId"`
-	BuildAdapterVersion      *int                  `json:"buildAdapterVersion"`
-	RenderedDockerfileSHA256 string                `json:"renderedDockerfileSha256"`
-	ModuleID                 string                `json:"moduleId"`
-	ModuleName               string                `json:"moduleName"`
-	ManifestKey              string                `json:"manifestKey"`
-	FileCount                int                   `json:"fileCount"`
-	TotalSizeBytes           int64                 `json:"totalSizeBytes"`
-	QueuedAt                 string                `json:"queuedAt"`
-	CodeSourceConnectionID   string                `json:"codeSourceConnectionId"`
-	CommitSHA                string                `json:"commitSha"`
-	Platforms                []string              `json:"platforms"`
-	RepositoryFullName       string                `json:"repositoryFullName"`
-	RepositoryID             string                `json:"repositoryId"`
-	RepositoryProvider       string                `json:"repositoryProvider"`
-	RepositoryWebURL         string                `json:"repositoryWebUrl"`
-	RuntimeVersion           string                `json:"runtimeVersion"`
-	StartedAt                string                `json:"startedAt"`
-	Status                   string                `json:"status"`
-	StorageConfigurationID   string                `json:"storageConfigurationId"`
-	StorageConfigurationName string                `json:"storageConfigurationName"`
-	TriggerID                string                `json:"triggerId"`
-	TriggerType              string                `json:"triggerType"`
-	UpdatedAt                string                `json:"updatedAt"`
-	WorkerID                 string                `json:"workerId"`
+	ApplicationName          string                    `json:"applicationName"`
+	ArtifactTree             *artifactTreeResponse     `json:"artifactTree,omitempty"`
+	ArtifactKey              string                    `json:"artifactKey"`
+	ArtifactURL              string                    `json:"artifactUrl"`
+	CreatedAt                string                    `json:"createdAt"`
+	CreatedBy                *userSummaryResponse      `json:"createdBy"`
+	Branch                   string                    `json:"branch"`
+	DefaultBranch            string                    `json:"defaultBranch"`
+	DependencyBuilds         []buildDependencyResponse `json:"dependencyBuilds"`
+	Environment              string                    `json:"environment"`
+	EnvironmentName          string                    `json:"environmentName"`
+	ErrorMessage             string                    `json:"errorMessage"`
+	FinishedAt               string                    `json:"finishedAt"`
+	ID                       string                    `json:"id"`
+	Number                   int64                     `json:"number"`
+	BuildAdapterID           string                    `json:"buildAdapterId"`
+	BuildAdapterVersion      *int                      `json:"buildAdapterVersion"`
+	RenderedDockerfileSHA256 string                    `json:"renderedDockerfileSha256"`
+	ModuleID                 string                    `json:"moduleId"`
+	ModuleName               string                    `json:"moduleName"`
+	ManifestKey              string                    `json:"manifestKey"`
+	FileCount                int                       `json:"fileCount"`
+	TotalSizeBytes           int64                     `json:"totalSizeBytes"`
+	QueuedAt                 string                    `json:"queuedAt"`
+	CodeSourceConnectionID   string                    `json:"codeSourceConnectionId"`
+	CommitSHA                string                    `json:"commitSha"`
+	Platforms                []string                  `json:"platforms"`
+	RepositoryFullName       string                    `json:"repositoryFullName"`
+	RepositoryID             string                    `json:"repositoryId"`
+	RepositoryProvider       string                    `json:"repositoryProvider"`
+	RepositoryWebURL         string                    `json:"repositoryWebUrl"`
+	RuntimeVersion           string                    `json:"runtimeVersion"`
+	StartedAt                string                    `json:"startedAt"`
+	Status                   string                    `json:"status"`
+	StorageConfigurationID   string                    `json:"storageConfigurationId"`
+	StorageConfigurationName string                    `json:"storageConfigurationName"`
+	TriggerID                string                    `json:"triggerId"`
+	TriggerType              string                    `json:"triggerType"`
+	UpdatedAt                string                    `json:"updatedAt"`
+	WorkerID                 string                    `json:"workerId"`
+}
+
+// buildDependencyResponse 是构建时注入的依赖构建。buildNumber 和 moduleName 在依赖构建或模块不存在时为零值。
+type buildDependencyResponse struct {
+	BuildNumber    int64  `json:"buildNumber"`
+	BuildRecordID  string `json:"buildRecordId"`
+	ModuleID       string `json:"moduleId"`
+	ModuleName     string `json:"moduleName"`
+	RuntimeVersion string `json:"runtimeVersion"`
 }
 
 // userSummaryResponse 是创建人等关联用户的展示字段；用户为空时整个对象为 null。
@@ -260,6 +270,16 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		TriggerType:              string(record.TriggerType),
 		UpdatedAt:                formatTime(record.UpdatedAt),
 		WorkerID:                 record.WorkerID,
+	}
+	response.DependencyBuilds = make([]buildDependencyResponse, 0, len(record.DependencyBuilds))
+	for _, dependency := range record.DependencyBuilds {
+		response.DependencyBuilds = append(response.DependencyBuilds, buildDependencyResponse{
+			BuildNumber:    dependency.BuildNumber,
+			BuildRecordID:  dependency.BuildRecordID,
+			ModuleID:       dependency.ModuleID,
+			ModuleName:     dependency.ModuleName,
+			RuntimeVersion: dependency.RuntimeVersion,
+		})
 	}
 	if record.CreatedBy != nil {
 		response.CreatedBy = &userSummaryResponse{AvatarURL: record.CreatedBy.AvatarURL, ID: record.CreatedBy.ID, Name: record.CreatedBy.Name}

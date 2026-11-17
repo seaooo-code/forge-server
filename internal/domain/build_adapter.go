@@ -170,6 +170,11 @@ func IsValidBuildAdapterParameterKey(key string) bool {
 	return buildAdapterParameterKeyPattern.MatchString(key)
 }
 
+// IsReservedBuildAdapterFilePath 判断辅助文件路径是否落在平台保留的目录里（.forge/deps/ 用于依赖产物注入）。
+func IsReservedBuildAdapterFilePath(value string) bool {
+	return value == BuildDependenciesDir || strings.HasPrefix(value, BuildDependenciesDir+"/")
+}
+
 // IsValidBuildAdapterFilePath 要求辅助文件路径是规范化的相对路径，不能含 ..、反斜杠或控制字符。
 func IsValidBuildAdapterFilePath(value string) bool {
 	if value == "" || len(value) > MaxBuildAdapterFilePathLength || strings.Contains(value, "\\") || path.IsAbs(value) {

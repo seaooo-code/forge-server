@@ -75,3 +75,41 @@ func TestLoadRejectsInvalidWorkerBuildLogAndDigestConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadWorkerDepsMaxBytes(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    int64
+		wantErr bool
+	}{
+		{name: "default", env: "", want: 200 * 1024 * 1024},
+		{name: "override", env: "FORGE_WORKER_DEPS_MAX_BYTES=1048576\n", want: 1048576},
+		{name: "zero", env: "FORGE_WORKER_DEPS_MAX_BYTES=0\n", wantErr: true},
+		{name: "invalid", env: "FORGE_WORKER_DEPS_MAX_BYTES=abc\n", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envPath := filepath.Join(t.TempDir(), ".env")
+			if err := os.WriteFile(envPath, []byte(tt.env), 0o600); err != nil {
+				t.Fatalf("write env file: %v", err)
+			}
+			unsetEnv(t, "FORGE_WORKER_DEPS_MAX_BYTES")
+			t.Setenv("ENV_FILE", envPath)
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "FORGE_WORKER_DEPS_MAX_BYTES") {
+					t.Fatalf("expected FORGE_WORKER_DEPS_MAX_BYTES error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.Worker.DepsMaxBytes != tt.want {
+				t.Fatalf("expected %d, got %d", tt.want, cfg.Worker.DepsMaxBytes)
+			}
+		})
+	}
+}

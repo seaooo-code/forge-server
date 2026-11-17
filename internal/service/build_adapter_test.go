@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -252,6 +253,11 @@ func TestBuildAdapterServicePreviewDraft(t *testing.T) {
 	broken.Files = map[string]string{"../escape.sh": "x"}
 	if _, err := service.PreviewBuildAdapterDraft(context.Background(), broken, domain.BuildAdapterPreviewInput{Params: map[string]string{"entry": "a"}}); !errors.Is(err, domain.ErrInvalidBuildAdapterInput) {
 		t.Fatalf("expected invalid draft path error, got %v", err)
+	}
+	// .forge/deps/ 是依赖产物注入的保留目录，辅助文件不能使用。
+	broken.Files = map[string]string{"deps/common/index.json": "{}"}
+	if _, err := service.PreviewBuildAdapterDraft(context.Background(), broken, domain.BuildAdapterPreviewInput{Params: map[string]string{"entry": "a"}}); !errors.Is(err, domain.ErrInvalidBuildAdapterInput) || !strings.Contains(err.Error(), "保留目录") {
+		t.Fatalf("expected reserved deps path error, got %v", err)
 	}
 	broken = draft
 	broken.DockerfileTemplate = "FROM node\n{{ printf \"x\" }}\n"

@@ -109,7 +109,7 @@ create table module_build_variables (
 - 用户变量的 key 不能以 `FORGE_` 开头，这个前缀留给平台注入的变量，保存时会被拒绝。
 - 密钥变量传给 docker CLI 时，环境变量名是 `FORGE_BUILD_SECRET_<KEY>`，参数为 `--secret id=<KEY>,env=FORGE_BUILD_SECRET_<KEY>`。密钥值只出现在 docker 进程的环境变量里，不出现在命令行参数中。Dockerfile 里仍然按 `id=<KEY>` 挂载，例如 `RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN npm ci`（`env=` 写法要求 Dockerfile 语法 ≥ 1.10）。
 - 同一个 key 同时有通用值和环境专属值时，以环境专属值为准。接口不会返回密钥变量的原值。
-- 平台固定注入以下变量：`FORGE_ENVIRONMENT`、`FORGE_BRANCH`、`FORGE_COMMIT_SHA`、`FORGE_BUILD_ID`、`FORGE_MODULE_ID`。
+- 平台固定注入以下变量：`FORGE_ENVIRONMENT`、`FORGE_BRANCH`、`FORGE_COMMIT_SHA`、`FORGE_BUILD_ID`、`FORGE_MODULE_ID`、`FORGE_DEPS_DIR`（依赖产物目录，见 [构建适配器方案](build-adapters.md) 第 4 节）。
 - `unique nulls not distinct` 要求 PostgreSQL 15 及以上，部署文档需要写明这个最低版本。
 
 ### 2.3 触发与检出

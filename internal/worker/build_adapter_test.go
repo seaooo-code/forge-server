@@ -147,7 +147,7 @@ func TestExecuteAdapterModeFailsOnRenderError(t *testing.T) {
 	}
 }
 
-func TestWriteBuildAdapterFilesRejectsExistingForgeDir(t *testing.T) {
+func TestEnsureForgeDirAvailableRejectsExistingForgeDir(t *testing.T) {
 	for name, prepare := range map[string]func(dir string) error{
 		"directory": func(dir string) error { return os.Mkdir(filepath.Join(dir, ".forge"), 0o755) },
 		"file":      func(dir string) error { return os.WriteFile(filepath.Join(dir, ".forge"), []byte("x"), 0o600) },
@@ -158,7 +158,7 @@ func TestWriteBuildAdapterFilesRejectsExistingForgeDir(t *testing.T) {
 			if err := prepare(contextDir); err != nil {
 				t.Fatal(err)
 			}
-			err := writeBuildAdapterFiles(contextDir, map[string]string{"a.txt": "x"})
+			err := ensureForgeDirAvailable(contextDir)
 			if err == nil || !strings.Contains(err.Error(), "已存在 .forge") {
 				t.Fatalf("expected .forge conflict, got %v", err)
 			}
@@ -166,8 +166,14 @@ func TestWriteBuildAdapterFilesRejectsExistingForgeDir(t *testing.T) {
 	}
 
 	contextDir := t.TempDir()
+	if err := ensureForgeDirAvailable(contextDir); err != nil {
+		t.Fatalf("expected empty context to be available, got %v", err)
+	}
 	if err := writeBuildAdapterFiles(contextDir, map[string]string{"../escape.txt": "x"}); err == nil {
 		t.Fatal("expected invalid path to fail")
+	}
+	if err := writeBuildAdapterFiles(contextDir, map[string]string{"deps/common/index.json": "{}"}); err == nil {
+		t.Fatal("expected reserved deps path to fail")
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(contextDir), "escape.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("file escaped context dir: %v", err)

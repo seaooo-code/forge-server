@@ -46,12 +46,15 @@ const dockerBuildArtifactDir = "/app/dist"
 const renderedDockerfileName = "Dockerfile.adapter"
 
 type Executor struct {
-	adapters    BuildAdapterProvider
-	cfg         config.WorkerConfig
-	credentials RepositoryCredentialsProvider
-	variables   BuildVariableResolver
-	logs        BuildLogStore
-	logger      *slog.Logger
+	adapters     BuildAdapterProvider
+	cfg          config.WorkerConfig
+	credentials  RepositoryCredentialsProvider
+	dependencies BuildDependencyProvider
+	// dependencyArtifacts 读取依赖构建的清单和文件，为空时使用 infra/s3。
+	dependencyArtifacts DependencyArtifactReader
+	variables           BuildVariableResolver
+	logs                BuildLogStore
+	logger              *slog.Logger
 	// runner 为空时使用 execCommand，测试可以替换成假实现。
 	runner commandRunner
 	// logFlushInterval 为 0 时使用 buildLogFlushInterval。
@@ -61,8 +64,12 @@ type Executor struct {
 type ExecutorDependencies struct {
 	Adapters    BuildAdapterProvider
 	Credentials RepositoryCredentialsProvider
-	Logs        BuildLogStore
-	Variables   BuildVariableResolver
+	// Dependencies 为空时不注入依赖产物。
+	Dependencies BuildDependencyProvider
+	// DependencyArtifacts 为空时使用 infra/s3 按依赖构建的存储配置读取。
+	DependencyArtifacts DependencyArtifactReader
+	Logs                BuildLogStore
+	Variables           BuildVariableResolver
 }
 
 type buildWorkspace struct {
@@ -72,13 +79,19 @@ type buildWorkspace struct {
 }
 
 func NewExecutor(cfg config.WorkerConfig, deps ExecutorDependencies, logger *slog.Logger) *Executor {
+	dependencyArtifacts := deps.DependencyArtifacts
+	if dependencyArtifacts == nil {
+		dependencyArtifacts = s3DependencyArtifactReader{}
+	}
 	return &Executor{
-		adapters:    deps.Adapters,
-		cfg:         cfg,
-		credentials: deps.Credentials,
-		variables:   deps.Variables,
-		logs:        deps.Logs,
-		logger:      logger,
+		adapters:            deps.Adapters,
+		cfg:                 cfg,
+		credentials:         deps.Credentials,
+		dependencies:        deps.Dependencies,
+		dependencyArtifacts: dependencyArtifacts,
+		variables:           deps.Variables,
+		logs:                deps.Logs,
+		logger:              logger,
 	}
 }
 
@@ -166,10 +179,38 @@ func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs 
 	if err := verifyDockerBuildPaths(workspace.repoDir, paths); err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
+	var adapterFiles map[string]string
 	if adapter != nil {
-		paths.dockerfile, err = e.prepareBuildAdapter(ctx, record, *adapter, commitSHA, workspace.rootDir, paths.context, logs)
+		paths.dockerfile, adapterFiles, err = e.prepareBuildAdapter(ctx, record, *adapter, commitSHA, workspace.rootDir, logs)
 		if err != nil {
 			return domain.BuildRecordCompletion{}, err
+		}
+	}
+
+	// Feature 模块注入所属 Common 模块的生效产物；没有需要写入 .forge 的内容时不检查仓库里的 .forge。
+	var dependencyPlan service.BuildDependencyPlan
+	injectDependencies := false
+	if e.dependencies != nil {
+		dependencyPlan, injectDependencies, err = e.dependencies.ResolveBuildDependencies(ctx, record)
+		if err != nil {
+			return domain.BuildRecordCompletion{}, fmt.Errorf("解析依赖构建失败：%w", err)
+		}
+	}
+	if len(adapterFiles) > 0 || injectDependencies {
+		if err := ensureForgeDirAvailable(paths.context); err != nil {
+			return domain.BuildRecordCompletion{}, err
+		}
+	}
+	if err := writeBuildAdapterFiles(paths.context, adapterFiles); err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+	if injectDependencies {
+		dependencies, err := e.injectBuildDependencies(ctx, paths.context, dependencyPlan, logs)
+		if err != nil {
+			return domain.BuildRecordCompletion{}, fmt.Errorf("注入依赖产物失败：%w", err)
+		}
+		if err := e.dependencies.RecordBuildDependencies(ctx, record.ID, dependencies); err != nil {
+			return domain.BuildRecordCompletion{}, fmt.Errorf("记录依赖构建失败：%w", err)
 		}
 	}
 	buildOptions, buildEnv := dockerBuildVariableOptions(record, commitSHA, variables)
@@ -227,12 +268,12 @@ func (e *Executor) loadBuildAdapter(ctx context.Context, record domain.BuildReco
 	return adapter, nil
 }
 
-// prepareBuildAdapter 渲染适配器：Dockerfile 写到仓库之外的工作目录，辅助文件写到 {构建上下文}/.forge/，
-// 并把适配器版本和渲染结果 sha256 写回构建记录。模板上下文不包含构建变量和密钥。返回渲染后 Dockerfile 的绝对路径。
-func (e *Executor) prepareBuildAdapter(ctx context.Context, record domain.BuildRecord, adapter domain.BuildAdapter, commitSHA string, workDir string, contextDir string, logs *buildLogStream) (string, error) {
+// prepareBuildAdapter 渲染适配器：Dockerfile 写到仓库之外的工作目录，并把适配器版本和渲染结果 sha256 写回构建记录。
+// 模板上下文不包含构建变量和密钥。返回渲染后 Dockerfile 的绝对路径和待写入 {构建上下文}/.forge/ 的辅助文件。
+func (e *Executor) prepareBuildAdapter(ctx context.Context, record domain.BuildRecord, adapter domain.BuildAdapter, commitSHA string, workDir string, logs *buildLogStream) (string, map[string]string, error) {
 	params, err := service.ResolveBuildAdapterParams(adapter.Parameters, record.ModuleBuildAdapterParams, true)
 	if err != nil {
-		return "", fmt.Errorf("构建适配器参数无效：%w", err)
+		return "", nil, fmt.Errorf("构建适配器参数无效：%w", err)
 	}
 	buildTime := time.Now().UTC()
 	if record.StartedAt != nil {
@@ -247,7 +288,7 @@ func (e *Executor) prepareBuildAdapter(ctx context.Context, record domain.BuildR
 		Params:      params,
 	})
 	if err != nil {
-		return "", fmt.Errorf("渲染构建适配器失败：%w", err)
+		return "", nil, fmt.Errorf("渲染构建适配器失败：%w", err)
 	}
 	logs.Linef("构建适配器渲染完成：Dockerfile sha256 %s，辅助文件 %d 个", rendered.DockerfileSHA256, len(rendered.Files))
 
@@ -256,33 +297,22 @@ func (e *Executor) prepareBuildAdapter(ctx context.Context, record domain.BuildR
 		AdapterVersion:           adapter.Version,
 		RenderedDockerfileSHA256: rendered.DockerfileSHA256,
 	}); err != nil {
-		return "", fmt.Errorf("记录构建适配器版本失败：%w", err)
+		return "", nil, fmt.Errorf("记录构建适配器版本失败：%w", err)
 	}
 
-	if err := writeBuildAdapterFiles(contextDir, rendered.Files); err != nil {
-		return "", err
-	}
 	dockerfile := filepath.Join(workDir, renderedDockerfileName)
 	if err := os.WriteFile(dockerfile, []byte(rendered.Dockerfile), 0o644); err != nil {
-		return "", fmt.Errorf("写入渲染后的 Dockerfile 失败：%w", err)
+		return "", nil, fmt.Errorf("写入渲染后的 Dockerfile 失败：%w", err)
 	}
-	return dockerfile, nil
+	return dockerfile, rendered.Files, nil
 }
 
-// writeBuildAdapterFiles 把辅助文件写到 {构建上下文}/.forge/。仓库里已有 .forge（包括同名文件或软链）时失败，
-// 避免覆盖仓库内容；.forge 由 worker 新建，内部不会有仓库带来的软链。适配器没有辅助文件时不创建目录。
+// writeBuildAdapterFiles 把辅助文件写到 {构建上下文}/.forge/。调用前必须已通过 ensureForgeDirAvailable，
+// 确认仓库里没有 .forge；适配器没有辅助文件时不创建目录。辅助文件不能写入平台保留的 .forge/deps/。
 func writeBuildAdapterFiles(contextDir string, files map[string]string) error {
-	if len(files) == 0 {
-		return nil
-	}
 	forgeDir := filepath.Join(contextDir, domain.BuildAdapterFilesDir)
-	if _, err := os.Lstat(forgeDir); err == nil {
-		return fmt.Errorf("构建上下文中已存在 %s，构建适配器的辅助文件不能覆盖仓库内容", domain.BuildAdapterFilesDir)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("检查 %s 目录失败：%w", domain.BuildAdapterFilesDir, err)
-	}
 	for filePath, content := range files {
-		if !domain.IsValidBuildAdapterFilePath(filePath) {
+		if !domain.IsValidBuildAdapterFilePath(filePath) || domain.IsReservedBuildAdapterFilePath(filePath) {
 			return fmt.Errorf("构建适配器辅助文件路径 %q 无效", filePath)
 		}
 		target := filepath.Join(forgeDir, filepath.FromSlash(filePath))

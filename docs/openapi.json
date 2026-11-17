@@ -1716,6 +1716,40 @@
         ],
         "type": "object"
       },
+      "BuildDependency": {
+        "description": "Dependency build injected into the build context under .forge/deps/. Feature modules inject the active default route builds of their Common module in the same environment.",
+        "properties": {
+          "buildNumber": {
+            "description": "Dependency build number. 0 when the build record no longer exists.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "buildRecordId": {
+            "description": "Dependency build record UUID.",
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Dependency module id.",
+            "type": "string"
+          },
+          "moduleName": {
+            "description": "Dependency module display name. Empty when the module no longer exists.",
+            "type": "string"
+          },
+          "runtimeVersion": {
+            "description": "runtimeVersion of the dependency build.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moduleId",
+          "moduleName",
+          "runtimeVersion",
+          "buildRecordId",
+          "buildNumber"
+        ],
+        "type": "object"
+      },
       "BuildLogChunk": {
         "properties": {
           "content": {
@@ -1809,6 +1843,12 @@
           "defaultBranch": {
             "description": "Repository branch used by the worker when configured on the module.",
             "type": "string"
+          },
+          "dependencyBuilds": {
+            "items": {
+              "$ref": "#/components/schemas/BuildDependency"
+            },
+            "type": "array"
           },
           "environment": {
             "description": "Environment code.",
@@ -1966,6 +2006,7 @@
           "queuedAt",
           "createdAt",
           "createdBy",
+          "dependencyBuilds",
           "updatedAt"
         ],
         "type": "object"

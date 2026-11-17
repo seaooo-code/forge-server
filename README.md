@@ -118,7 +118,7 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | `REDIS_*` | Redis 地址、密码和 DB |
 | `FEISHU_*` | 飞书应用凭证、OAuth 回调、scope 和调试开关 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
-| `FORGE_WORKER_*` | worker ID、轮询、租约、构建超时、工作目录和产物前缀 |
+| `FORGE_WORKER_*` | worker ID、轮询、租约、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`） |
 | `OTEL_*` | OTLP trace 与 log 导出 |
 
 ## GitHub 代码源

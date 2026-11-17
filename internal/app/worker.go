@@ -70,8 +70,10 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 			Usage:      buildRepository,
 		}),
 		Credentials: codeSourceService,
-		Logs:        service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool)),
-		Variables:   service.NewBuildVariableService(postgres.NewBuildVariableRepository(postgresPool), buildVariableSecrets),
+		// 依赖产物注入：Feature 模块构建时读取所属 Common 模块生效中的默认路由构建，产物按依赖构建自己的存储配置下载。
+		Dependencies: service.NewBuildDependencyService(buildRepository),
+		Logs:         service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool)),
+		Variables:    service.NewBuildVariableService(postgres.NewBuildVariableRepository(postgresPool), buildVariableSecrets),
 	}, logger)
 	buildWorker := worker.New(buildService, executor, logger, worker.Options{
 		BuildTimeout:  cfg.Worker.BuildTimeout,

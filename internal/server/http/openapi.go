@@ -1055,6 +1055,7 @@ func openAPIDocument() *openapi3.T {
 				"BuildAdapterRenderPreviewResponse":      schemaValue(buildAdapterRenderPreviewResponseSchema()),
 				"BuildAdapterRenderError":                schemaValue(buildAdapterRenderErrorSchema()),
 				"UserSummary":                            schemaValue(userSummarySchema()),
+				"BuildDependency":                        schemaValue(buildDependencySchema()),
 				"BuildArtifactTree":                      schemaValue(buildArtifactTreeSchema()),
 				"BuildArtifactTreeNode":                  schemaValue(buildArtifactTreeNodeSchema()),
 				"BuildRecordCreateRequest":               schemaValue(buildRecordCreateRequestSchema()),
@@ -2165,6 +2166,7 @@ func buildRecordSchema() *openapi3.Schema {
 		"queuedAt",
 		"createdAt",
 		"createdBy",
+		"dependencyBuilds",
 		"updatedAt",
 	).
 		WithProperty("applicationName", stringSchema("Application display name used in artifact object keys.")).
@@ -2177,6 +2179,7 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("commitSha", stringSchema("Commit built by this record. Webhook builds record the pushed commit; manual builds fill it after checkout.")).
 		WithProperty("createdAt", dateTimeSchema("Build record creation time.")).
 		WithProperty("defaultBranch", stringSchema("Repository branch used by the worker when configured on the module.")).
+		WithPropertyRef("dependencyBuilds", arraySchemaRef("BuildDependency")).
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("environmentName", stringSchema("Environment display name used in artifact object keys.")).
 		WithProperty("errorMessage", stringSchema("Build failure message.")).
@@ -2206,6 +2209,17 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("triggerType", enumStringSchema("Build trigger type.", "manual", "webhook")).
 		WithProperty("updatedAt", dateTimeSchema("Build record update time.")).
 		WithProperty("workerId", stringSchema("Worker id that claimed the build."))
+}
+
+func buildDependencySchema() *openapi3.Schema {
+	schema := objectSchema("moduleId", "moduleName", "runtimeVersion", "buildRecordId", "buildNumber").
+		WithProperty("moduleId", stringSchema("Dependency module id.")).
+		WithProperty("moduleName", stringSchema("Dependency module display name. Empty when the module no longer exists.")).
+		WithProperty("runtimeVersion", stringSchema("runtimeVersion of the dependency build.")).
+		WithProperty("buildRecordId", stringSchema("Dependency build record UUID.")).
+		WithProperty("buildNumber", int64Schema("Dependency build number. 0 when the build record no longer exists."))
+	schema.Description = "Dependency build injected into the build context under .forge/deps/. Feature modules inject the active default route builds of their Common module in the same environment."
+	return schema
 }
 
 func userSummarySchema() *openapi3.Schema {
