@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1.10
+# YRN 725 构建适配器（接入层数据，不属于 Forge 主线代码）。
+# 复刻晴空塔 GitLab CI 中真正的构建步骤：安装依赖 → 预处理 → yrn-cli build-common/build-business（Metro + hermesc）。
+# 不调用 yrn-build：它负责晴空塔 API、KS3 上传与回调，Forge 不需要。
+FROM {{.Params.builderImage}} AS build
+USER root
+WORKDIR /src
+COPY . .
+RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false \
+    bash .forge/yrn-build.sh
+
+FROM scratch
+COPY --from=build /app/dist/ /

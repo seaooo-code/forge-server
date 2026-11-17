@@ -1,0 +1,84 @@
+{
+  "name": "YRN 725",
+  "description": "复刻晴空塔 GitLab CI 的 RN 725 构建：安装依赖、预处理、yrn-cli build-common/build-business（Metro + hermesc），输出晴空塔包解开后的目录。业务包通过依赖注入读取同 runtimeVersion 的 common 产物。",
+  "dockerfileTemplate": "# syntax=docker/dockerfile:1.10\n# YRN 725 构建适配器（接入层数据，不属于 Forge 主线代码）。\n# 复刻晴空塔 GitLab CI 中真正的构建步骤：安装依赖 → 预处理 → yrn-cli build-common/build-business（Metro + hermesc）。\n# 不调用 yrn-build：它负责晴空塔 API、KS3 上传与回调，Forge 不需要。\nFROM {{.Params.builderImage}} AS build\nUSER root\nWORKDIR /src\nCOPY . .\nRUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false \\\n    bash .forge/yrn-build.sh\n\nFROM scratch\nCOPY --from=build /app/dist/ /\n",
+  "files": {
+    "yrn-build.sh": "#!/usr/bin/env bash\n# YRN 725 构建脚本（接入层数据，由 YRN 适配器写入 .forge/ 下执行，不属于 Forge 主线代码）。\n#\n# 产出符合 Forge 构建契约的 /app/dist：\n#   /app/dist/forge.json                 {\"runtimeVersion\": \"{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}\"}\n#   /app/dist/{platform}/...             与晴空塔包 tar 解开后的内容一致（hbc/bundle、*.config.json、res、drawable-mdpi 或 assets）\n#   /app/dist/{platform}/commonMap.{platform}.json   仅 common 包，供业务包构建时通过依赖注入读取\nset -euo pipefail\n\nlog() { echo \"[yrn-adapter] $*\"; }\nfail() { echo \"[yrn-adapter] 错误：$*\" >&2; exit 1; }\n\nexport NVM_DIR=\"$HOME/.nvm\"\n# shellcheck disable=SC1091\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\n\n# 参数由 Forge 渲染为 JSON（.forge/params.json），这里用单引号转义后导出，避免 $ 与反引号被 shell 展开。\neval \"$(node -e '\nconst p = JSON.parse(require(\"fs\").readFileSync(\".forge/params.json\", \"utf8\"));\nfor (const [k, v] of Object.entries(p)) {\n  if (!/^[A-Z_]+$/.test(k)) continue;\n  console.log(`export ${k}='\"'\"'${String(v).replace(/'\"'\"'/g, `'\"'\"'\\\\'\"'\"''\"'\"'`)}'\"'\"'`);\n}\n')\"\n\ncase \"$YRN_KIND\" in common|business) ;; *) fail \"kind 只能是 common 或 business，当前为 $YRN_KIND\" ;; esac\n[ -f \"$YRN_CONFIG_FILE\" ] || fail \"找不到包配置 $YRN_CONFIG_FILE\"\n\nlog \"node $(node -v)，npm $(npm -v)\"\n\n# 私有 npm 源令牌可选：配置了密钥变量 NPM_TOKEN 时写入用户级 .npmrc。\nif [ -n \"${NPM_TOKEN:-}\" ]; then\n  echo \"//pkgs.d.xiaomi.net/artifactory/api/npm/mi-npm/:_authToken=${NPM_TOKEN}\" >> \"$HOME/.npmrc\"\nfi\n\nexport NODE_OPTIONS=\"${NODE_OPTIONS:---max-old-space-size=8192}\"\n\nlog \"安装依赖：$YRN_INSTALL_COMMAND\"\nbash -c \"$YRN_INSTALL_COMMAND\"\n\nif [ -n \"$YRN_PREBUILD_COMMAND\" ]; then\n  log \"预处理：$YRN_PREBUILD_COMMAND\"\n  bash -c \"$YRN_PREBUILD_COMMAND\"\nfi\n\n# 晴空塔为每次打包分配 packVersion（如 11.317.13）；Forge 没有对应概念，未配置时用 0.0.{构建号}，保证非空且递增。\nYRN_PACK_VERSION=\"${YRN_PACK_VERSION:-0.0.$FORGE_BUILD_NUMBER}\"\n\n# 写入晴空塔流程中由 yrn-build 注入的字段，客户端可能读取：buildnum、maketime、pack_version。\nmaketime=$(node -e 'const d=new Date(process.argv[1]);const p=n=>String(n).padStart(2,\"0\");console.log(`${d.getUTCFullYear()}${p(d.getUTCMonth()+1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`)' \"$FORGE_BUILD_TIME\")\nnode -e '\nconst fs = require(\"fs\");\nconst [file, buildnum, maketime, packVersion] = process.argv.slice(1);\nconst data = JSON.parse(fs.readFileSync(file, \"utf8\"));\ndata.buildnum = Number(buildnum);\ndata.maketime = Number(maketime);\ndata.pack_version = packVersion;\nfs.writeFileSync(file, JSON.stringify(data, null, 4));\n' \"$YRN_CONFIG_FILE\" \"$FORGE_BUILD_NUMBER\" \"$maketime\" \"$YRN_PACK_VERSION\"\n\nread -r sdk native mapver pkgname < <(node -e '\nconst c = JSON.parse(require(\"fs\").readFileSync(process.argv[1], \"utf8\"));\nconsole.log(c.SDKVersion, c.maxNativeApiLevel, c.moduleIdMapVersion, c.name);\n' \"$YRN_CONFIG_FILE\")\nruntime=\"${sdk}-n${native}-m${mapver}\"\nlog \"包名 $pkgname，runtimeVersion $runtime\"\n\nmkdir -p build-config /app/dist\nIFS=',' read -r -a platforms <<< \"$YRN_PLATFORMS\"\n\nfor platform in \"${platforms[@]}\"; do\n  platform=$(echo \"$platform\" | tr -d ' ')\n  [ -n \"$platform\" ] || continue\n  log \"===== 平台 $platform =====\"\n\n  # 准备 build-config：common 用仓库内基线（首包配置），business 用 Forge 注入的同 runtimeVersion common 产物。\n  if [ \"$YRN_KIND\" = \"common\" ]; then\n    [ -n \"$YRN_BASELINE_DIR\" ] || fail \"common 包需要参数 baselineDir\"\n    cp \"$YRN_BASELINE_DIR/commonMap.$platform.json\" \"build-config/commonMap.$platform.json\"\n    cp \"$YRN_BASELINE_DIR/unpackInfo.$platform.json\" \"build-config/unpackInfo.$platform.json\"\n  else\n    dep=\"${FORGE_DEPS_DIR:-.forge/deps}/common/$runtime/$platform\"\n    [ -f \"$dep/commonMap.$platform.json\" ] || fail \"未找到 runtimeVersion $runtime 的 common 产物 $dep/commonMap.$platform.json，请先发布同版本的 common 包\"\n    cp \"$dep/commonMap.$platform.json\" \"build-config/commonMap.$platform.json\"\n    node -e 'const c=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));console.log(JSON.stringify({commonApiLevel:c.maxCommonApiLevel}))' \"$YRN_CONFIG_FILE\" > \"build-config/unpackInfo.$platform.json\"\n  fi\n\n  # 晴空塔 GitLab CI 注入的流水线变量。业务仓库的 babel 配置（@micar-fe/micar-rn-api 的 injectConstants）会读取它们。\n  export bpsEnv=\"$YRN_BPS_ENV\" makeTime=\"$maketime\" RN_BUNDLE_ID=\"$FORGE_BUILD_NUMBER\" packVersion=\"$YRN_PACK_VERSION\"\n  export PLATFORM=\"$platform\" moduleName=\"$pkgname\" appName=\"$YRN_APP_KEY\"\n  export CI_BUILD_REF_NAME=\"$FORGE_BRANCH\" CI_COMMIT_REF_NAME=\"$FORGE_BRANCH\" CI_COMMIT_SHA=\"$FORGE_COMMIT_SHA\"\n\n  entry=\"${YRN_ENTRY_FILE//\\{platform\\}/$platform}\"\n  [ -f \"$entry\" ] || fail \"找不到入口文件 $entry\"\n  npx yrn-cli \"build-$YRN_KIND\" --platform \"$platform\" --entry-file \"$entry\" --config-file \"$YRN_CONFIG_FILE\" --verbose\n\n  if [ \"$YRN_KIND\" = \"common\" ]; then pkgdir=\"build/$platform/base\"; archive=\"base.$platform.tar.zip\"; else pkgdir=\"build/$platform/$pkgname\"; archive=\"$pkgname.$platform.tar.zip\"; fi\n  [ -d \"$pkgdir\" ] || pkgdir=$(dirname \"$(find \"build/$platform\" -name \"*.$platform.tar.zip\" | head -1)\")\n  [ -f \"$pkgdir/$archive\" ] || archive=$(basename \"$(find \"$pkgdir\" -maxdepth 1 -name \"*.$platform.tar.zip\" | head -1)\")\n  [ -f \"$pkgdir/$archive\" ] || fail \"未找到 $platform 的打包产物（*.$platform.tar.zip）\"\n  log \"产物 $pkgdir/$archive\"\n\n  # 解开与晴空塔相同的 zip → tar，得到客户端加载的目录内容。\n  work=$(mktemp -d)\n  unzip -q \"$pkgdir/$archive\" -d \"$work\"\n  tarfile=$(find \"$work\" -name \"*.tar\" | head -1)\n  mkdir -p \"/app/dist/$platform\"\n  tar -xf \"$tarfile\" -C \"/app/dist/$platform\"\n  rm -rf \"$work\"\n\n  if [ \"$YRN_KIND\" = \"common\" ]; then\n    [ -f \"$pkgdir/commonMap.$platform.json\" ] || fail \"common 构建未生成 commonMap.$platform.json\"\n    cp \"$pkgdir/commonMap.$platform.json\" \"/app/dist/$platform/commonMap.$platform.json\"\n  fi\n  log \"$platform 输出：$(find \"/app/dist/$platform\" -type f | wc -l) 个文件\"\ndone\n\nprintf '{\"runtimeVersion\":\"%s\"}\\n' \"$runtime\" > /app/dist/forge.json\nlog \"完成：$(cat /app/dist/forge.json)\"\n",
+    "params.json": "{\n  \"YRN_KIND\": {{quote .Params.kind}},\n  \"YRN_PLATFORMS\": {{quote .Params.platforms}},\n  \"YRN_ENTRY_FILE\": {{quote .Params.entryFile}},\n  \"YRN_CONFIG_FILE\": {{quote .Params.configFile}},\n  \"YRN_INSTALL_COMMAND\": {{quote .Params.installCommand}},\n  \"YRN_PREBUILD_COMMAND\": {{quote .Params.preBuildCommand}},\n  \"YRN_BASELINE_DIR\": {{quote .Params.baselineDir}},\n  \"YRN_PACK_VERSION\": {{quote .Params.packVersion}},\n  \"YRN_BPS_ENV\": {{quote .Params.bpsEnv}},\n  \"YRN_APP_KEY\": {{quote .Params.appKey}},\n  \"FORGE_BRANCH\": {{quote .Branch}},\n  \"FORGE_COMMIT_SHA\": {{quote .CommitSHA}},\n  \"FORGE_BUILD_NUMBER\": {{quote .Build.Number}},\n  \"FORGE_BUILD_TIME\": {{quote .Build.Time}},\n  \"FORGE_MODULE_ID\": {{quote .Module.ID}}\n}\n"
+  },
+  "parameters": [
+    {
+      "key": "kind",
+      "label": "包类型",
+      "description": "common 或 business",
+      "required": true
+    },
+    {
+      "key": "entryFile",
+      "label": "入口文件",
+      "description": "可用 {platform} 占位，例如 index.{platform}.js",
+      "required": true
+    },
+    {
+      "key": "configFile",
+      "label": "包配置文件",
+      "description": "例如 config/buz.72.config.json",
+      "required": true
+    },
+    {
+      "key": "installCommand",
+      "label": "安装依赖命令",
+      "description": "例如 yarn 或 npm i --force",
+      "required": true
+    },
+    {
+      "key": "preBuildCommand",
+      "label": "预处理命令",
+      "description": "可选，例如 node ./scripts/rn72-build-patch.js --moduleName=claw",
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "platforms",
+      "label": "平台",
+      "description": "逗号分隔",
+      "required": false,
+      "default": "android,ios"
+    },
+    {
+      "key": "baselineDir",
+      "label": "common 基线目录",
+      "description": "仅 common：commonMap 与 unpackInfo 的基线目录，例如 first_build_config",
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "packVersion",
+      "label": "pack_version",
+      "description": "写入包配置 pack_version 与流水线变量 packVersion；留空时为 0.0.{构建号}",
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "builderImage",
+      "label": "构建镜像",
+      "description": "含 nvm/node、yarn、zip 的构建镜像",
+      "required": false,
+      "default": "micr.cloud.mioffice.cn/mirn-nodejs/skytrree-gitlab-builder:0.0.1"
+    },
+    {
+      "key": "bpsEnv",
+      "label": "晴空塔环境 bpsEnv",
+      "description": "晴空塔流水线变量 bpsEnv，取值 staging 或 prod",
+      "required": false,
+      "default": "staging"
+    },
+    {
+      "key": "appKey",
+      "label": "appKey",
+      "description": "晴空塔应用 key，导出为 appName，例如 MiCar",
+      "required": false,
+      "default": "MiCar"
+    }
+  ]
+}

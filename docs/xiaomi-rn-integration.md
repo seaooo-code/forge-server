@@ -68,61 +68,24 @@ YRN 包和客户端是否兼容，由 `SDKVersion`（RN 引擎版本）、`maxNa
 
 ## 5. YRN 构建适配器
 
-在 Forge 的「平台 → 构建适配器」中新建「YRN」适配器，需要拉包的 RN 模块都选用它，业务仓库不需要新增 Dockerfile。
+适配器的完整定义放在 [`docs/adapters/yrn-725/`](adapters/yrn-725/README.md)，包括 Dockerfile 模板、构建脚本、参数文件模板，以及可直接导入的 `adapter.json`。适配器作为数据存放在 Forge 中，可以在「平台 → 构建适配器」页面查看和编辑；这些文件只是它的参考副本。Forge 主线代码中不包含 YRN 相关逻辑。
 
-**参数**
+适配器只复刻晴空塔 GitLab CI 中真正负责构建的部分，即"安装依赖、预处理、`yrn-cli build-common` / `build-business`"，不调用 `yrn-build`。`yrn-build`（`@mi/yrn-git-script`）的职责是调用晴空塔接口取参数、把产物上传到 KS3，以及回调晴空塔，这些步骤 Forge 都不需要。
 
-| key | 说明 | 示例 |
+模块的参数示例：
+
+| 参数 | common（`micar-rn-common`） | claw（`micar-rn-claw`） |
 | --- | --- | --- |
-| `kind` | `business` 或 `common` | `business` |
-| `entryFile` | 入口文件 | `app/index.js` |
-| `configFile` | 包配置，可以使用 `{{.Environment}}` | `config/buz.config.{{.Environment}}.json` |
-| `platforms` | 逗号分隔 | `android,ios` |
-| `nodeImage` | 构建镜像 | `node:20` |
+| `kind` | `common` | `business` |
+| `entryFile` | `packages/index.{platform}.js` | `index.{platform}.js` |
+| `configFile` | `config/com.config.json` | `config/buz.72.config.json` |
+| `installCommand` | `npm i --prefer-offline --force --registry=…` | `yarn` |
+| `preBuildCommand` | `cp -Rf node_modules/@micar-fe/micar-rn-common-lib/res res` | `node ./scripts/rn72-build-patch.js --moduleName=claw` |
+| `baselineDir` | `first_build_config` | — |
 
-**产物**：每个平台目录的内容，与晴空塔包 tar 解开后客户端实际加载的内容一致，但**不再套 tar 和 zip，也不注入 md5 字段**。Forge 的清单本身已经给出每个文件的 sha256：
+业务包需要 common 包的模块 ID 表（`commonMap`）。Forge 在构建 Feature 模块时会把同环境下生效的 common 产物注入到构建目录（见 [构建适配器方案](build-adapters.md) 第 4 节），构建脚本从 `.forge/deps/common/{runtimeVersion}/{platform}/commonMap.{platform}.json` 中取出 commonMap，再复制到 yrn-cli 要求的 `build-config/` 目录下。所以 common 包的产物里会额外包含 `commonMap.{platform}.json`。
 
-```text
-dist/
-  forge.json                    # {"runtimeVersion": "725-n1-m24"}
-  android/
-    index.android.hbc
-    buz.config.json             # yrn-cli 生成的配置原样保留
-    drawable-mdpi/...           # Android 资源目录
-  ios/
-    index.ios.hbc
-    buz.config.json
-    assets/res/...              # iOS 资源目录
-```
-
-**Dockerfile 模板（草稿）**
-
-```dockerfile
-# syntax=docker/dockerfile:1.10
-FROM {{.Params.nodeImage}} AS build
-WORKDIR /src
-COPY . .
-RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN npm ci
-RUN set -eu; \
-    for p in $(echo "{{.Params.platforms}}" | tr ',' ' '); do \
-      npx yrn-cli build-{{.Params.kind}} --platform "$p" \
-        --entry-file "{{.Params.entryFile}}" --config-file "{{.Params.configFile}}"; \
-      sh .forge/collect.sh "$p" "/app/dist/$p"; \
-    done; \
-    node .forge/write-forge-json.js "{{.Params.configFile}}" > /app/dist/forge.json
-
-FROM scratch
-COPY --from=build /app/dist/ /
-```
-
-适配器的辅助文件：
-
-- `.forge/collect.sh`：把 yrn-cli 的输出整理成上面的平台目录结构。
-- `.forge/write-forge-json.js`：读取配置中的三个兼容参数，按第 4 节的规则输出。
-
-**待补**：yrn-cli 的输出目录，以及 Hermes 编译（`.hbc`）、`drawable-mdpi`、`assets/res` 这些产物是由 yrn-cli 生成，还是由晴空塔的打包脚本处理。需要拿到 yrn-cli 的文档或晴空塔打包脚本，才能写完 `collect.sh`。这是 Forge 这边的待办，和客户端无关。
-
-**构建变量**：在模块上配置密钥变量 `NPM_TOKEN`，值为 `pkgs.d.xiaomi.net` 的读取令牌。
+**构建变量**：如果私有 npm 源需要鉴权，在模块上配置密钥变量 `NPM_TOKEN`。
 
 ## 6. 与晴空塔的对应关系
 
