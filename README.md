@@ -171,6 +171,10 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 
 系统中首位完成飞书登录的用户会被初始化为 `SuperAdmin`。后续权限由全局角色和应用成员角色共同决定。
 
+## 部署
+
+容器镜像、环境变量、Matrix 部署空间和健康检查配置见 [部署说明](docs/deployment.md)。worker 的部署方式另定，扩缩容机制见 [worker 扩缩容](docs/worker-scaling.md)。
+
 ## API 与健康检查
 
 启动后可访问：

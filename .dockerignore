@@ -1,0 +1,18 @@
+# 构建上下文只保留源码和迁移文件。.env 含密钥，不能进入镜像；配置一律通过环境变量注入。
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+.claude/
+.idea/
+.vscode/
+.DS_Store
+.env
+.env.*
+bin/
+dist/
+tmp/
+*.test
+coverage.out
+docs/
+*.md
