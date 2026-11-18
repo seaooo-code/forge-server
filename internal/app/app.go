@@ -14,7 +14,6 @@ import (
 	gitlabinfra "forge-server/internal/infra/gitlab"
 	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
-	redisinfra "forge-server/internal/infra/redis"
 	s3infra "forge-server/internal/infra/s3"
 	"forge-server/internal/infra/secretbox"
 	httpserver "forge-server/internal/server/http"
@@ -22,7 +21,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
-	"github.com/redis/go-redis/v9"
 )
 
 type App struct {
@@ -33,7 +31,6 @@ type App struct {
 	buildLogService *service.BuildLogService
 	server          *echo.Echo
 	postgres        *pgxpool.Pool
-	redis           *redis.Client
 	otel            otelinfra.ShutdownFunc
 }
 
@@ -62,13 +59,6 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		return nil, fmt.Errorf("run postgres migrations: %w", err)
 	}
 
-	redisClient, err := redisinfra.NewClient(ctx, cfg.Redis)
-	if err != nil {
-		postgresPool.Close()
-		cleanupOTel()
-		return nil, err
-	}
-
 	environmentRepository := postgres.NewEnvironmentRepository(postgresPool)
 	environmentService := service.NewEnvironmentService(environmentRepository)
 	applicationRepository := postgres.NewApplicationRepository(postgresPool)
@@ -80,14 +70,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	buildTriggerService := newBuildTriggerService(postgresPool, buildRepository, logger)
 	codeSourceService, err := newCodeSourceService(cfg, codeSourceRepository, buildTriggerService)
 	if err != nil {
-		_ = redisClient.Close()
 		postgresPool.Close()
 		cleanupOTel()
 		return nil, err
 	}
 	buildVariableSecrets, err := secretbox.New(cfg.Security.SecretKey)
 	if err != nil {
-		_ = redisClient.Close()
 		postgresPool.Close()
 		cleanupOTel()
 		return nil, fmt.Errorf("initialize secretbox: %w", err)
@@ -148,7 +136,6 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ReleaseService:             releaseService,
 		StorageService:             storageService,
 		Postgres:                   postgresPool,
-		Redis:                      redisClient,
 	})
 
 	return &App{
@@ -158,7 +145,6 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		buildLogService: buildLogService,
 		server:          server,
 		postgres:        postgresPool,
-		redis:           redisClient,
 		otel:            otelShutdown,
 	}, nil
 }
@@ -289,12 +275,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.server != nil {
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
 			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("shutdown http server: %w", err))
-		}
-	}
-
-	if a.redis != nil {
-		if err := a.redis.Close(); err != nil {
-			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("close redis: %w", err))
 		}
 	}
 

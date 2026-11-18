@@ -27,7 +27,6 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 | 依赖 | 要求 |
 | --- | --- |
 | PostgreSQL | 15 及以上（用到 `unique nulls not distinct`），通过 `POSTGRES_DSN` 配置 |
-| Redis | 通过 `REDIS_ADDR`、`REDIS_PASSWORD`、`REDIS_DB` 配置 |
 | 出站网络 | 飞书开放平台、`git.n.xiaomi.com`（代码源 API）、FDS S3 兼容域名 |
 | 入站网络 | GitLab 能访问 webhook 地址 `https://<域名>/api/v1/webhooks/gitlab/{连接 ID}`（模块详情页可复制）；浏览器经前端域名的 `/api/` 转发访问 |
 
@@ -39,7 +38,6 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 | --- | --- |
 | `APP_ENV` | 环境名，例如 `test` |
 | `POSTGRES_DSN` | 数据库连接串 |
-| `REDIS_ADDR` / `REDIS_PASSWORD` | Redis 地址和密码 |
 | `FORGE_SECRET_KEY` | 加密代码源凭证、webhook secret、密钥变量的主密钥（32 字节 base64）。**部署后不能更换**，否则已加密的数据无法解密 |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭证 |
 | `FEISHU_REDIRECT_URI` | `https://<前端域名>/login/feishu/callback`，并加进飞书应用的重定向 URL 白名单 |
@@ -47,7 +45,7 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 | `HTTP_CORS_ALLOW_ORIGINS` | 同域部署时填前端域名即可；前后端不同域时必须填前端域名 |
 | `FORGE_METRICS_TOKEN` | 可选，`/metrics` 的 Bearer 令牌 |
 
-`FORGE_SECRET_KEY`、`FEISHU_APP_SECRET`、`POSTGRES_DSN`、`REDIS_PASSWORD` 放在平台的密钥配置里，不要写进镜像、代码仓库或流水线变量明文。
+`FORGE_SECRET_KEY`、`FEISHU_APP_SECRET`、`POSTGRES_DSN` 放在平台的密钥配置里，不要写进镜像、代码仓库或流水线变量明文。
 
 ## 4. 部署到 Matrix
 
@@ -67,7 +65,7 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 | 存活检查 | `/healthz` | 每隔 10 秒，失败阈值 3 次，超时 2 秒 |
 | 就绪检查 | `/readyz` | 每隔 5 秒，失败阈值 3 次，超时 3 秒 |
 
-存活检查不能用 `/readyz`：`/readyz` 会检查 PostgreSQL 和 Redis，数据库短暂不可用时会让所有实例被反复重启。
+存活检查不能用 `/readyz`：`/readyz` 会检查 PostgreSQL，数据库短暂不可用时会让所有实例被反复重启。
 
 ### 4.2 转发规则
 
@@ -93,7 +91,7 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 ## 5. 验证
 
 1. `GET /healthz` 返回 `{"status":"ok"}`；
-2. `GET /readyz` 返回 `ready`，`postgres` 和 `redis` 都是 `ok`；
+2. `GET /readyz` 返回 `ready`，`postgres` 是 `ok`；
 3. 经前端域名访问 `GET /api/v1/ping`，返回 forge-server 的 JSON；
 4. 走一遍飞书登录；
 5. 在 GitLab 项目里发送一次 webhook 测试请求，确认能收到。

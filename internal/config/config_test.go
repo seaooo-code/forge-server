@@ -8,11 +8,11 @@ import (
 
 func TestLoadReadsConfiguredDotenvFile(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
-	if err := os.WriteFile(envPath, []byte("APP_ENV=dotenv\nHTTP_ADDR=:9090\nPOSTGRES_MAX_CONNS=42\nREDIS_DB=7\n"), 0o600); err != nil {
+	if err := os.WriteFile(envPath, []byte("APP_ENV=dotenv\nHTTP_ADDR=:9090\nPOSTGRES_MAX_CONNS=42\n"), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
 	}
 
-	unsetEnv(t, "APP_ENV", "HTTP_ADDR", "POSTGRES_MAX_CONNS", "REDIS_DB")
+	unsetEnv(t, "APP_ENV", "HTTP_ADDR", "POSTGRES_MAX_CONNS")
 	t.Setenv("ENV_FILE", envPath)
 
 	cfg, err := Load()
@@ -28,9 +28,6 @@ func TestLoadReadsConfiguredDotenvFile(t *testing.T) {
 	}
 	if cfg.Postgres.MaxConns != 42 {
 		t.Fatalf("expected POSTGRES_MAX_CONNS from dotenv, got %d", cfg.Postgres.MaxConns)
-	}
-	if cfg.Redis.DB != 7 {
-		t.Fatalf("expected REDIS_DB from dotenv, got %d", cfg.Redis.DB)
 	}
 }
 

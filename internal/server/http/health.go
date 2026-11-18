@@ -24,7 +24,6 @@ func registerHealthRoutes(e *echo.Echo, deps Dependencies) {
 
 		checks := map[string]string{
 			"postgres": "ok",
-			"redis":    "ok",
 		}
 
 		statusCode := http.StatusOK
@@ -32,12 +31,6 @@ func registerHealthRoutes(e *echo.Echo, deps Dependencies) {
 
 		if err := deps.Postgres.Ping(ctx); err != nil {
 			checks["postgres"] = err.Error()
-			statusCode = http.StatusServiceUnavailable
-			status = "not_ready"
-		}
-
-		if err := deps.Redis.Ping(ctx).Err(); err != nil {
-			checks["redis"] = err.Error()
 			statusCode = http.StatusServiceUnavailable
 			status = "not_ready"
 		}

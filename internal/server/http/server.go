@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	otellog "go.opentelemetry.io/otel/log"
 	logglobal "go.opentelemetry.io/otel/log/global"
@@ -42,7 +41,6 @@ type Dependencies struct {
 	ReleaseService             ReleaseService
 	StorageService             StorageService
 	Postgres                   *pgxpool.Pool
-	Redis                      *redis.Client
 }
 
 type ApplicationService interface {

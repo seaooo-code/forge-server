@@ -19,7 +19,6 @@ type Config struct {
 	GitHub    GitHubConfig
 	HTTP      HTTPConfig
 	Postgres  PostgresConfig
-	Redis     RedisConfig
 	Security  SecurityConfig
 	Telemetry TelemetryConfig
 	Worker    WorkerConfig
@@ -93,12 +92,6 @@ type PostgresConfig struct {
 	MaxConnIdleTime time.Duration
 }
 
-type RedisConfig struct {
-	Addr     string
-	Password string
-	DB       int
-}
-
 type WorkerConfig struct {
 	// ArtifactDigests 是清单文件项 digests 字段要计算的摘要算法，来自 FORGE_ARTIFACT_DIGESTS。
 	ArtifactDigests []string
@@ -153,11 +146,6 @@ func Load() (Config, error) {
 	}
 
 	pgMaxConnIdleTime, err := durationEnv("POSTGRES_MAX_CONN_IDLE_TIME", 15*time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
-
-	redisDB, err := intEnv("REDIS_DB", 0)
 	if err != nil {
 		return Config{}, err
 	}
@@ -313,11 +301,6 @@ func Load() (Config, error) {
 			MinConns:        int32(pgMinConns),
 			MaxConnLifetime: pgMaxConnLifetime,
 			MaxConnIdleTime: pgMaxConnIdleTime,
-		},
-		Redis: RedisConfig{
-			Addr:     stringEnv("REDIS_ADDR", "127.0.0.1:6379"),
-			Password: stringEnv("REDIS_PASSWORD", ""),
-			DB:       redisDB,
 		},
 		Security: SecurityConfig{
 			SecretKey: secretKey,

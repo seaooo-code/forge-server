@@ -20,7 +20,7 @@
 - 入口只放在 `cmd/<binary>/main.go`，只能做配置加载、日志、信号处理和应用启动。
 - 运行时配置放在 `internal/config`，只负责解析与校验环境变量，不连接外部服务。
 - HTTP 传输层放在 `internal/server/http`，Echo 路由、中间件、handler 只做协议适配。
-- 外部基础设施适配放在 `internal/infra/<name>`，例如 PostgreSQL、Redis、第三方客户端初始化。
+- 外部基础设施适配放在 `internal/infra/<name>`，例如 PostgreSQL、S3、第三方客户端初始化。
 - 业务用例放在 `internal/service`，不得依赖 Echo、HTTP request/response 或具体数据库客户端。
 - 领域模型与领域规则放在 `internal/domain`，不得依赖传输层和基础设施层。
 - 仓储接口优先由业务层定义；具体实现放在 `internal/infra` 或 `internal/repository`。

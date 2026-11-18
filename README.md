@@ -9,7 +9,6 @@ flowchart LR
   Console["Forge Console"] -->|"Feishu session / REST"| API["forge-server"]
   Client["RN Client"] -->|"Bearer token / manifest"| API
   API --> PostgreSQL[(PostgreSQL)]
-  API --> Redis[(Redis)]
   API --> GitHub["GitHub App API"]
   Worker["forge-worker"] --> PostgreSQL
   Worker --> GitHub
@@ -42,8 +41,7 @@ flowchart LR
 ### 环境要求
 
 - Go 1.25 或更高版本
-- PostgreSQL
-- Redis
+- PostgreSQL 15 或更高版本
 - 飞书开放平台应用
 - 运行 `forge-worker` 时还需要 Git、可用的 Docker daemon 和 S3 兼容对象存储
 
@@ -57,11 +55,10 @@ cp .env.example .env
 
 ```text
 PostgreSQL  postgres://postgres:postgres@127.0.0.1:5432/forge_server?sslmode=disable
-Redis       127.0.0.1:6379
 HTTP        http://127.0.0.1:8080
 ```
 
-PostgreSQL 中需要提前创建 `forge_server` 数据库。API 启动时会连接并检查 PostgreSQL、Redis；任一依赖不可用都会导致初始化失败。
+PostgreSQL 中需要提前创建 `forge_server` 数据库。API 启动时会连接 PostgreSQL 并执行迁移，数据库不可用会导致初始化失败。
 
 至少填写飞书应用凭证：
 
@@ -115,7 +112,6 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | `APP_*` | 运行环境和优雅关闭超时 |
 | `HTTP_*` | 监听地址、CORS origin、header 和 credentials |
 | `POSTGRES_*` | PostgreSQL DSN 和连接池 |
-| `REDIS_*` | Redis 地址、密码和 DB |
 | `FEISHU_*` | 飞书应用凭证、OAuth 回调、scope 和调试开关 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
 | `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |
@@ -182,7 +178,7 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 | 地址 | 说明 |
 | --- | --- |
 | `GET /healthz` | 进程存活检查 |
-| `GET /readyz` | PostgreSQL 与 Redis 就绪检查 |
+| `GET /readyz` | PostgreSQL 就绪检查 |
 | `GET /metrics` | 构建队列指标（Prometheus 文本格式），见 [worker 扩缩容](docs/worker-scaling.md) |
 | `GET /api/v1/ping` | API 连通性检查 |
 | `GET /openapi.json` | 完整 OpenAPI 3.0 文档，可直接导入 Apifox |
@@ -223,7 +219,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 │   ├── app/              # 应用装配和进程生命周期
 │   ├── config/           # 环境变量解析与校验
 │   ├── domain/           # 领域模型、错误和规则
-│   ├── infra/            # PostgreSQL、Redis、GitHub、飞书、S3、OTel 适配
+│   ├── infra/            # PostgreSQL、GitHub、GitLab、飞书、S3、OTel 适配
 │   ├── server/http/      # Echo handler、中间件、路由和 OpenAPI
 │   ├── service/          # 业务用例和仓储接口
 │   └── worker/           # 任务轮询、Git、Docker 和 S3 执行器
