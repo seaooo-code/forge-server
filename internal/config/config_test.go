@@ -244,6 +244,26 @@ func TestLoadReadsSeparateOTLPEndpoints(t *testing.T) {
 	}
 }
 
+func TestLoadSplitsPostgresPasswordCommand(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	t.Setenv("ENV_FILE", envPath)
+	t.Setenv("POSTGRES_PASSWORD_COMMAND", "  /app/kc-password  --flag ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	got := cfg.Postgres.PasswordCommand
+	if len(got) != 2 || got[0] != "/app/kc-password" || got[1] != "--flag" {
+		t.Fatalf("expected command split on whitespace, got %q", got)
+	}
+}
+
 func unsetEnv(t *testing.T, keys ...string) {
 	t.Helper()
 

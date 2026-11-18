@@ -44,6 +44,26 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 
 `FORGE_SECRET_KEY`、`POSTGRES_DSN` 放在平台的密钥配置里，不要写进镜像、代码仓库或流水线变量明文。
 
+### KeyCenter 数据库密码（小米内部）
+
+公司数据库平台不提供明文密码，只给用 SID 加密的密文。主程序通过通用的 `POSTGRES_PASSWORD_COMMAND` 在连接前取密码，小米内部用 [`tools/kc-password`](../tools/kc-password) 调 KeyCenter 解密。它是独立 module，KeyCenter SDK 是内网私有模块，不进入主 module 依赖；对应镜像用 [`Dockerfile.xiaomi`](../Dockerfile.xiaomi) 构建。
+
+1. 数据库平台的「账号」Tab，对读写账号点【复制连接配置】→ Golang 格式，得到明文账号和 KeyCenter 密文密码。迁移需要写权限，用读写账号。
+2. Matrix 部署页配置 SID（输入小米人 6 位动态验证码），`kc-agent` sidecar 起来后，容器内 `127.0.0.1:9988` 就是 agent。容器环境不需要认证密钥，也不需要 IP 白名单。
+3. 配置环境变量：
+
+| 变量 | 值 |
+| --- | --- |
+| `POSTGRES_DSN` | `postgres://<账号>@<地址>/<库名>?sslmode=<按实例要求>`，不写密码 |
+| `POSTGRES_PASSWORD_COMMAND` | `/app/kc-password` |
+| `KEYCENTER_SID` | 数据库账号绑定的 SID，例如 `forge-staging` |
+| `POSTGRES_PASSWORD_CIPHER` | 复制出来的密文 |
+| `KEYCENTER_AGENT_HOST`、`KEYCENTER_AGENT_PORT` | 可选，默认 `127.0.0.1:9988` |
+
+`forge-server`、`forge-migrate`、`forge-worker` 共用这套配置。解密只发生在进程启动时，数据库换密码后需要更新密文并重启。
+
+本地调试可以把 `KEYCENTER_AGENT_HOST` 设为 `kcagent.sec.xiaomi.com`（公共 agent，仅限办公网本地开发，只连测试环境，禁止在 staging、生产、CI 使用）。要求本机 IP 已关联小米人账号、账号是 SID 的管理员或发布者，且测试环境有已开启并分发到公共 agent IP 的认证密钥，详见 KeyCenter 文档《本地开发环境 - 有认证公共 KC agent 使用文档》。
+
 ## 4. 部署到 Matrix
 
 ### 4.1 部署空间

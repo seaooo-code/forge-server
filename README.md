@@ -105,7 +105,7 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | --- | --- |
 | `APP_*` | 运行环境和优雅关闭超时 |
 | `HTTP_*` | 监听地址、CORS origin、header 和 credentials |
-| `POSTGRES_*` | PostgreSQL DSN 和连接池 |
+| `POSTGRES_*` | PostgreSQL DSN 和连接池；`POSTGRES_PASSWORD_COMMAND` 可选，连接前执行命令取密码 |
 | `FEISHU_*` | 只剩调试开关 `FEISHU_DEBUG_LOG_SEARCH_RESPONSE`；租户在控制台维护，回调地址由前端传入，scope 写在代码里 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
 | `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |

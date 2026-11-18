@@ -82,7 +82,10 @@ type SecurityConfig struct {
 }
 
 type PostgresConfig struct {
-	DSN             string
+	DSN string
+	// PasswordCommand 非空时，连接前执行该命令并用标准输出覆盖 DSN 中的密码，来自 POSTGRES_PASSWORD_COMMAND。
+	// 按空白切分为程序和参数，不经过 shell。
+	PasswordCommand []string
 	MaxConns        int32
 	MinConns        int32
 	MaxConnLifetime time.Duration
@@ -289,6 +292,7 @@ func Load() (Config, error) {
 		},
 		Postgres: PostgresConfig{
 			DSN:             stringEnv("POSTGRES_DSN", "postgres://postgres:postgres@127.0.0.1:5432/forge_server?sslmode=disable"),
+			PasswordCommand: strings.Fields(os.Getenv("POSTGRES_PASSWORD_COMMAND")),
 			MaxConns:        int32(pgMaxConns),
 			MinConns:        int32(pgMinConns),
 			MaxConnLifetime: pgMaxConnLifetime,
