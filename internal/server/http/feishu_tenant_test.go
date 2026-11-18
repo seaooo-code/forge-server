@@ -69,9 +69,26 @@ func TestFeishuTenantUpdateMapsLastActiveToConflict(t *testing.T) {
 }
 
 type fakeFeishuTenantService struct {
-	active []domain.FeishuTenant
-	all    []domain.FeishuTenant
-	err    error
+	active        []domain.FeishuTenant
+	all           []domain.FeishuTenant
+	err           error
+	setupRequired bool
+	setupToken    string
+}
+
+func (s *fakeFeishuTenantService) SetupRequired(context.Context) (bool, error) {
+	return s.setupRequired, nil
+}
+
+func (s *fakeFeishuTenantService) SetupFirstTenant(_ context.Context, token string, input domain.FeishuTenantInput) (domain.FeishuTenant, error) {
+	if !s.setupRequired {
+		return domain.FeishuTenant{}, domain.ErrPlatformSetupCompleted
+	}
+	if token != s.setupToken {
+		return domain.FeishuTenant{}, domain.ErrInvalidSetupToken
+	}
+	s.setupRequired = false
+	return domain.FeishuTenant{ID: input.ID, Name: input.Name, AppID: input.AppID, Status: domain.FeishuTenantStatusActive}, nil
 }
 
 func (s *fakeFeishuTenantService) CreateFeishuTenant(_ context.Context, input domain.FeishuTenantInput) (domain.FeishuTenant, error) {

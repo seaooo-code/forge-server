@@ -103,16 +103,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
 	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
-	// 飞书登录租户存库，App Secret 用 FORGE_SECRET_KEY 加密。租户表为空时用 FEISHU_APP_ID / FEISHU_APP_SECRET 初始化默认租户。
+	// 飞书登录租户存库，App Secret 用 FORGE_SECRET_KEY 加密。租户表为空时生成首次初始化令牌，
+	// 在控制台的初始化页面填写令牌即可创建第一个租户。
 	feishuTenantService := service.NewFeishuTenantService(postgres.NewFeishuTenantRepository(postgresPool), buildVariableSecrets)
-	seeded, err := feishuTenantService.SeedFromConfig(ctx, cfg.Feishu.AppID, cfg.Feishu.AppSecret)
+	setupToken, err := feishuTenantService.PrepareSetup(ctx)
 	if err != nil {
 		postgresPool.Close()
 		cleanupOTel()
-		return nil, fmt.Errorf("seed feishu tenant: %w", err)
+		return nil, fmt.Errorf("prepare platform setup: %w", err)
 	}
-	if seeded {
-		logger.Info("feishu tenant seeded from FEISHU_APP_ID", "tenant", "default")
+	if setupToken != "" {
+		logger.Warn("platform not initialized: open the console and enter this setup token to add the first feishu tenant", "setupToken", setupToken)
 	}
 	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository, feishuTenantService)
 	feishuContactService := service.NewFeishuContactService(feishuClient)

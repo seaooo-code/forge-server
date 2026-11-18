@@ -60,22 +60,16 @@ HTTP        http://127.0.0.1:8080
 
 PostgreSQL 中需要提前创建 `forge_server` 数据库。API 启动时会连接 PostgreSQL 并执行迁移，数据库不可用会导致初始化失败。
 
-首次启动前至少填写一个飞书应用的凭证，用于初始化默认登录租户（租户表为空时才生效，之后在控制台「平台 → 飞书租户」维护多个租户）：
+飞书登录不需要环境变量。首次启动时租户表为空，日志会打印一行 `platform not initialized` 和 `setupToken`；打开控制台会进入「初始化平台」页面，填入令牌和第一个飞书应用的 App ID、App Secret 即可。之后第一个登录的用户成为 SuperAdmin，其他租户在「平台 → 飞书租户」维护。
 
-```dotenv
-FEISHU_APP_ID=
-FEISHU_APP_SECRET=
-FEISHU_REDIRECT_URI=http://127.0.0.1:5173/login/feishu/callback
-```
-
-飞书开放平台必须配置同一个回调地址。与本地 `forge-console` 联调时同时保持：
+每个飞书应用都要把 `{前端地址}/login/feishu/callback`（本地是 `http://127.0.0.1:5173/login/feishu/callback`）加进重定向 URL 白名单。与本地 `forge-console` 联调时同时保持：
 
 ```dotenv
 HTTP_CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 HTTP_CORS_ALLOW_CREDENTIALS=true
 ```
 
-`FEISHU_OAUTH_SCOPE` 为空格分隔的权限列表，必须包含 `offline_access`：飞书只有在授权请求显式申请该权限时才返回 refresh token，缺少时登录态会在 access token 过期（约 2 小时）后失效。应用后台也需要开通「持续访问已授权数据」（`offline_access`）。负责人搜索还需要 `contact:user:search`（「搜索用户」）；缺少时飞书返回 `99991679`。邮箱通过批量获取用户信息补全，需要 `contact:contact.base:readonly` 和 `contact:user.email:readonly`，属于可选信息：权限缺失时，搜索结果照常返回，只是不带邮箱。注意：应用后台开通了权限，并不代表登录时会申请；权限必须同时写进 `FEISHU_OAUTH_SCOPE`，用户重新授权后才会生效。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
+登录申请的权限固定为 `internal/infra/feishu` 里的 `OAuthScope`，每个租户的飞书应用后台都要开通：`offline_access`（「持续访问已授权数据」，没有它不返回 refresh token，登录态约 2 小时失效）、`contact:user:search`（「搜索用户」，负责人搜索；缺少时飞书返回 `99991679`）、`contact:contact.base:readonly` 和 `contact:user.email:readonly`（补全邮箱，可选，缺失时搜索结果不带邮箱）。后台新开通的权限需要用户重新授权后才生效。负责人搜索使用当前登录用户的 `user_access_token`；如需返回邮箱，还要为应用开通 `contact:user.email:readonly` 字段权限。
 
 ### 启动 API
 
@@ -112,7 +106,7 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | `APP_*` | 运行环境和优雅关闭超时 |
 | `HTTP_*` | 监听地址、CORS origin、header 和 credentials |
 | `POSTGRES_*` | PostgreSQL DSN 和连接池 |
-| `FEISHU_*` | OAuth 回调、scope 和调试开关；`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 只在租户表为空时初始化默认租户，之后租户在控制台「飞书租户」维护 |
+| `FEISHU_*` | 只剩调试开关 `FEISHU_DEBUG_LOG_SEARCH_RESPONSE`；租户在控制台维护，回调地址由前端传入，scope 写在代码里 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
 | `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |
 | `FORGE_METRICS_TOKEN` | `GET /metrics` 的可选 Bearer 令牌 |

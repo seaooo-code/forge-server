@@ -239,8 +239,6 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestSearchUsersReturnsResultsWhenEmailEnrichmentUnauthorized(t *testing.T) {
 	client := NewClient(config.FeishuConfig{
-		AppID:         "cli_test",
-		AppSecret:     "secret",
 		UserSearchURL: "https://open.feishu.cn/open-apis/search/v1/user",
 		UserBatchURL:  "https://open.feishu.cn/open-apis/contact/v3/users/batch",
 	}, false)

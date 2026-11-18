@@ -60,8 +60,8 @@ func (r *FeishuTenantRepository) CreateFeishuTenant(ctx context.Context, tenant 
 	return created, nil
 }
 
-// SeedFeishuTenant 只在表为空时写入租户，返回是否写入。用于把 FEISHU_APP_ID / FEISHU_APP_SECRET 初始化为第一个租户。
-func (r *FeishuTenantRepository) SeedFeishuTenant(ctx context.Context, tenant domain.FeishuTenant) (bool, error) {
+// CreateFirstFeishuTenant 只在表为空时写入租户，返回是否写入。用于平台首次初始化，并发请求只有一个能成功。
+func (r *FeishuTenantRepository) CreateFirstFeishuTenant(ctx context.Context, tenant domain.FeishuTenant) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `
 		insert into feishu_tenants (id, name, app_id, app_secret, status, sort_order)
 		select $1, $2, $3, $4, $5, $6
@@ -69,7 +69,7 @@ func (r *FeishuTenantRepository) SeedFeishuTenant(ctx context.Context, tenant do
 		on conflict do nothing
 	`, tenant.ID, tenant.Name, tenant.AppID, tenant.AppSecret, tenant.Status, tenant.SortOrder)
 	if err != nil {
-		return false, fmt.Errorf("seed feishu tenant: %w", err)
+		return false, fmt.Errorf("create first feishu tenant: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
 }

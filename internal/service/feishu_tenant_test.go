@@ -88,21 +88,33 @@ func TestFeishuTenantServiceResolveLoginTenant(t *testing.T) {
 	}
 }
 
-func TestFeishuTenantServiceSeedFromConfig(t *testing.T) {
+func TestFeishuTenantServiceSetupFirstTenant(t *testing.T) {
 	store := newFakeFeishuTenantStore()
 	service := NewFeishuTenantService(store, fakeSecretBox{})
+	input := domain.FeishuTenantInput{ID: "xiaomi", Name: "小米", AppID: "cli_aaaaaaaaaaaa", AppSecret: "plain"}
 
-	if seeded, err := service.SeedFromConfig(context.Background(), "", ""); err != nil || seeded {
-		t.Fatalf("expected no seed without config, got %v %v", seeded, err)
+	if _, err := service.SetupFirstTenant(context.Background(), "", input); !errors.Is(err, domain.ErrPlatformSetupCompleted) {
+		t.Fatalf("expected setup closed before PrepareSetup, got %v", err)
 	}
-	if seeded, err := service.SeedFromConfig(context.Background(), "cli_aaaaaaaaaaaa", "plain"); err != nil || !seeded {
-		t.Fatalf("expected seed, got %v %v", seeded, err)
+	token, err := service.PrepareSetup(context.Background())
+	if err != nil || len(token) < 32 {
+		t.Fatalf("expected setup token, got %q %v", token, err)
 	}
-	if tenant := store.tenants[domain.DefaultFeishuTenantID]; tenant.AppSecret != "enc:plain" || tenant.Status != domain.FeishuTenantStatusActive {
-		t.Fatalf("unexpected seeded tenant: %+v", tenant)
+	if _, err := service.SetupFirstTenant(context.Background(), "wrong", input); !errors.Is(err, domain.ErrInvalidSetupToken) {
+		t.Fatalf("expected wrong token rejected, got %v", err)
 	}
-	if seeded, _ := service.SeedFromConfig(context.Background(), "cli_bbbbbbbbbbbb", "other"); seeded {
-		t.Fatal("expected no seed once tenants exist")
+	created, err := service.SetupFirstTenant(context.Background(), token, input)
+	if err != nil || created.ID != "xiaomi" || created.AppSecret != "" {
+		t.Fatalf("setup first tenant: %+v %v", created, err)
+	}
+	if stored := store.tenants["xiaomi"]; stored.AppSecret != "enc:plain" || stored.Status != domain.FeishuTenantStatusActive {
+		t.Fatalf("unexpected stored tenant: %+v", stored)
+	}
+	if _, err := service.SetupFirstTenant(context.Background(), token, input); !errors.Is(err, domain.ErrPlatformSetupCompleted) {
+		t.Fatalf("expected token single use, got %v", err)
+	}
+	if again, _ := service.PrepareSetup(context.Background()); again != "" {
+		t.Fatal("expected no setup token once a tenant exists")
 	}
 }
 
@@ -141,7 +153,7 @@ func (s *fakeFeishuTenantStore) ListFeishuTenants(context.Context) ([]domain.Fei
 	return tenants, nil
 }
 
-func (s *fakeFeishuTenantStore) SeedFeishuTenant(_ context.Context, tenant domain.FeishuTenant) (bool, error) {
+func (s *fakeFeishuTenantStore) CreateFirstFeishuTenant(_ context.Context, tenant domain.FeishuTenant) (bool, error) {
 	if len(s.tenants) > 0 {
 		return false, nil
 	}

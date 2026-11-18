@@ -4428,6 +4428,50 @@
         ],
         "type": "object"
       },
+      "SetupFeishuTenantRequest": {
+        "properties": {
+          "appId": {
+            "description": "Feishu app id (cli_...).",
+            "type": "string"
+          },
+          "appSecret": {
+            "description": "Feishu app secret, stored encrypted.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Tenant id, lowercase letters, digits and dashes.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Tenant display name.",
+            "type": "string"
+          },
+          "token": {
+            "description": "Setup token printed in the server log at startup.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "id",
+          "name",
+          "appId",
+          "appSecret"
+        ],
+        "type": "object"
+      },
+      "SetupStatusResponse": {
+        "properties": {
+          "setupRequired": {
+            "description": "True when no Feishu tenant exists yet.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "setupRequired"
+        ],
+        "type": "object"
+      },
       "StorageConfiguration": {
         "properties": {
           "adapter": {
@@ -6325,6 +6369,16 @@
               "description": "Feishu tenant id.",
               "type": "string"
             }
+          },
+          {
+            "description": "Callback URL built by the console: {origin}/login/feishu/callback. Must be whitelisted in the Feishu app.",
+            "in": "query",
+            "name": "redirect",
+            "required": true,
+            "schema": {
+              "description": "Callback URL.",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6339,7 +6393,7 @@
                 }
               }
             },
-            "description": "Several tenants are active and none was selected."
+            "description": "Invalid redirect URL, or several tenants are active and none was selected."
           },
           "404": {
             "content": {
@@ -10464,6 +10518,129 @@
         "summary": "Inactivate targeted gray release",
         "tags": [
           "Releases"
+        ]
+      }
+    },
+    "/api/v1/setup/feishu-tenant": {
+      "post": {
+        "operationId": "setupFirstFeishuTenant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupFeishuTenantRequest"
+              }
+            }
+          },
+          "description": "First tenant payload with setup token.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeishuTenantDetailResponse"
+                }
+              }
+            },
+            "description": "First tenant created; the first user to log in becomes SuperAdmin."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid Feishu tenant request."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Setup token is wrong."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Platform already has a tenant; setup is closed."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Create the first Feishu tenant with the setup token from the server log",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/setup/status": {
+      "get": {
+        "operationId": "getSetupStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatusResponse"
+                }
+              }
+            },
+            "description": "Setup status."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Whether the platform still needs its first Feishu tenant",
+        "tags": [
+          "Auth"
         ]
       }
     },

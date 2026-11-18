@@ -17,8 +17,10 @@ const (
 	feishuOAuthStateCookieName = "forge_feishu_oauth_state"
 	// feishuOAuthTenantCookieName 记录发起授权的租户，回调时用同一个租户的应用换取 token。
 	feishuOAuthTenantCookieName = "forge_feishu_oauth_tenant"
-	feishuOAuthStateMaxAge      = 5 * time.Minute
-	feishuSessionCookieName     = "forge_console_session"
+	// feishuOAuthRedirectCookieName 记录发起授权时的回调地址，换取 token 时飞书要求与之一致。
+	feishuOAuthRedirectCookieName = "forge_feishu_oauth_redirect"
+	feishuOAuthStateMaxAge        = 5 * time.Minute
+	feishuSessionCookieName       = "forge_console_session"
 )
 
 type feishuAuthHandler struct {
@@ -106,9 +108,12 @@ func (h feishuAuthHandler) authorize(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 
-	authURL, tenantID, err := h.service.AuthorizationURL(c.Request().Context(), c.QueryParam("tenant"), state)
+	redirectURI := c.QueryParam("redirect")
+	authURL, tenantID, err := h.service.AuthorizationURL(c.Request().Context(), c.QueryParam("tenant"), redirectURI, state)
 	if err != nil {
 		switch {
+		case errors.Is(err, domain.ErrInvalidFeishuRedirectURI):
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid redirect uri"})
 		case errors.Is(err, domain.ErrFeishuAuthNotConfigured):
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
 		case errors.Is(err, domain.ErrFeishuTenantRequired):
@@ -121,6 +126,7 @@ func (h feishuAuthHandler) authorize(c echo.Context) error {
 
 	setFeishuStateCookie(c, feishuOAuthStateCookieName, state)
 	setFeishuStateCookie(c, feishuOAuthTenantCookieName, tenantID)
+	setFeishuStateCookie(c, feishuOAuthRedirectCookieName, redirectURI)
 	return c.Redirect(http.StatusFound, authURL)
 }
 
@@ -129,12 +135,16 @@ func (h feishuAuthHandler) callback(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
 	}
 
-	tenantID := ""
+	tenantID, redirectURI := "", ""
 	if cookie, err := c.Cookie(feishuOAuthTenantCookieName); err == nil {
 		tenantID = cookie.Value
 	}
+	if cookie, err := c.Cookie(feishuOAuthRedirectCookieName); err == nil {
+		redirectURI = cookie.Value
+	}
 	clearFeishuStateCookie(c, feishuOAuthStateCookieName)
 	clearFeishuStateCookie(c, feishuOAuthTenantCookieName)
+	clearFeishuStateCookie(c, feishuOAuthRedirectCookieName)
 
 	if denied := c.QueryParam("error"); denied != "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "feishu authorization denied"})
@@ -145,11 +155,11 @@ func (h feishuAuthHandler) callback(c echo.Context) error {
 	if code == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing authorization code"})
 	}
-	if !validFeishuOAuthState(c, state) || tenantID == "" {
+	if !validFeishuOAuthState(c, state) || tenantID == "" || redirectURI == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid oauth state"})
 	}
 
-	result, err := h.service.CompleteAuthorization(c.Request().Context(), tenantID, code)
+	result, err := h.service.CompleteAuthorization(c.Request().Context(), tenantID, redirectURI, code)
 	if err != nil {
 		if errors.Is(err, domain.ErrFeishuTenantNotFound) {
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "feishu tenant not found"})

@@ -28,7 +28,10 @@ func TestFeishuAuthServiceCompleteAuthorization(t *testing.T) {
 	repository := &fakeFeishuUserRepository{}
 	service := NewFeishuAuthService(client, repository, testFeishuTenantResolver())
 
-	result, err := service.CompleteAuthorization(context.Background(), "xiaomi", "auth-code")
+	if _, err := service.CompleteAuthorization(context.Background(), "xiaomi", "https://evil.example.com/steal", "auth-code"); err != domain.ErrInvalidFeishuRedirectURI {
+		t.Fatalf("expected invalid redirect rejected, got %v", err)
+	}
+	result, err := service.CompleteAuthorization(context.Background(), "xiaomi", "https://forge.example.com/login/feishu/callback", "auth-code")
 	if err != nil {
 		t.Fatalf("complete authorization: %v", err)
 	}
@@ -156,11 +159,11 @@ type fakeFeishuClient struct {
 	refreshApp   *domain.FeishuApp
 }
 
-func (c fakeFeishuClient) AuthorizationURL(app domain.FeishuApp, state string) (string, error) {
-	return "https://accounts.feishu.cn/oauth?client_id=" + app.AppID + "&state=" + state, nil
+func (c fakeFeishuClient) AuthorizationURL(app domain.FeishuApp, redirectURI string, state string) (string, error) {
+	return "https://accounts.feishu.cn/oauth?client_id=" + app.AppID + "&redirect_uri=" + redirectURI + "&state=" + state, nil
 }
 
-func (c fakeFeishuClient) ExchangeCode(_ context.Context, app domain.FeishuApp, _ string) (domain.FeishuToken, error) {
+func (c fakeFeishuClient) ExchangeCode(_ context.Context, app domain.FeishuApp, _ string, _ string) (domain.FeishuToken, error) {
 	if app.AppSecret == "" {
 		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
 	}

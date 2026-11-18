@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"forge-server/internal/domain"
@@ -13,7 +17,7 @@ type FeishuTenantStore interface {
 	CreateFeishuTenant(ctx context.Context, tenant domain.FeishuTenant) (domain.FeishuTenant, error)
 	GetFeishuTenant(ctx context.Context, id string) (domain.FeishuTenant, error)
 	ListFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
-	SeedFeishuTenant(ctx context.Context, tenant domain.FeishuTenant) (bool, error)
+	CreateFirstFeishuTenant(ctx context.Context, tenant domain.FeishuTenant) (bool, error)
 	UpdateFeishuTenant(ctx context.Context, tenant domain.FeishuTenant) (domain.FeishuTenant, error)
 }
 
@@ -21,6 +25,10 @@ type FeishuTenantStore interface {
 type FeishuTenantService struct {
 	store   FeishuTenantStore
 	secrets SecretBox
+
+	// setupToken 是首次初始化令牌，只在启动时租户表为空时生成，保存在进程内存里，用过一次即清空。
+	setupMu    sync.Mutex
+	setupToken string
 }
 
 func NewFeishuTenantService(store FeishuTenantStore, secrets SecretBox) *FeishuTenantService {
@@ -159,27 +167,75 @@ func (s *FeishuTenantService) ResolveApp(ctx context.Context, id string) (domain
 	return tenant, domain.FeishuApp{AppID: tenant.AppID, AppSecret: secret}, nil
 }
 
-// SeedFromConfig 在租户表为空时，把 FEISHU_APP_ID / FEISHU_APP_SECRET 写成默认租户，返回是否写入。
-// 之后租户只在控制台维护，这两个环境变量不再生效。
-func (s *FeishuTenantService) SeedFromConfig(ctx context.Context, appID string, appSecret string) (bool, error) {
-	appID, appSecret = strings.TrimSpace(appID), strings.TrimSpace(appSecret)
-	if appID == "" || appSecret == "" {
-		return false, nil
+// PrepareSetup 在租户表为空时生成首次初始化令牌并返回，由调用方打到启动日志里；已有租户时返回空字符串。
+// 令牌只在当前进程内有效，所以首次部署只能运行一个实例。
+func (s *FeishuTenantService) PrepareSetup(ctx context.Context) (string, error) {
+	required, err := s.SetupRequired(ctx)
+	if err != nil || !required {
+		return "", err
 	}
-	if !domain.IsValidFeishuTenantAppID(appID) {
-		return false, fmt.Errorf("%w: FEISHU_APP_ID 格式不正确", domain.ErrInvalidFeishuTenantInput)
+	var value [32]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("generate setup token: %w", err)
 	}
-	ciphertext, err := s.encrypt(appSecret)
+	token := base64.RawURLEncoding.EncodeToString(value[:])
+	s.setupMu.Lock()
+	s.setupToken = token
+	s.setupMu.Unlock()
+	return token, nil
+}
+
+// SetupRequired 表示平台还没有任何租户，需要首次初始化。
+func (s *FeishuTenantService) SetupRequired(ctx context.Context) (bool, error) {
+	tenants, err := s.store.ListFeishuTenants(ctx)
 	if err != nil {
 		return false, err
 	}
-	return s.store.SeedFeishuTenant(ctx, domain.FeishuTenant{
-		ID:        domain.DefaultFeishuTenantID,
-		Name:      "默认租户",
-		AppID:     appID,
+	return len(tenants) == 0, nil
+}
+
+// SetupFirstTenant 用初始化令牌创建平台的第一个租户。之后第一个登录的用户会成为 SuperAdmin。
+// 已有租户时返回 ErrPlatformSetupCompleted；令牌不对时返回 ErrInvalidSetupToken。
+func (s *FeishuTenantService) SetupFirstTenant(ctx context.Context, token string, input domain.FeishuTenantInput) (domain.FeishuTenant, error) {
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	if s.setupToken == "" {
+		return domain.FeishuTenant{}, domain.ErrPlatformSetupCompleted
+	}
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(s.setupToken)) != 1 {
+		return domain.FeishuTenant{}, domain.ErrInvalidSetupToken
+	}
+
+	input = normalizeFeishuTenantInput(input)
+	input.Status = domain.FeishuTenantStatusActive
+	input.SortOrder = 0
+	if !domain.IsValidFeishuTenantID(input.ID) || !domain.IsValidFeishuTenantAppID(input.AppID) {
+		return domain.FeishuTenant{}, domain.ErrInvalidFeishuTenantInput
+	}
+	if err := validateFeishuTenantFields(input, true); err != nil {
+		return domain.FeishuTenant{}, err
+	}
+	ciphertext, err := s.encrypt(input.AppSecret)
+	if err != nil {
+		return domain.FeishuTenant{}, err
+	}
+	tenant := domain.FeishuTenant{
+		ID:        input.ID,
+		Name:      input.Name,
+		AppID:     input.AppID,
 		AppSecret: ciphertext,
-		Status:    domain.FeishuTenantStatusActive,
-	})
+		Status:    input.Status,
+	}
+	created, err := s.store.CreateFirstFeishuTenant(ctx, tenant)
+	if err != nil {
+		return domain.FeishuTenant{}, err
+	}
+	s.setupToken = ""
+	if !created {
+		return domain.FeishuTenant{}, domain.ErrPlatformSetupCompleted
+	}
+	tenant.AppSecret = ""
+	return tenant, nil
 }
 
 func (s *FeishuTenantService) encrypt(plaintext string) (string, error) {

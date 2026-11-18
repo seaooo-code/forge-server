@@ -49,12 +49,9 @@ type TelemetryConfig struct {
 	OTLPLogHeaders  map[string]string
 }
 
+// FeishuConfig 只保留飞书开放平台的固定地址和调试开关。应用凭证按租户存库，回调地址由前端按自身域名传入，
+// OAuth scope 由平台功能决定，写在 infra/feishu 里。
 type FeishuConfig struct {
-	AppID                  string
-	AppSecret              string
-	RedirectURI            string
-	Scope                  string
-	Prompt                 string
 	AuthURL                string
 	TokenURL               string
 	UserInfoURL            string
@@ -268,11 +265,6 @@ func Load() (Config, error) {
 			MetricsToken:         strings.TrimSpace(stringEnv("FORGE_METRICS_TOKEN", "")),
 		},
 		Feishu: FeishuConfig{
-			AppID:                  stringEnv("FEISHU_APP_ID", ""),
-			AppSecret:              stringEnv("FEISHU_APP_SECRET", ""),
-			RedirectURI:            stringEnv("FEISHU_REDIRECT_URI", ""),
-			Scope:                  stringEnv("FEISHU_OAUTH_SCOPE", ""),
-			Prompt:                 stringEnv("FEISHU_OAUTH_PROMPT", ""),
 			AuthURL:                defaultFeishuAuthURL,
 			TokenURL:               defaultFeishuTokenURL,
 			UserInfoURL:            defaultFeishuUserInfoURL,

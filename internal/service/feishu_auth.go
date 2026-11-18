@@ -14,8 +14,8 @@ import (
 const feishuSessionRefreshWindow = 5 * time.Minute
 
 type FeishuOAuthClient interface {
-	AuthorizationURL(app domain.FeishuApp, state string) (string, error)
-	ExchangeCode(ctx context.Context, app domain.FeishuApp, code string) (domain.FeishuToken, error)
+	AuthorizationURL(app domain.FeishuApp, redirectURI string, state string) (string, error)
+	ExchangeCode(ctx context.Context, app domain.FeishuApp, redirectURI string, code string) (domain.FeishuToken, error)
 	GetUserInfo(ctx context.Context, accessToken string) (domain.FeishuUser, error)
 	RefreshAccessToken(ctx context.Context, app domain.FeishuApp, refreshToken string) (domain.FeishuToken, error)
 }
@@ -52,25 +52,32 @@ func NewFeishuAuthService(client FeishuOAuthClient, repository FeishuUserReposit
 }
 
 // AuthorizationURL 返回指定租户的授权地址，以及实际使用的租户 ID（tenantID 为空且只有一个启用租户时自动选中）。
-func (s *FeishuAuthService) AuthorizationURL(ctx context.Context, tenantID string, state string) (string, string, error) {
+// redirectURI 是前端按自身域名拼出的回调地址，必须是 {origin}/login/feishu/callback。
+func (s *FeishuAuthService) AuthorizationURL(ctx context.Context, tenantID string, redirectURI string, state string) (string, string, error) {
+	if !domain.IsValidFeishuRedirectURI(redirectURI) {
+		return "", "", domain.ErrInvalidFeishuRedirectURI
+	}
 	tenant, app, err := s.tenants.ResolveLoginTenant(ctx, tenantID)
 	if err != nil {
 		return "", "", err
 	}
-	authURL, err := s.client.AuthorizationURL(app, state)
+	authURL, err := s.client.AuthorizationURL(app, redirectURI, state)
 	if err != nil {
 		return "", "", err
 	}
 	return authURL, tenant.ID, nil
 }
 
-// CompleteAuthorization 用发起授权时的租户应用换取 token，并创建归属该租户的会话。
-func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, tenantID string, code string) (domain.FeishuAuthResult, error) {
+// CompleteAuthorization 用发起授权时的租户应用和回调地址换取 token，并创建归属该租户的会话。
+func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, tenantID string, redirectURI string, code string) (domain.FeishuAuthResult, error) {
+	if !domain.IsValidFeishuRedirectURI(redirectURI) {
+		return domain.FeishuAuthResult{}, domain.ErrInvalidFeishuRedirectURI
+	}
 	tenant, app, err := s.tenants.ResolveApp(ctx, tenantID)
 	if err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
-	token, err := s.client.ExchangeCode(ctx, app, code)
+	token, err := s.client.ExchangeCode(ctx, app, redirectURI, code)
 	if err != nil {
 		return domain.FeishuAuthResult{}, err
 	}

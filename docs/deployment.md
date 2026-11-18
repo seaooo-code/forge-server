@@ -39,13 +39,10 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 | `APP_ENV` | 环境名，例如 `test` |
 | `POSTGRES_DSN` | 数据库连接串 |
 | `FORGE_SECRET_KEY` | 加密代码源凭证、webhook secret、密钥变量的主密钥（32 字节 base64）。**部署后不能更换**，否则已加密的数据无法解密 |
-| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 首次启动时初始化「默认租户」，只在租户表为空时生效。之后在控制台「平台 → 飞书租户」新增、编辑、停用租户（仅 SuperAdmin），见 4.5 节 |
-| `FEISHU_REDIRECT_URI` | `https://<前端域名>/login/feishu/callback`，并加进飞书应用的重定向 URL 白名单 |
-| `FEISHU_OAUTH_SCOPE` | 与本地一致：`offline_access contact:user:search contact:contact.base:readonly contact:user.email:readonly` |
 | `HTTP_CORS_ALLOW_ORIGINS` | 同域部署时填前端域名即可；前后端不同域时必须填前端域名 |
 | `FORGE_METRICS_TOKEN` | 可选，`/metrics` 的 Bearer 令牌 |
 
-`FORGE_SECRET_KEY`、`FEISHU_APP_SECRET`、`POSTGRES_DSN` 放在平台的密钥配置里，不要写进镜像、代码仓库或流水线变量明文。
+`FORGE_SECRET_KEY`、`POSTGRES_DSN` 放在平台的密钥配置里，不要写进镜像、代码仓库或流水线变量明文。
 
 ## 4. 部署到 Matrix
 
@@ -90,11 +87,17 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 
 ### 4.5 飞书登录租户
 
+飞书登录不需要环境变量。首次部署后：
+
+1. 在服务日志里找到 `platform not initialized` 这一行，复制其中的 `setupToken`。令牌只在当前进程内有效，重启后会重新生成；所以首次部署只运行 1 个实例。
+2. 打开控制台，会进入「初始化平台」页面。填写令牌、租户名称和第一个飞书应用的 App ID、App Secret。
+3. 回到登录页登录。**第一个登录的用户会成为 SuperAdmin**，请自己先完成登录。之后初始化入口永久关闭，其他租户在「平台 → 飞书租户」维护。
+
 - 每个租户对应一个飞书租户里的自建应用。登录页列出所有启用中的租户，只有一个时不显示选择框。
 - App Secret 用 `FORGE_SECRET_KEY` 加密存库，接口不返回。App ID 创建后不能修改：同一个人在不同应用下的 open_id 不同，换应用应新建租户。
 - 不同租户的账号互不相通：同一个人在两个租户下是两个用户，全局角色和应用成员要分别授予；负责人搜索只搜当前登录租户的通讯录。
 - 停用租户会立即让它的所有会话失效；平台至少要保留一个启用中的租户。
-- 每个租户的飞书应用都要把 `FEISHU_REDIRECT_URI` 加进重定向 URL 白名单，并开通 `FEISHU_OAUTH_SCOPE` 里的权限。
+- 每个租户的飞书应用都要把 `https://<前端域名>/login/feishu/callback` 加进重定向 URL 白名单（回调地址由前端按自身域名传入，后端只接受这个路径），并开通 `offline_access`、`contact:user:search`、`contact:contact.base:readonly`、`contact:user.email:readonly`（见 README 飞书登录一节）。
 
 ## 5. 验证
 

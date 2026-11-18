@@ -913,7 +913,7 @@ func openAPIDocument() *openapi3.T {
 				Get: func() *openapi3.Operation {
 					op := operation("authorizeFeishu", "Redirect to Feishu OAuth authorization page", []string{"Auth"}, responses(
 						responseNoBody(http.StatusFound, "Redirect to Feishu authorization page."),
-						response(http.StatusBadRequest, "Several tenants are active and none was selected.", schemaRef("ErrorResponse")),
+						response(http.StatusBadRequest, "Invalid redirect URL, or several tenants are active and none was selected.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Feishu tenant not found or disabled.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Feishu auth is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Feishu authorization URL could not be created.", schemaRef("ErrorResponse")),
@@ -924,7 +924,34 @@ func openAPIDocument() *openapi3.T {
 								WithDescription("Feishu tenant id. Optional when exactly one tenant is active.").
 								WithSchema(stringSchema("Feishu tenant id.")),
 						},
+						{
+							Value: openapi3.NewQueryParameter("redirect").
+								WithDescription("Callback URL built by the console: {origin}/login/feishu/callback. Must be whitelisted in the Feishu app.").
+								WithRequired(true).
+								WithSchema(stringSchema("Callback URL.")),
+						},
 					}
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/setup/status", &openapi3.PathItem{
+				Get: operation("getSetupStatus", "Whether the platform still needs its first Feishu tenant", []string{"Auth"}, responses(
+					response(http.StatusOK, "Setup status.", schemaRef("SetupStatusResponse")),
+					response(http.StatusTooManyRequests, "Too many requests.", schemaRef("ErrorResponse")),
+					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+				)),
+			}),
+			openapi3.WithPath("/api/v1/setup/feishu-tenant", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("setupFirstFeishuTenant", "Create the first Feishu tenant with the setup token from the server log", []string{"Auth"}, responses(
+						response(http.StatusCreated, "First tenant created; the first user to log in becomes SuperAdmin.", schemaRef("FeishuTenantDetailResponse")),
+						response(http.StatusBadRequest, "Invalid Feishu tenant request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Setup token is wrong.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "Platform already has a tenant; setup is closed.", schemaRef("ErrorResponse")),
+						response(http.StatusTooManyRequests, "Too many requests.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("First tenant payload with setup token.", schemaRef("SetupFeishuTenantRequest"))
 					return op
 				}(),
 			}),
@@ -1184,6 +1211,8 @@ func openAPIDocument() *openapi3.T {
 				"FeishuTenantDetailResponse":             schemaValue(feishuTenantDetailResponseSchema()),
 				"FeishuTenantCreateRequest":              schemaValue(feishuTenantRequestSchema(true)),
 				"FeishuTenantUpdateRequest":              schemaValue(feishuTenantRequestSchema(false)),
+				"SetupStatusResponse":                    schemaValue(setupStatusResponseSchema()),
+				"SetupFeishuTenantRequest":               schemaValue(setupFeishuTenantRequestSchema()),
 				"FeishuToken":                            schemaValue(feishuTokenSchema()),
 				"FeishuUser":                             schemaValue(feishuUserSchema()),
 				"FeishuUserSearchItem":                   schemaValue(feishuUserSearchItemSchema()),
@@ -2826,6 +2855,20 @@ func feishuTenantRequestSchema(create bool) *openapi3.Schema {
 		WithProperty("appSecret", stringSchema("Feishu app secret, stored encrypted. Empty on update keeps the stored secret.")).
 		WithProperty("status", enumStringSchema("Tenant status.", string(domain.FeishuTenantStatusActive), string(domain.FeishuTenantStatusDisabled))).
 		WithProperty("sortOrder", int32Schema("Order on the login page, ascending."))
+}
+
+func setupStatusResponseSchema() *openapi3.Schema {
+	return objectSchema("setupRequired").
+		WithProperty("setupRequired", boolSchema("True when no Feishu tenant exists yet."))
+}
+
+func setupFeishuTenantRequestSchema() *openapi3.Schema {
+	return objectSchema("token", "id", "name", "appId", "appSecret").
+		WithProperty("token", stringSchema("Setup token printed in the server log at startup.")).
+		WithProperty("id", stringSchema("Tenant id, lowercase letters, digits and dashes.")).
+		WithProperty("name", stringSchema("Tenant display name.")).
+		WithProperty("appId", stringSchema("Feishu app id (cli_...).")).
+		WithProperty("appSecret", stringSchema("Feishu app secret, stored encrypted."))
 }
 
 func feishuAuthResponseSchema() *openapi3.Schema {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestFeishuAuthorizeRedirectsWithStateCookie(t *testing.T) {
 		FeishuAuthService: service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/authorize?tenant=xiaomi", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/authorize?tenant=xiaomi&redirect="+url.QueryEscape("https://forge.example.com/login/feishu/callback"), nil)
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -42,8 +43,22 @@ func TestFeishuAuthorizeRedirectsWithStateCookie(t *testing.T) {
 	for _, cookie := range rec.Result().Cookies() {
 		cookies[cookie.Name] = cookie.Value
 	}
-	if cookies[feishuOAuthStateCookieName] != service.authorizeState || cookies[feishuOAuthTenantCookieName] != "xiaomi" {
+	if cookies[feishuOAuthStateCookieName] != service.authorizeState || cookies[feishuOAuthTenantCookieName] != "xiaomi" ||
+		cookies[feishuOAuthRedirectCookieName] != "https://forge.example.com/login/feishu/callback" {
 		t.Fatalf("expected state and tenant cookies, got %#v", cookies)
+	}
+}
+
+func TestFeishuAuthorizeRejectsInvalidRedirect(t *testing.T) {
+	e := New(config.Config{}, Dependencies{FeishuAuthService: &fakeFeishuAuthService{}})
+
+	for _, redirect := range []string{"", "https://forge.example.com/other", "javascript:alert(1)", "https://forge.example.com/login/feishu/callback?x=1"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/authorize?redirect="+url.QueryEscape(redirect), nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("redirect %q: expected 400, got %d", redirect, rec.Code)
+		}
 	}
 }
 
@@ -109,6 +124,7 @@ func TestFeishuCallbackCompletesAuthorization(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?code=auth-code&state=state-value", nil)
 	req.AddCookie(&http.Cookie{Name: feishuOAuthStateCookieName, Value: "state-value"})
 	req.AddCookie(&http.Cookie{Name: feishuOAuthTenantCookieName, Value: "xiaomi"})
+	req.AddCookie(&http.Cookie{Name: feishuOAuthRedirectCookieName, Value: "https://forge.example.com/login/feishu/callback"})
 	rec := httptest.NewRecorder()
 
 	e.ServeHTTP(rec, req)
@@ -116,7 +132,7 @@ func TestFeishuCallbackCompletesAuthorization(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
-	if service.callbackCode != "auth-code" || service.callbackTenant != "xiaomi" {
+	if service.callbackCode != "auth-code" || service.callbackTenant != "xiaomi" || service.callbackRedirect != "https://forge.example.com/login/feishu/callback" {
 		t.Fatalf("expected callback code and tenant, got %q %q", service.callbackCode, service.callbackTenant)
 	}
 
@@ -255,28 +271,33 @@ func assertClearedSessionCookie(t *testing.T, rec *httptest.ResponseRecorder) {
 }
 
 type fakeFeishuAuthService struct {
-	authorizeErr    error
-	authorizeState  string
-	authorizeTenant string
-	callbackCode    string
-	callbackTenant  string
-	sessionErr      error
-	sessionToken    string
-	result          domain.FeishuAuthResult
+	authorizeErr     error
+	authorizeState   string
+	authorizeTenant  string
+	callbackCode     string
+	callbackTenant   string
+	callbackRedirect string
+	sessionErr       error
+	sessionToken     string
+	result           domain.FeishuAuthResult
 }
 
-func (s *fakeFeishuAuthService) AuthorizationURL(_ context.Context, tenantID string, state string) (string, string, error) {
+func (s *fakeFeishuAuthService) AuthorizationURL(_ context.Context, tenantID string, redirectURI string, state string) (string, string, error) {
 	if s.authorizeErr != nil {
 		return "", "", s.authorizeErr
+	}
+	if !domain.IsValidFeishuRedirectURI(redirectURI) {
+		return "", "", domain.ErrInvalidFeishuRedirectURI
 	}
 	s.authorizeState = state
 	s.authorizeTenant = tenantID
 	return "https://accounts.feishu.cn/open-apis/authen/v1/authorize?state=" + state, tenantID, nil
 }
 
-func (s *fakeFeishuAuthService) CompleteAuthorization(_ context.Context, tenantID string, code string) (domain.FeishuAuthResult, error) {
+func (s *fakeFeishuAuthService) CompleteAuthorization(_ context.Context, tenantID string, redirectURI string, code string) (domain.FeishuAuthResult, error) {
 	s.callbackCode = code
 	s.callbackTenant = tenantID
+	s.callbackRedirect = redirectURI
 	return s.result, nil
 }
 

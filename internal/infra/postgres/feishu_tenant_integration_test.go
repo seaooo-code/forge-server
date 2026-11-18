@@ -23,11 +23,11 @@ func TestIntegrationFeishuTenantLifecycle(t *testing.T) {
 	}
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
 
-	seeded, err := tenants.SeedFeishuTenant(ctx, domain.FeishuTenant{ID: "default", Name: "默认", AppID: "cli_seed" + suffix, AppSecret: "v1:x", Status: domain.FeishuTenantStatusActive})
+	seeded, err := tenants.CreateFirstFeishuTenant(ctx, domain.FeishuTenant{ID: "default", Name: "默认", AppID: "cli_seed" + suffix, AppSecret: "v1:x", Status: domain.FeishuTenantStatusActive})
 	if err != nil || !seeded {
 		t.Fatalf("seed into empty table: seeded=%v err=%v", seeded, err)
 	}
-	if seeded, err := tenants.SeedFeishuTenant(ctx, domain.FeishuTenant{ID: "other", Name: "x", AppID: "cli_other" + suffix, AppSecret: "v1:x", Status: domain.FeishuTenantStatusActive}); err != nil || seeded {
+	if seeded, err := tenants.CreateFirstFeishuTenant(ctx, domain.FeishuTenant{ID: "other", Name: "x", AppID: "cli_other" + suffix, AppSecret: "v1:x", Status: domain.FeishuTenantStatusActive}); err != nil || seeded {
 		t.Fatalf("seed must skip non-empty table: seeded=%v err=%v", seeded, err)
 	}
 

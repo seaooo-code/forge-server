@@ -137,8 +137,8 @@ type ModuleService interface {
 }
 
 type FeishuAuthService interface {
-	AuthorizationURL(ctx context.Context, tenantID string, state string) (string, string, error)
-	CompleteAuthorization(ctx context.Context, tenantID string, code string) (domain.FeishuAuthResult, error)
+	AuthorizationURL(ctx context.Context, tenantID string, redirectURI string, state string) (string, string, error)
+	CompleteAuthorization(ctx context.Context, tenantID string, redirectURI string, code string) (domain.FeishuAuthResult, error)
 	GetSession(ctx context.Context, sessionToken string) (domain.FeishuAuthResult, error)
 	Logout(ctx context.Context, sessionToken string) error
 }
@@ -147,6 +147,8 @@ type FeishuTenantService interface {
 	CreateFeishuTenant(ctx context.Context, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
 	ListActiveFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
 	ListFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
+	SetupFirstTenant(ctx context.Context, token string, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
+	SetupRequired(ctx context.Context) (bool, error)
 	UpdateFeishuTenant(ctx context.Context, id string, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
 }
 
@@ -195,6 +197,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 		})
 	})
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService, deps.FeishuTenantService)
+	registerSetupRoutes(api, deps.FeishuTenantService)
 	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService)
 	registerWebhookRoutes(api, deps.WebhookService)
 

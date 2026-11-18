@@ -58,6 +58,8 @@ func TestOpenAPIJSON(t *testing.T) {
 		"/api/v1/environments",
 		"/api/v1/environments/{code}",
 		"/api/v1/auth/feishu/tenants",
+		"/api/v1/setup/status",
+		"/api/v1/setup/feishu-tenant",
 		"/api/v1/feishu-tenants",
 		"/api/v1/feishu-tenants/{id}",
 		"/api/v1/applications",

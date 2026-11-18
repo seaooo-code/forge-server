@@ -21,6 +21,14 @@ import (
 
 const feishuUserBatchLimit = 50
 
+// OAuthScope 是登录时申请的用户权限，由平台功能决定：
+//   - offline_access：返回 refresh token，登录态可以续期；
+//   - contact:user:search：搜索负责人；
+//   - contact:contact.base:readonly、contact:user.email:readonly：批量补全负责人邮箱（缺失时搜索照常返回，只是没有邮箱）。
+//
+// 新增依赖用户授权的功能时在这里追加；每个租户的飞书应用后台也要开通对应权限，用户重新授权后生效。
+const OAuthScope = "offline_access contact:user:search contact:contact.base:readonly contact:user.email:readonly"
+
 type Client struct {
 	cfg        config.FeishuConfig
 	httpClient *http.Client
@@ -41,9 +49,9 @@ func NewClient(cfg config.FeishuConfig, telemetryEnabled bool) *Client {
 	}
 }
 
-// AuthorizationURL 生成指定租户应用的授权地址。回调地址、scope 等与租户无关的参数来自部署配置。
-func (c *Client) AuthorizationURL(app domain.FeishuApp, state string) (string, error) {
-	if !c.configured(app) || c.cfg.RedirectURI == "" {
+// AuthorizationURL 生成指定租户应用的授权地址。redirectURI 由调用方校验，必须在应用的重定向白名单里。
+func (c *Client) AuthorizationURL(app domain.FeishuApp, redirectURI string, state string) (string, error) {
+	if !c.configured(app) || redirectURI == "" {
 		return "", domain.ErrFeishuAuthNotConfigured
 	}
 
@@ -55,20 +63,16 @@ func (c *Client) AuthorizationURL(app domain.FeishuApp, state string) (string, e
 	values := authURL.Query()
 	values.Set("client_id", app.AppID)
 	values.Set("response_type", "code")
-	values.Set("redirect_uri", c.cfg.RedirectURI)
+	values.Set("redirect_uri", redirectURI)
 	values.Set("state", state)
-	if c.cfg.Scope != "" {
-		values.Set("scope", c.cfg.Scope)
-	}
-	if c.cfg.Prompt != "" {
-		values.Set("prompt", c.cfg.Prompt)
-	}
+	values.Set("scope", OAuthScope)
 	authURL.RawQuery = values.Encode()
 
 	return authURL.String(), nil
 }
 
-func (c *Client) ExchangeCode(ctx context.Context, app domain.FeishuApp, code string) (domain.FeishuToken, error) {
+// ExchangeCode 用授权码换取 user access token。redirectURI 必须与发起授权时一致。
+func (c *Client) ExchangeCode(ctx context.Context, app domain.FeishuApp, redirectURI string, code string) (domain.FeishuToken, error) {
 	if !c.configured(app) {
 		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
 	}
@@ -78,7 +82,7 @@ func (c *Client) ExchangeCode(ctx context.Context, app domain.FeishuApp, code st
 		ClientID:     app.AppID,
 		ClientSecret: app.AppSecret,
 		Code:         code,
-		RedirectURI:  c.cfg.RedirectURI,
+		RedirectURI:  redirectURI,
 	}
 
 	return c.requestToken(ctx, body)
