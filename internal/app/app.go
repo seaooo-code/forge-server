@@ -103,7 +103,18 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
 	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
-	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository)
+	// 飞书登录租户存库，App Secret 用 FORGE_SECRET_KEY 加密。租户表为空时用 FEISHU_APP_ID / FEISHU_APP_SECRET 初始化默认租户。
+	feishuTenantService := service.NewFeishuTenantService(postgres.NewFeishuTenantRepository(postgresPool), buildVariableSecrets)
+	seeded, err := feishuTenantService.SeedFromConfig(ctx, cfg.Feishu.AppID, cfg.Feishu.AppSecret)
+	if err != nil {
+		postgresPool.Close()
+		cleanupOTel()
+		return nil, fmt.Errorf("seed feishu tenant: %w", err)
+	}
+	if seeded {
+		logger.Info("feishu tenant seeded from FEISHU_APP_ID", "tenant", "default")
+	}
+	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository, feishuTenantService)
 	feishuContactService := service.NewFeishuContactService(feishuClient)
 	dashboardService := service.NewDashboardService(service.DashboardDependencies{
 		ApplicationService:         applicationService,
@@ -132,6 +143,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		EnvironmentService:         environmentService,
 		FeishuAuthService:          feishuAuthService,
 		FeishuContactService:       feishuContactService,
+		FeishuTenantService:        feishuTenantService,
 		ModuleService:              moduleService,
 		ReleaseService:             releaseService,
 		StorageService:             storageService,

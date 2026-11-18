@@ -60,7 +60,7 @@ HTTP        http://127.0.0.1:8080
 
 PostgreSQL 中需要提前创建 `forge_server` 数据库。API 启动时会连接 PostgreSQL 并执行迁移，数据库不可用会导致初始化失败。
 
-至少填写飞书应用凭证：
+首次启动前至少填写一个飞书应用的凭证，用于初始化默认登录租户（租户表为空时才生效，之后在控制台「平台 → 飞书租户」维护多个租户）：
 
 ```dotenv
 FEISHU_APP_ID=
@@ -112,7 +112,7 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | `APP_*` | 运行环境和优雅关闭超时 |
 | `HTTP_*` | 监听地址、CORS origin、header 和 credentials |
 | `POSTGRES_*` | PostgreSQL DSN 和连接池 |
-| `FEISHU_*` | 飞书应用凭证、OAuth 回调、scope 和调试开关 |
+| `FEISHU_*` | OAuth 回调、scope 和调试开关；`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 只在租户表为空时初始化默认租户，之后租户在控制台「飞书租户」维护 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
 | `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |
 | `FORGE_METRICS_TOKEN` | `GET /metrics` 的可选 Bearer 令牌 |

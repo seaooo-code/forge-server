@@ -41,8 +41,9 @@ func NewClient(cfg config.FeishuConfig, telemetryEnabled bool) *Client {
 	}
 }
 
-func (c *Client) AuthorizationURL(state string) (string, error) {
-	if !c.configured() || c.cfg.RedirectURI == "" {
+// AuthorizationURL 生成指定租户应用的授权地址。回调地址、scope 等与租户无关的参数来自部署配置。
+func (c *Client) AuthorizationURL(app domain.FeishuApp, state string) (string, error) {
+	if !c.configured(app) || c.cfg.RedirectURI == "" {
 		return "", domain.ErrFeishuAuthNotConfigured
 	}
 
@@ -52,7 +53,7 @@ func (c *Client) AuthorizationURL(state string) (string, error) {
 	}
 
 	values := authURL.Query()
-	values.Set("client_id", c.cfg.AppID)
+	values.Set("client_id", app.AppID)
 	values.Set("response_type", "code")
 	values.Set("redirect_uri", c.cfg.RedirectURI)
 	values.Set("state", state)
@@ -67,15 +68,15 @@ func (c *Client) AuthorizationURL(state string) (string, error) {
 	return authURL.String(), nil
 }
 
-func (c *Client) ExchangeCode(ctx context.Context, code string) (domain.FeishuToken, error) {
-	if !c.configured() {
+func (c *Client) ExchangeCode(ctx context.Context, app domain.FeishuApp, code string) (domain.FeishuToken, error) {
+	if !c.configured(app) {
 		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
 	}
 
 	body := tokenRequest{
 		GrantType:    "authorization_code",
-		ClientID:     c.cfg.AppID,
-		ClientSecret: c.cfg.AppSecret,
+		ClientID:     app.AppID,
+		ClientSecret: app.AppSecret,
 		Code:         code,
 		RedirectURI:  c.cfg.RedirectURI,
 	}
@@ -83,15 +84,15 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (domain.FeishuTo
 	return c.requestToken(ctx, body)
 }
 
-func (c *Client) RefreshAccessToken(ctx context.Context, refreshToken string) (domain.FeishuToken, error) {
-	if !c.configured() {
+func (c *Client) RefreshAccessToken(ctx context.Context, app domain.FeishuApp, refreshToken string) (domain.FeishuToken, error) {
+	if !c.configured(app) {
 		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
 	}
 
 	body := tokenRequest{
 		GrantType:    "refresh_token",
-		ClientID:     c.cfg.AppID,
-		ClientSecret: c.cfg.AppSecret,
+		ClientID:     app.AppID,
+		ClientSecret: app.AppSecret,
 		RefreshToken: refreshToken,
 	}
 
@@ -312,8 +313,8 @@ func (c *Client) fetchUserEmails(ctx context.Context, accessToken string, openID
 	return emails, nil
 }
 
-func (c *Client) configured() bool {
-	return c.cfg.AppID != "" && c.cfg.AppSecret != "" && c.cfg.TokenURL != "" && c.cfg.UserInfoURL != "" && c.cfg.UserBatchURL != "" && c.cfg.AuthURL != ""
+func (c *Client) configured(app domain.FeishuApp) bool {
+	return app.AppID != "" && app.AppSecret != "" && c.cfg.TokenURL != "" && c.cfg.UserInfoURL != "" && c.cfg.UserBatchURL != "" && c.cfg.AuthURL != ""
 }
 
 func (c *Client) postJSON(ctx context.Context, requestURL string, body any, out any) error {

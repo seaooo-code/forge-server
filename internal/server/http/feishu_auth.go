@@ -15,19 +15,33 @@ import (
 
 const (
 	feishuOAuthStateCookieName = "forge_feishu_oauth_state"
-	feishuOAuthStateMaxAge     = 5 * time.Minute
-	feishuSessionCookieName    = "forge_console_session"
+	// feishuOAuthTenantCookieName 记录发起授权的租户，回调时用同一个租户的应用换取 token。
+	feishuOAuthTenantCookieName = "forge_feishu_oauth_tenant"
+	feishuOAuthStateMaxAge      = 5 * time.Minute
+	feishuSessionCookieName     = "forge_console_session"
 )
 
 type feishuAuthHandler struct {
 	service FeishuAuthService
+	tenants FeishuTenantService
 }
 
 type feishuAuthResponse struct {
 	Capabilities domain.GlobalCapabilities `json:"capabilities"`
 	Roles        []domain.GlobalRole       `json:"roles"`
+	Tenant       feishuLoginTenantResponse `json:"tenant"`
 	User         feishuUserResponse        `json:"user"`
 	Token        feishuTokenResponse       `json:"token"`
+}
+
+// feishuLoginTenantResponse 是登录页可见的租户信息，不含 App ID 和密钥。
+type feishuLoginTenantResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type feishuLoginTenantsResponse struct {
+	Tenants []feishuLoginTenantResponse `json:"tenants"`
 }
 
 type feishuUserResponse struct {
@@ -56,13 +70,30 @@ type feishuTokenResponse struct {
 	HasRefreshToken       bool   `json:"hasRefreshToken"`
 }
 
-func registerFeishuAuthRoutes(group *echo.Group, service FeishuAuthService) {
-	handler := feishuAuthHandler{service: service}
+func registerFeishuAuthRoutes(group *echo.Group, service FeishuAuthService, tenants FeishuTenantService) {
+	handler := feishuAuthHandler{service: service, tenants: tenants}
 
+	group.GET("/auth/feishu/tenants", handler.loginTenants)
 	group.GET("/auth/feishu/authorize", handler.authorize)
 	group.GET("/auth/feishu/callback", handler.callback)
 	group.GET("/auth/session", handler.session)
 	group.POST("/auth/logout", handler.logout)
+}
+
+// loginTenants 返回登录页可选的租户，不需要登录。
+func (h feishuAuthHandler) loginTenants(c echo.Context) error {
+	if h.tenants == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
+	}
+	tenants, err := h.tenants.ListActiveFeishuTenants(c.Request().Context())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	}
+	response := feishuLoginTenantsResponse{Tenants: make([]feishuLoginTenantResponse, 0, len(tenants))}
+	for _, tenant := range tenants {
+		response.Tenants = append(response.Tenants, feishuLoginTenantResponse{ID: tenant.ID, Name: tenant.Name})
+	}
+	return c.JSON(http.StatusOK, response)
 }
 
 func (h feishuAuthHandler) authorize(c echo.Context) error {
@@ -75,15 +106,21 @@ func (h feishuAuthHandler) authorize(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 
-	authURL, err := h.service.AuthorizationURL(state)
+	authURL, tenantID, err := h.service.AuthorizationURL(c.Request().Context(), c.QueryParam("tenant"), state)
 	if err != nil {
-		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
+		switch {
+		case errors.Is(err, domain.ErrFeishuAuthNotConfigured):
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
+		case errors.Is(err, domain.ErrFeishuTenantRequired):
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "feishu tenant required"})
+		case errors.Is(err, domain.ErrFeishuTenantNotFound):
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "feishu tenant not found"})
 		}
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "feishu authorization failed"})
 	}
 
-	setFeishuStateCookie(c, state)
+	setFeishuStateCookie(c, feishuOAuthStateCookieName, state)
+	setFeishuStateCookie(c, feishuOAuthTenantCookieName, tenantID)
 	return c.Redirect(http.StatusFound, authURL)
 }
 
@@ -92,7 +129,12 @@ func (h feishuAuthHandler) callback(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
 	}
 
-	clearFeishuStateCookie(c)
+	tenantID := ""
+	if cookie, err := c.Cookie(feishuOAuthTenantCookieName); err == nil {
+		tenantID = cookie.Value
+	}
+	clearFeishuStateCookie(c, feishuOAuthStateCookieName)
+	clearFeishuStateCookie(c, feishuOAuthTenantCookieName)
 
 	if denied := c.QueryParam("error"); denied != "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "feishu authorization denied"})
@@ -103,12 +145,15 @@ func (h feishuAuthHandler) callback(c echo.Context) error {
 	if code == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing authorization code"})
 	}
-	if !validFeishuOAuthState(c, state) {
+	if !validFeishuOAuthState(c, state) || tenantID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid oauth state"})
 	}
 
-	result, err := h.service.CompleteAuthorization(c.Request().Context(), code)
+	result, err := h.service.CompleteAuthorization(c.Request().Context(), tenantID, code)
 	if err != nil {
+		if errors.Is(err, domain.ErrFeishuTenantNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "feishu tenant not found"})
+		}
 		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
 		}
@@ -168,6 +213,7 @@ func newFeishuAuthResponse(result domain.FeishuAuthResult) feishuAuthResponse {
 	return feishuAuthResponse{
 		Capabilities: result.Capabilities,
 		Roles:        result.Roles,
+		Tenant:       feishuLoginTenantResponse{ID: result.Tenant.ID, Name: result.Tenant.Name},
 		User: feishuUserResponse{
 			ID:              domain.ConsoleUserIDFromFeishu(result.User),
 			UnionID:         result.User.UnionID,
@@ -203,10 +249,10 @@ func randomOAuthState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(value[:]), nil
 }
 
-func setFeishuStateCookie(c echo.Context, state string) {
+func setFeishuStateCookie(c echo.Context, name string, value string) {
 	c.SetCookie(&http.Cookie{
-		Name:     feishuOAuthStateCookieName,
-		Value:    state,
+		Name:     name,
+		Value:    value,
 		Path:     "/api/v1/auth/feishu",
 		MaxAge:   int(feishuOAuthStateMaxAge.Seconds()),
 		HttpOnly: true,
@@ -214,9 +260,9 @@ func setFeishuStateCookie(c echo.Context, state string) {
 	})
 }
 
-func clearFeishuStateCookie(c echo.Context) {
+func clearFeishuStateCookie(c echo.Context, name string) {
 	c.SetCookie(&http.Cookie{
-		Name:     feishuOAuthStateCookieName,
+		Name:     name,
 		Value:    "",
 		Path:     "/api/v1/auth/feishu",
 		MaxAge:   -1,

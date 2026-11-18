@@ -160,9 +160,23 @@ create index idx_feishu_users_open_id on feishu_users(open_id);
 create index idx_feishu_users_user_id on feishu_users(user_id);
 create index idx_feishu_users_tenant_key on feishu_users(tenant_key);
 
+-- 飞书租户：每行是某个飞书租户里的一个自建应用，登录页按租户发起授权。app_secret 为 secretbox 密文。
+create table feishu_tenants (
+    id text primary key,
+    name text not null,
+    app_id text not null unique,
+    app_secret text not null,
+    status text not null check (status in ('active', 'disabled')),
+    sort_order integer not null default 0,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
 create table feishu_auth_sessions (
     session_token_hash text primary key,
     union_id text not null references feishu_users(union_id) on delete cascade,
+    -- 签发会话的租户，刷新 token 时使用该租户应用的凭证；租户停用后会话失效。
+    feishu_tenant_id text not null references feishu_tenants(id) on delete cascade,
     access_token text not null,
     access_token_expires_at timestamptz not null,
     refresh_token text not null default '',
@@ -176,6 +190,8 @@ create table feishu_auth_sessions (
 
 create index idx_feishu_auth_sessions_union_id
     on feishu_auth_sessions(union_id);
+create index idx_feishu_auth_sessions_tenant
+    on feishu_auth_sessions(feishu_tenant_id);
 create index idx_feishu_auth_sessions_refresh_expiry
     on feishu_auth_sessions(refresh_token_expires_at);
 

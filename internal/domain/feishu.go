@@ -75,18 +75,29 @@ type FeishuUserSearchPage struct {
 	PageToken string
 }
 
+// FeishuTenantSummary 是会话所属租户的展示信息。
+type FeishuTenantSummary struct {
+	ID   string
+	Name string
+}
+
 type FeishuAuthResult struct {
 	Capabilities     GlobalCapabilities
 	Roles            []GlobalRole
 	SessionExpiresAt time.Time
 	SessionToken     string
+	Tenant           FeishuTenantSummary
 	Token            FeishuToken
 	User             FeishuUser
 }
 
 type FeishuAuthSession struct {
-	SessionTokenHash      string
-	UnionID               string
+	SessionTokenHash string
+	UnionID          string
+	TenantID         string
+	// TenantName / TenantStatus 读取会话时从 feishu_tenants 关联得到，租户停用后会话失效。
+	TenantName            string
+	TenantStatus          FeishuTenantStatus
 	AccessToken           string
 	AccessTokenExpiresAt  time.Time
 	RefreshToken          string

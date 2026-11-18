@@ -902,12 +902,70 @@ func openAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/auth/feishu/authorize", &openapi3.PathItem{
-				Get: operation("authorizeFeishu", "Redirect to Feishu OAuth authorization page", []string{"Auth"}, responses(
-					responseNoBody(http.StatusFound, "Redirect to Feishu authorization page."),
-					response(http.StatusServiceUnavailable, "Feishu auth is not configured.", schemaRef("ErrorResponse")),
-					response(http.StatusBadGateway, "Feishu authorization URL could not be created.", schemaRef("ErrorResponse")),
+			openapi3.WithPath("/api/v1/auth/feishu/tenants", &openapi3.PathItem{
+				Get: operation("listFeishuLoginTenants", "List Feishu tenants selectable on the login page", []string{"Auth"}, responses(
+					response(http.StatusOK, "Active Feishu tenants, without app credentials.", schemaRef("FeishuLoginTenantsResponse")),
+					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					response(http.StatusServiceUnavailable, "Feishu auth is unavailable.", schemaRef("ErrorResponse")),
 				)),
+			}),
+			openapi3.WithPath("/api/v1/auth/feishu/authorize", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("authorizeFeishu", "Redirect to Feishu OAuth authorization page", []string{"Auth"}, responses(
+						responseNoBody(http.StatusFound, "Redirect to Feishu authorization page."),
+						response(http.StatusBadRequest, "Several tenants are active and none was selected.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Feishu tenant not found or disabled.", schemaRef("ErrorResponse")),
+						response(http.StatusServiceUnavailable, "Feishu auth is not configured.", schemaRef("ErrorResponse")),
+						response(http.StatusBadGateway, "Feishu authorization URL could not be created.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = openapi3.Parameters{
+						{
+							Value: openapi3.NewQueryParameter("tenant").
+								WithDescription("Feishu tenant id. Optional when exactly one tenant is active.").
+								WithSchema(stringSchema("Feishu tenant id.")),
+						},
+					}
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/feishu-tenants", &openapi3.PathItem{
+				Get: operation("listFeishuTenants", "List Feishu login tenants", []string{"Feishu"}, responses(
+					response(http.StatusOK, "Feishu tenants. App secrets are never returned.", schemaRef("FeishuTenantsResponse")),
+					response(http.StatusForbidden, "Only SuperAdmin can manage Feishu tenants.", schemaRef("ErrorResponse")),
+					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+				)),
+				Post: func() *openapi3.Operation {
+					op := operation("createFeishuTenant", "Create Feishu login tenant", []string{"Feishu"}, responses(
+						response(http.StatusCreated, "Feishu tenant created.", schemaRef("FeishuTenantDetailResponse")),
+						response(http.StatusBadRequest, "Invalid Feishu tenant request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only SuperAdmin can manage Feishu tenants.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "Tenant id or app id already exists.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Feishu tenant creation payload.", schemaRef("FeishuTenantCreateRequest"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/feishu-tenants/{id}", &openapi3.PathItem{
+				Patch: func() *openapi3.Operation {
+					op := operation("updateFeishuTenant", "Update Feishu login tenant", []string{"Feishu"}, responses(
+						response(http.StatusOK, "Feishu tenant updated. Disabling a tenant signs out its sessions.", schemaRef("FeishuTenantDetailResponse")),
+						response(http.StatusBadRequest, "Invalid Feishu tenant request, including an attempt to change appId.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only SuperAdmin can manage Feishu tenants.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Feishu tenant not found.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "The last active tenant cannot be disabled.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = openapi3.Parameters{
+						{
+							Value: openapi3.NewPathParameter("id").
+								WithDescription("Feishu tenant id.").
+								WithSchema(stringSchema("Feishu tenant id.")),
+						},
+					}
+					op.RequestBody = requestBody("Feishu tenant update payload. Empty appSecret keeps the stored secret.", schemaRef("FeishuTenantUpdateRequest"))
+					return op
+				}(),
 			}),
 			openapi3.WithPath("/api/v1/auth/feishu/callback", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
@@ -1119,6 +1177,13 @@ func openAPIDocument() *openapi3.T {
 				"StorageConfigurationTestFailedResponse": schemaValue(objectSchema("error").WithProperty("error", stringSchema("Error message.")).WithProperty("detail", stringSchema("Human readable failure reason, e.g. HTTP status and S3 error code. Never contains credentials."))),
 				"GlobalCapabilities":                     schemaValue(globalCapabilitiesSchema()),
 				"FeishuAuthResponse":                     schemaValue(feishuAuthResponseSchema()),
+				"FeishuLoginTenant":                      schemaValue(feishuLoginTenantSchema()),
+				"FeishuLoginTenantsResponse":             schemaValue(feishuLoginTenantsResponseSchema()),
+				"FeishuTenant":                           schemaValue(feishuTenantSchema()),
+				"FeishuTenantsResponse":                  schemaValue(feishuTenantsResponseSchema()),
+				"FeishuTenantDetailResponse":             schemaValue(feishuTenantDetailResponseSchema()),
+				"FeishuTenantCreateRequest":              schemaValue(feishuTenantRequestSchema(true)),
+				"FeishuTenantUpdateRequest":              schemaValue(feishuTenantRequestSchema(false)),
 				"FeishuToken":                            schemaValue(feishuTokenSchema()),
 				"FeishuUser":                             schemaValue(feishuUserSchema()),
 				"FeishuUserSearchItem":                   schemaValue(feishuUserSearchItemSchema()),
@@ -2702,6 +2767,7 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		"canManageEnvironments",
 		"canManageAccessTokens",
 		"canManageBuildAdapters",
+		"canManageFeishuTenants",
 	).
 		WithProperty("canCreateApplication", boolSchema("Whether current user can create applications.")).
 		WithProperty("canManageApplications", boolSchema("Whether current user can manage applications globally.")).
@@ -2712,13 +2778,61 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		WithProperty("canManageStorage", boolSchema("Whether current user can manage storage configurations.")).
 		WithProperty("canManageEnvironments", boolSchema("Whether current user can manage environments.")).
 		WithProperty("canManageAccessTokens", boolSchema("Whether current user can manage artifact access tokens.")).
-		WithProperty("canManageBuildAdapters", boolSchema("Whether current user can create, edit, disable and enable build adapters."))
+		WithProperty("canManageBuildAdapters", boolSchema("Whether current user can create, edit, disable and enable build adapters.")).
+		WithProperty("canManageFeishuTenants", boolSchema("Whether current user can manage Feishu login tenants (SuperAdmin only)."))
+}
+
+func feishuLoginTenantSchema() *openapi3.Schema {
+	return objectSchema("id", "name").
+		WithProperty("id", stringSchema("Feishu tenant id.")).
+		WithProperty("name", stringSchema("Tenant display name."))
+}
+
+func feishuLoginTenantsResponseSchema() *openapi3.Schema {
+	return objectSchema("tenants").
+		WithPropertyRef("tenants", arraySchemaRef("FeishuLoginTenant"))
+}
+
+func feishuTenantSchema() *openapi3.Schema {
+	return objectSchema("id", "name", "appId", "status", "sortOrder", "createdAt", "updatedAt").
+		WithProperty("id", stringSchema("Tenant id, lowercase letters, digits and dashes.")).
+		WithProperty("name", stringSchema("Tenant display name shown on the login page.")).
+		WithProperty("appId", stringSchema("Feishu app id (cli_...). Cannot be changed after creation.")).
+		WithProperty("status", enumStringSchema("Tenant status.", string(domain.FeishuTenantStatusActive), string(domain.FeishuTenantStatusDisabled))).
+		WithProperty("sortOrder", int32Schema("Order on the login page, ascending.")).
+		WithProperty("createdAt", dateTimeSchema("Creation time.")).
+		WithProperty("updatedAt", dateTimeSchema("Last update time."))
+}
+
+func feishuTenantsResponseSchema() *openapi3.Schema {
+	return objectSchema("tenants").
+		WithPropertyRef("tenants", arraySchemaRef("FeishuTenant"))
+}
+
+func feishuTenantDetailResponseSchema() *openapi3.Schema {
+	return objectSchema("tenant").
+		WithPropertyRef("tenant", schemaRef("FeishuTenant"))
+}
+
+func feishuTenantRequestSchema(create bool) *openapi3.Schema {
+	required := []string{"name", "status"}
+	if create {
+		required = append(required, "id", "appId", "appSecret")
+	}
+	return objectSchema(required...).
+		WithProperty("id", stringSchema("Tenant id. Only used on create.")).
+		WithProperty("name", stringSchema("Tenant display name.")).
+		WithProperty("appId", stringSchema("Feishu app id. Only used on create; must be omitted or unchanged on update.")).
+		WithProperty("appSecret", stringSchema("Feishu app secret, stored encrypted. Empty on update keeps the stored secret.")).
+		WithProperty("status", enumStringSchema("Tenant status.", string(domain.FeishuTenantStatusActive), string(domain.FeishuTenantStatusDisabled))).
+		WithProperty("sortOrder", int32Schema("Order on the login page, ascending."))
 }
 
 func feishuAuthResponseSchema() *openapi3.Schema {
-	return objectSchema("capabilities", "roles", "user", "token").
+	return objectSchema("capabilities", "roles", "tenant", "user", "token").
 		WithPropertyRef("capabilities", schemaRef("GlobalCapabilities")).
 		WithProperty("roles", stringArraySchema("Global roles assigned to the current user.")).
+		WithPropertyRef("tenant", schemaRef("FeishuLoginTenant")).
 		WithPropertyRef("user", schemaRef("FeishuUser")).
 		WithPropertyRef("token", schemaRef("FeishuToken"))
 }

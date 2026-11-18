@@ -26,9 +26,9 @@ func TestFeishuAuthServiceCompleteAuthorization(t *testing.T) {
 		},
 	}
 	repository := &fakeFeishuUserRepository{}
-	service := NewFeishuAuthService(client, repository)
+	service := NewFeishuAuthService(client, repository, testFeishuTenantResolver())
 
-	result, err := service.CompleteAuthorization(context.Background(), "auth-code")
+	result, err := service.CompleteAuthorization(context.Background(), "xiaomi", "auth-code")
 	if err != nil {
 		t.Fatalf("complete authorization: %v", err)
 	}
@@ -60,11 +60,40 @@ func TestFeishuAuthServiceCompleteAuthorization(t *testing.T) {
 	if repository.createdSession.SessionTokenHash == "" {
 		t.Fatal("expected repository to save auth session")
 	}
+	if repository.createdSession.TenantID != "xiaomi" || result.Tenant.Name != "小米" {
+		t.Fatalf("expected session bound to tenant, got session=%q result=%+v", repository.createdSession.TenantID, result.Tenant)
+	}
+}
+
+func TestFeishuAuthServiceGetSessionExpiresWhenTenantDisabled(t *testing.T) {
+	now := time.Now()
+	repository := &fakeFeishuUserRepository{
+		session: domain.FeishuAuthSession{
+			SessionTokenHash:      "hash",
+			UnionID:               "on_union",
+			TenantID:              "xiaomi",
+			TenantStatus:          domain.FeishuTenantStatusDisabled,
+			AccessToken:           "access-token",
+			AccessTokenExpiresAt:  now.Add(time.Hour),
+			RefreshToken:          "refresh-token",
+			RefreshTokenExpiresAt: now.Add(24 * time.Hour),
+			User:                  domain.FeishuUser{UnionID: "on_union", OpenID: "ou_open"},
+		},
+	}
+	service := NewFeishuAuthService(fakeFeishuClient{}, repository, testFeishuTenantResolver())
+
+	if _, err := service.GetSession(context.Background(), "session-token"); err != domain.ErrFeishuSessionExpired {
+		t.Fatalf("expected session expired for disabled tenant, got %v", err)
+	}
+	if !repository.deletedSession {
+		t.Fatal("expected disabled tenant session to be deleted")
+	}
 }
 
 func TestFeishuAuthServiceGetSessionRefreshesExpiringAccessToken(t *testing.T) {
 	now := time.Now()
 	client := fakeFeishuClient{
+		refreshApp: &domain.FeishuApp{},
 		refreshToken: domain.FeishuToken{
 			AccessToken:           "new-access-token",
 			ExpiresIn:             7200,
@@ -78,6 +107,8 @@ func TestFeishuAuthServiceGetSessionRefreshesExpiringAccessToken(t *testing.T) {
 		session: domain.FeishuAuthSession{
 			SessionTokenHash:      "hash",
 			UnionID:               "on_union",
+			TenantID:              "xiaomi",
+			TenantStatus:          domain.FeishuTenantStatusActive,
 			AccessToken:           "old-access-token",
 			AccessTokenExpiresAt:  now.Add(time.Minute),
 			RefreshToken:          "old-refresh-token",
@@ -91,7 +122,7 @@ func TestFeishuAuthServiceGetSessionRefreshesExpiringAccessToken(t *testing.T) {
 			},
 		},
 	}
-	service := NewFeishuAuthService(client, repository)
+	service := NewFeishuAuthService(client, repository, testFeishuTenantResolver())
 
 	result, err := service.GetSession(context.Background(), "session-token")
 	if err != nil {
@@ -113,19 +144,26 @@ func TestFeishuAuthServiceGetSessionRefreshesExpiringAccessToken(t *testing.T) {
 	if repository.savedConsoleUser.ID != "ou_open" {
 		t.Fatalf("expected synced console user id, got %+v", repository.savedConsoleUser)
 	}
+	if client.refreshApp == nil || client.refreshApp.AppID != "cli_xiaomi0001" {
+		t.Fatalf("expected refresh with session tenant app, got %+v", client.refreshApp)
+	}
 }
 
 type fakeFeishuClient struct {
 	token        domain.FeishuToken
 	refreshToken domain.FeishuToken
 	user         domain.FeishuUser
+	refreshApp   *domain.FeishuApp
 }
 
-func (c fakeFeishuClient) AuthorizationURL(state string) (string, error) {
-	return "https://accounts.feishu.cn/oauth?state=" + state, nil
+func (c fakeFeishuClient) AuthorizationURL(app domain.FeishuApp, state string) (string, error) {
+	return "https://accounts.feishu.cn/oauth?client_id=" + app.AppID + "&state=" + state, nil
 }
 
-func (c fakeFeishuClient) ExchangeCode(context.Context, string) (domain.FeishuToken, error) {
+func (c fakeFeishuClient) ExchangeCode(_ context.Context, app domain.FeishuApp, _ string) (domain.FeishuToken, error) {
+	if app.AppSecret == "" {
+		return domain.FeishuToken{}, domain.ErrFeishuAuthNotConfigured
+	}
 	return c.token, nil
 }
 
@@ -133,8 +171,33 @@ func (c fakeFeishuClient) GetUserInfo(context.Context, string) (domain.FeishuUse
 	return c.user, nil
 }
 
-func (c fakeFeishuClient) RefreshAccessToken(context.Context, string) (domain.FeishuToken, error) {
+func (c fakeFeishuClient) RefreshAccessToken(_ context.Context, app domain.FeishuApp, _ string) (domain.FeishuToken, error) {
+	if c.refreshApp != nil {
+		*c.refreshApp = app
+	}
 	return c.refreshToken, nil
+}
+
+type fakeFeishuTenantResolver struct {
+	tenants map[string]domain.FeishuTenant
+}
+
+func testFeishuTenantResolver() fakeFeishuTenantResolver {
+	return fakeFeishuTenantResolver{tenants: map[string]domain.FeishuTenant{
+		"xiaomi": {ID: "xiaomi", Name: "小米", AppID: "cli_xiaomi0001", AppSecret: "secret", Status: domain.FeishuTenantStatusActive},
+	}}
+}
+
+func (r fakeFeishuTenantResolver) ResolveApp(_ context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error) {
+	tenant, ok := r.tenants[id]
+	if !ok {
+		return domain.FeishuTenant{}, domain.FeishuApp{}, domain.ErrFeishuTenantNotFound
+	}
+	return tenant, domain.FeishuApp{AppID: tenant.AppID, AppSecret: tenant.AppSecret}, nil
+}
+
+func (r fakeFeishuTenantResolver) ResolveLoginTenant(ctx context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error) {
+	return r.ResolveApp(ctx, id)
 }
 
 type fakeFeishuUserRepository struct {
@@ -145,6 +208,7 @@ type fakeFeishuUserRepository struct {
 	savedUser        domain.FeishuUser
 	session          domain.FeishuAuthSession
 	updatedSession   domain.FeishuAuthSession
+	deletedSession   bool
 }
 
 func (r *fakeFeishuUserRepository) UpsertFeishuUser(_ context.Context, user domain.FeishuUser) (domain.FeishuUser, error) {
@@ -184,5 +248,6 @@ func (r *fakeFeishuUserRepository) UpdateFeishuAuthSessionToken(_ context.Contex
 }
 
 func (r *fakeFeishuUserRepository) DeleteFeishuAuthSession(context.Context, string) error {
+	r.deletedSession = true
 	return nil
 }

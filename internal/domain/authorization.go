@@ -37,6 +37,8 @@ const (
 	ActionBuildAdapterManage AuthorizationAction = "build_adapter:manage"
 	// ActionBuildAdapterUse 表示读取、预览并为模块选用构建适配器，授予能管理模块的人。
 	ActionBuildAdapterUse AuthorizationAction = "build_adapter:use"
+	// ActionFeishuTenantManage 表示新增、编辑、停用飞书登录租户，只授予 SuperAdmin：租户凭证决定谁能登录平台。
+	ActionFeishuTenantManage AuthorizationAction = "feishu_tenant:manage"
 )
 
 type AuthorizationResource struct {
@@ -58,6 +60,7 @@ type GlobalCapabilities struct {
 	CanManageEnvironments  bool `json:"canManageEnvironments"`
 	CanManageAccessTokens  bool `json:"canManageAccessTokens"`
 	CanManageBuildAdapters bool `json:"canManageBuildAdapters"`
+	CanManageFeishuTenants bool `json:"canManageFeishuTenants"`
 }
 
 type ApplicationCapabilities struct {
@@ -93,6 +96,7 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 				CanManageEnvironments:  true,
 				CanManageAccessTokens:  true,
 				CanManageBuildAdapters: true,
+				CanManageFeishuTenants: true,
 			}
 		case GlobalRolePlatformAdmin:
 			capabilities.CanCreateApplication = true

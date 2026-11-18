@@ -96,6 +96,7 @@ func (r *FeishuUserRepository) CreateFeishuAuthSession(ctx context.Context, sess
 		insert into feishu_auth_sessions (
 			session_token_hash,
 			union_id,
+			feishu_tenant_id,
 			access_token,
 			access_token_expires_at,
 			refresh_token,
@@ -103,11 +104,12 @@ func (r *FeishuUserRepository) CreateFeishuAuthSession(ctx context.Context, sess
 			token_type,
 			scope
 		) values (
-			$1, $2, $3, $4, $5, $6, $7, $8
+			$1, $2, $3, $4, $5, $6, $7, $8, $9
 		)
 	`,
 		session.SessionTokenHash,
 		session.UnionID,
+		session.TenantID,
 		session.AccessToken,
 		session.AccessTokenExpiresAt,
 		session.RefreshToken,
@@ -129,6 +131,9 @@ func (r *FeishuUserRepository) FindFeishuAuthSession(ctx context.Context, sessio
 		select
 			s.session_token_hash,
 			s.union_id,
+			s.feishu_tenant_id,
+			t.name,
+			t.status,
 			s.access_token,
 			s.access_token_expires_at,
 			s.refresh_token,
@@ -157,10 +162,14 @@ func (r *FeishuUserRepository) FindFeishuAuthSession(ctx context.Context, sessio
 			u.last_login_at
 		from feishu_auth_sessions s
 		join feishu_users u on u.union_id = s.union_id
+		join feishu_tenants t on t.id = s.feishu_tenant_id
 		where s.session_token_hash = $1
 	`, sessionTokenHash).Scan(
 		&session.SessionTokenHash,
 		&session.UnionID,
+		&session.TenantID,
+		&session.TenantName,
+		&session.TenantStatus,
 		&session.AccessToken,
 		&session.AccessTokenExpiresAt,
 		&session.RefreshToken,

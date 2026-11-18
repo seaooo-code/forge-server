@@ -14,10 +14,16 @@ import (
 const feishuSessionRefreshWindow = 5 * time.Minute
 
 type FeishuOAuthClient interface {
-	AuthorizationURL(state string) (string, error)
-	ExchangeCode(ctx context.Context, code string) (domain.FeishuToken, error)
+	AuthorizationURL(app domain.FeishuApp, state string) (string, error)
+	ExchangeCode(ctx context.Context, app domain.FeishuApp, code string) (domain.FeishuToken, error)
 	GetUserInfo(ctx context.Context, accessToken string) (domain.FeishuUser, error)
-	RefreshAccessToken(ctx context.Context, refreshToken string) (domain.FeishuToken, error)
+	RefreshAccessToken(ctx context.Context, app domain.FeishuApp, refreshToken string) (domain.FeishuToken, error)
+}
+
+// FeishuTenantResolver 解析登录租户与其应用凭证，实现见 FeishuTenantService。
+type FeishuTenantResolver interface {
+	ResolveApp(ctx context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error)
+	ResolveLoginTenant(ctx context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error)
 }
 
 type FeishuUserRepository interface {
@@ -34,21 +40,37 @@ type FeishuUserRepository interface {
 type FeishuAuthService struct {
 	client     FeishuOAuthClient
 	repository FeishuUserRepository
+	tenants    FeishuTenantResolver
 }
 
-func NewFeishuAuthService(client FeishuOAuthClient, repository FeishuUserRepository) *FeishuAuthService {
+func NewFeishuAuthService(client FeishuOAuthClient, repository FeishuUserRepository, tenants FeishuTenantResolver) *FeishuAuthService {
 	return &FeishuAuthService{
 		client:     client,
 		repository: repository,
+		tenants:    tenants,
 	}
 }
 
-func (s *FeishuAuthService) AuthorizationURL(state string) (string, error) {
-	return s.client.AuthorizationURL(state)
+// AuthorizationURL 返回指定租户的授权地址，以及实际使用的租户 ID（tenantID 为空且只有一个启用租户时自动选中）。
+func (s *FeishuAuthService) AuthorizationURL(ctx context.Context, tenantID string, state string) (string, string, error) {
+	tenant, app, err := s.tenants.ResolveLoginTenant(ctx, tenantID)
+	if err != nil {
+		return "", "", err
+	}
+	authURL, err := s.client.AuthorizationURL(app, state)
+	if err != nil {
+		return "", "", err
+	}
+	return authURL, tenant.ID, nil
 }
 
-func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code string) (domain.FeishuAuthResult, error) {
-	token, err := s.client.ExchangeCode(ctx, code)
+// CompleteAuthorization 用发起授权时的租户应用换取 token，并创建归属该租户的会话。
+func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, tenantID string, code string) (domain.FeishuAuthResult, error) {
+	tenant, app, err := s.tenants.ResolveApp(ctx, tenantID)
+	if err != nil {
+		return domain.FeishuAuthResult{}, err
+	}
+	token, err := s.client.ExchangeCode(ctx, app, code)
 	if err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
@@ -74,6 +96,7 @@ func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code stri
 
 	now := time.Now()
 	session := newAuthSession(sessionTokenHash(sessionToken), savedUser.UnionID, token, now)
+	session.TenantID = tenant.ID
 	if err := s.repository.CreateFeishuAuthSession(ctx, session); err != nil {
 		return domain.FeishuAuthResult{}, err
 	}
@@ -88,6 +111,7 @@ func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, code stri
 		Roles:            roles,
 		SessionExpiresAt: sessionExpiresAt(session),
 		SessionToken:     sessionToken,
+		Tenant:           domain.FeishuTenantSummary{ID: tenant.ID, Name: tenant.Name},
 		Token:            token,
 		User:             savedUser,
 	}, nil
@@ -100,8 +124,9 @@ func (s *FeishuAuthService) GetSession(ctx context.Context, sessionToken string)
 	}
 
 	now := time.Now()
-	sessionExpired := !now.Before(session.AccessTokenExpiresAt)
-	if session.RefreshToken != "" {
+	// 租户停用后，该租户签发的会话一律失效。
+	sessionExpired := session.TenantStatus != domain.FeishuTenantStatusActive || !now.Before(session.AccessTokenExpiresAt)
+	if session.RefreshToken != "" && session.TenantStatus == domain.FeishuTenantStatusActive {
 		sessionExpired = refreshTokenExpired(session, now)
 	}
 	if sessionExpired {
@@ -162,7 +187,11 @@ func (s *FeishuAuthService) refreshSession(ctx context.Context, session domain.F
 		return domain.FeishuAuthSession{}, domain.ErrFeishuSessionExpired
 	}
 
-	token, err := s.client.RefreshAccessToken(ctx, session.RefreshToken)
+	_, app, err := s.tenants.ResolveApp(ctx, session.TenantID)
+	if err != nil {
+		return domain.FeishuAuthSession{}, err
+	}
+	token, err := s.client.RefreshAccessToken(ctx, app, session.RefreshToken)
 	if err != nil {
 		return domain.FeishuAuthSession{}, err
 	}
@@ -205,6 +234,7 @@ func authResultFromSession(session domain.FeishuAuthSession, sessionToken string
 	return domain.FeishuAuthResult{
 		SessionExpiresAt: sessionExpiresAt(session),
 		SessionToken:     sessionToken,
+		Tenant:           domain.FeishuTenantSummary{ID: session.TenantID, Name: session.TenantName},
 		Token: domain.FeishuToken{
 			AccessToken:           session.AccessToken,
 			ExpiresIn:             secondsUntil(session.AccessTokenExpiresAt, now),

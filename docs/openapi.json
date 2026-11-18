@@ -3131,6 +3131,9 @@
             },
             "type": "array"
           },
+          "tenant": {
+            "$ref": "#/components/schemas/FeishuLoginTenant"
+          },
           "token": {
             "$ref": "#/components/schemas/FeishuToken"
           },
@@ -3141,8 +3144,193 @@
         "required": [
           "capabilities",
           "roles",
+          "tenant",
           "user",
           "token"
+        ],
+        "type": "object"
+      },
+      "FeishuLoginTenant": {
+        "properties": {
+          "id": {
+            "description": "Feishu tenant id.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Tenant display name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "FeishuLoginTenantsResponse": {
+        "properties": {
+          "tenants": {
+            "items": {
+              "$ref": "#/components/schemas/FeishuLoginTenant"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tenants"
+        ],
+        "type": "object"
+      },
+      "FeishuTenant": {
+        "properties": {
+          "appId": {
+            "description": "Feishu app id (cli_...). Cannot be changed after creation.",
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Creation time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Tenant id, lowercase letters, digits and dashes.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Tenant display name shown on the login page.",
+            "type": "string"
+          },
+          "sortOrder": {
+            "description": "Order on the login page, ascending.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Tenant status.",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last update time.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "appId",
+          "status",
+          "sortOrder",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "FeishuTenantCreateRequest": {
+        "properties": {
+          "appId": {
+            "description": "Feishu app id. Only used on create; must be omitted or unchanged on update.",
+            "type": "string"
+          },
+          "appSecret": {
+            "description": "Feishu app secret, stored encrypted. Empty on update keeps the stored secret.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Tenant id. Only used on create.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Tenant display name.",
+            "type": "string"
+          },
+          "sortOrder": {
+            "description": "Order on the login page, ascending.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Tenant status.",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "id",
+          "appId",
+          "appSecret"
+        ],
+        "type": "object"
+      },
+      "FeishuTenantDetailResponse": {
+        "properties": {
+          "tenant": {
+            "$ref": "#/components/schemas/FeishuTenant"
+          }
+        },
+        "required": [
+          "tenant"
+        ],
+        "type": "object"
+      },
+      "FeishuTenantUpdateRequest": {
+        "properties": {
+          "appId": {
+            "description": "Feishu app id. Only used on create; must be omitted or unchanged on update.",
+            "type": "string"
+          },
+          "appSecret": {
+            "description": "Feishu app secret, stored encrypted. Empty on update keeps the stored secret.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Tenant id. Only used on create.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Tenant display name.",
+            "type": "string"
+          },
+          "sortOrder": {
+            "description": "Order on the login page, ascending.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Tenant status.",
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
+      "FeishuTenantsResponse": {
+        "properties": {
+          "tenants": {
+            "items": {
+              "$ref": "#/components/schemas/FeishuTenant"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tenants"
         ],
         "type": "object"
       },
@@ -3353,6 +3541,10 @@
             "description": "Whether current user can manage environments.",
             "type": "boolean"
           },
+          "canManageFeishuTenants": {
+            "description": "Whether current user can manage Feishu login tenants (SuperAdmin only).",
+            "type": "boolean"
+          },
           "canManageModules": {
             "description": "Whether current user can manage modules globally.",
             "type": "boolean"
@@ -3372,7 +3564,8 @@
           "canManageStorage",
           "canManageEnvironments",
           "canManageAccessTokens",
-          "canManageBuildAdapters"
+          "canManageBuildAdapters",
+          "canManageFeishuTenants"
         ],
         "type": "object"
       },
@@ -6123,9 +6316,40 @@
     "/api/v1/auth/feishu/authorize": {
       "get": {
         "operationId": "authorizeFeishu",
+        "parameters": [
+          {
+            "description": "Feishu tenant id. Optional when exactly one tenant is active.",
+            "in": "query",
+            "name": "tenant",
+            "schema": {
+              "description": "Feishu tenant id.",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "302": {
             "description": "Redirect to Feishu authorization page."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Several tenants are active and none was selected."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Feishu tenant not found or disabled."
           },
           "502": {
             "content": {
@@ -6239,6 +6463,47 @@
           }
         },
         "summary": "Complete Feishu OAuth authorization",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/feishu/tenants": {
+      "get": {
+        "operationId": "listFeishuLoginTenants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeishuLoginTenantsResponse"
+                }
+              }
+            },
+            "description": "Active Feishu tenants, without app credentials."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Feishu auth is unavailable."
+          }
+        },
+        "summary": "List Feishu tenants selectable on the login page",
         "tags": [
           "Auth"
         ]
@@ -8809,6 +9074,211 @@
         "summary": "Update environment",
         "tags": [
           "Environments"
+        ]
+      }
+    },
+    "/api/v1/feishu-tenants": {
+      "get": {
+        "operationId": "listFeishuTenants",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeishuTenantsResponse"
+                }
+              }
+            },
+            "description": "Feishu tenants. App secrets are never returned."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only SuperAdmin can manage Feishu tenants."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List Feishu login tenants",
+        "tags": [
+          "Feishu"
+        ]
+      },
+      "post": {
+        "operationId": "createFeishuTenant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeishuTenantCreateRequest"
+              }
+            }
+          },
+          "description": "Feishu tenant creation payload.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeishuTenantDetailResponse"
+                }
+              }
+            },
+            "description": "Feishu tenant created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid Feishu tenant request."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only SuperAdmin can manage Feishu tenants."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Tenant id or app id already exists."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Create Feishu login tenant",
+        "tags": [
+          "Feishu"
+        ]
+      }
+    },
+    "/api/v1/feishu-tenants/{id}": {
+      "patch": {
+        "operationId": "updateFeishuTenant",
+        "parameters": [
+          {
+            "description": "Feishu tenant id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Feishu tenant id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeishuTenantUpdateRequest"
+              }
+            }
+          },
+          "description": "Feishu tenant update payload. Empty appSecret keeps the stored secret.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeishuTenantDetailResponse"
+                }
+              }
+            },
+            "description": "Feishu tenant updated. Disabling a tenant signs out its sessions."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid Feishu tenant request, including an attempt to change appId."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Only SuperAdmin can manage Feishu tenants."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Feishu tenant not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The last active tenant cannot be disabled."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Update Feishu login tenant",
+        "tags": [
+          "Feishu"
         ]
       }
     },

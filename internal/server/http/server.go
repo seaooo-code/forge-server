@@ -37,6 +37,7 @@ type Dependencies struct {
 	EnvironmentService         EnvironmentService
 	FeishuAuthService          FeishuAuthService
 	FeishuContactService       FeishuContactService
+	FeishuTenantService        FeishuTenantService
 	ModuleService              ModuleService
 	ReleaseService             ReleaseService
 	StorageService             StorageService
@@ -136,10 +137,17 @@ type ModuleService interface {
 }
 
 type FeishuAuthService interface {
-	AuthorizationURL(state string) (string, error)
-	CompleteAuthorization(ctx context.Context, code string) (domain.FeishuAuthResult, error)
+	AuthorizationURL(ctx context.Context, tenantID string, state string) (string, string, error)
+	CompleteAuthorization(ctx context.Context, tenantID string, code string) (domain.FeishuAuthResult, error)
 	GetSession(ctx context.Context, sessionToken string) (domain.FeishuAuthResult, error)
 	Logout(ctx context.Context, sessionToken string) error
+}
+
+type FeishuTenantService interface {
+	CreateFeishuTenant(ctx context.Context, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
+	ListActiveFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
+	ListFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
+	UpdateFeishuTenant(ctx context.Context, id string, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
 }
 
 type FeishuContactService interface {
@@ -186,7 +194,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 			"status": "ok",
 		})
 	})
-	registerFeishuAuthRoutes(api, deps.FeishuAuthService)
+	registerFeishuAuthRoutes(api, deps.FeishuAuthService, deps.FeishuTenantService)
 	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService)
 	registerWebhookRoutes(api, deps.WebhookService)
 
@@ -203,6 +211,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, deps.AuthorizationService, cfg.GitHub.InstallRedirectURL)
 	registerDashboardRoutes(protectedAPI, deps.DashboardService)
 	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService, deps.AuthorizationService)
+	registerFeishuTenantRoutes(protectedAPI, deps.FeishuTenantService, deps.AuthorizationService)
 	registerFeishuContactRoutes(protectedAPI, deps.FeishuContactService, deps.FeishuAuthService)
 	registerModuleRoutes(protectedAPI, deps.ModuleService, deps.AuthorizationService)
 	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
