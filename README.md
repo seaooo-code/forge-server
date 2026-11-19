@@ -165,7 +165,7 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 
 ## 部署
 
-容器镜像、环境变量、Matrix 部署空间和健康检查配置见 [部署说明](docs/deployment.md)。worker 的部署方式另定，扩缩容机制见 [worker 扩缩容](docs/worker-scaling.md)。
+容器镜像、环境变量、Matrix 部署空间和健康检查配置见 [部署说明](docs/deployment.md)。只处理 `gitlab_ci` 构建的 worker 可以用同一个镜像部署，需要 Docker 的 worker 部署方式另定，扩缩容机制见 [worker 扩缩容](docs/worker-scaling.md)。
 
 ## API 与健康检查
 

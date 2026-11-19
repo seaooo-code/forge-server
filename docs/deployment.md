@@ -1,6 +1,6 @@
 # 部署说明
 
-本文说明 forge-server（API 进程）的镜像和容器部署。`dockerfile` 和 `adapter` 构建的 worker 需要访问 Docker daemon，部署方式另定，不在本镜像内；只处理 `gitlab_ci` 构建的 worker 不需要 Docker，可以直接部署在容器平台（见 [转交 GitLab CI 构建](gitlab-ci-build.md) 第 7 节）。扩缩容机制见 [worker 扩缩容](worker-scaling.md)。前端部署见 forge-console 的 `docs/deployment.md`。
+本文说明 forge-server（API 进程）和只处理 `gitlab_ci` 构建的 worker 的镜像和容器部署（见第 6 节）。`dockerfile` 和 `adapter` 构建的 worker 需要访问 Docker daemon，部署方式另定。扩缩容机制见 [worker 扩缩容](worker-scaling.md)。前端部署见 forge-console 的 `docs/deployment.md`。
 
 ## 1. 镜像
 
@@ -11,7 +11,7 @@
 | 构建 | `micr.cloud.mioffice.cn/devx-build-image/golang:1.25-ubuntu24-base` | DevX Go 1.25 镜像，已配置公司 Go 代理。静态编译 `forge-server` 和 `forge-migrate`（`CGO_ENABLED=0`，`GOAMD64=v1`） |
 | 运行 | `micr.cloud.mioffice.cn/devx-build-image/base:ubuntu-2404-mini` | 从内网 apt 源安装 `ca-certificates` 和 `tzdata`，以 `work` 用户（uid 10000）运行 |
 
-- 镜像内容：`/app/forge-server`、`/app/forge-migrate`、`/app/migrations/`，工作目录 `/app`，默认启动 `forge-server`，监听 `8080`。
+- 镜像内容：`/app/forge-server`、`/app/forge-migrate`、`/app/forge-worker`、`/app/migrations/`，工作目录 `/app`，默认启动 `forge-server`，监听 `8080`。API 和 worker 共用同一个镜像，用环境变量 `FORGE_ROLE` 选择启动哪个进程（见第 6 节）。镜像里没有 git 和 Docker。
 - 镜像里不包含 `.env`，所有配置通过环境变量注入（`.dockerignore` 排除了 `.env*`）。
 - 只使用标准 Dockerfile 语法，MIFLOW（kaniko）和本地 `docker build` 都能构建。
 
@@ -60,7 +60,7 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 | `POSTGRES_PASSWORD_CIPHER` | 复制出来的密文 |
 | `KEYCENTER_AGENT_HOST`、`KEYCENTER_AGENT_PORT` | 可选，默认 `127.0.0.1:9988` |
 
-`forge-server`、`forge-migrate`、`forge-worker` 共用这套配置。解密只发生在进程启动时，数据库换密码后需要更新密文并重启。
+`forge-server`、`forge-migrate`、`forge-worker` 共用这套配置，worker 的部署空间也要开 `kc-agent` sidecar 并配置同样的变量。解密只发生在进程启动时，数据库换密码后需要更新密文并重启。
 
 本地调试可以把 `KEYCENTER_AGENT_HOST` 设为 `kcagent.sec.xiaomi.com`（公共 agent，仅限办公网本地开发，只连测试环境，禁止在 staging、生产、CI 使用）。要求本机 IP 已关联小米人账号、账号是 SID 的管理员或发布者，且测试环境有已开启并分发到公共 agent IP 的认证密钥，详见 KeyCenter 文档《本地开发环境 - 有认证公共 KC agent 使用文档》。
 
@@ -126,3 +126,35 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 3. 经前端域名访问 `GET /api/v1/ping`，返回 forge-server 的 JSON；
 4. 走一遍飞书登录；
 5. 在 GitLab 项目里发送一次 webhook 测试请求，确认能收到。
+
+## 6. 部署 worker（只处理 gitlab_ci 构建）
+
+worker 和 API 使用同一个镜像（小米内部用 `Dockerfile.xiaomi`），在 Matrix 里单独建一个部署空间。Matrix 的部署空间不能自定义启动命令，所以镜像入口 [`docker-entrypoint.sh`](../docker-entrypoint.sh) 按 `FORGE_ROLE` 选择进程：不设置或设为 `server` 启动 `forge-server`，设为 `worker` 启动 `forge-worker`，其他值启动失败。镜像里没有 git 和 Docker，worker 启动时会探测到并自动禁用 `dockerfile`、`adapter`，只处理 `gitlab_ci`。
+
+| 项 | 值 |
+| --- | --- |
+| 启动进程 | 环境变量 `FORGE_ROLE=worker` |
+| 端口 | 无。worker 不监听 HTTP 端口，也没有 `/healthz` |
+| 规格 | 通用型超微型或微型。worker 只触发 pipeline、轮询日志、搬运产物，下载和解压 artifacts 时占用临时盘和一些内存，并发数提高时按产物大小估算 |
+| 实例数 | 先起 1 个；扩容见 [worker 扩缩容](worker-scaling.md) |
+| 优雅退出 | 平台终止宽限期（例如 130 秒）要大于 `FORGE_WORKER_SHUTDOWN_GRACE` |
+
+健康检查：worker 没有 HTTP 端点，平台要求配置检查时只能选进程或不配置，没有就绪检查可用。worker 起不来时进程会直接退出（数据库连不上、配置错误、没有可处理的构建方式），平台会重启它；排队情况看 API 的 `/metrics`。
+
+环境变量：
+
+| 变量 | 说明 |
+| --- | --- |
+| `APP_ENV`、`POSTGRES_DSN`、`FORGE_SECRET_KEY` | 与 API 一致。`FORGE_SECRET_KEY` 必须相同，否则解不开代码源凭证和密钥类构建变量 |
+| `POSTGRES_PASSWORD_COMMAND`、`KEYCENTER_SID`、`POSTGRES_PASSWORD_CIPHER` | 同第 3 节的 KeyCenter 配置，部署空间也要开 sidecar |
+| `FORGE_ROLE` | 设为 `worker`。API 的部署空间不设置 |
+| `FORGE_WORKER_ID` | 多个实例不能重复，不能包含 `#`。留空时取 `forge-worker-{hostname}`，容器的 hostname 每个实例不同，一般不用配 |
+| `FORGE_WORKER_BUILD_MODES` | 设为 `gitlab_ci`，显式固定只处理 CI 构建，以后换到有 Docker 的环境也不会误接 docker 构建 |
+| `FORGE_WORKER_SHUTDOWN_GRACE` | 比平台终止宽限期短，例如 `100s`。退出时 CI 构建不会被取消，下一个 worker 续接同一个 pipeline |
+| `FORGE_WORKER_WORK_DIR` | 默认 `/tmp/forge-worker`，artifacts 解压到这里，临时盘要放得下 `FORGE_WORKER_CI_ARTIFACT_MAX_BYTES` 的两倍 |
+
+不需要配置对象存储：产物上传用的 S3 配置在控制台里按环境绑定，存在数据库里，worker 构建时读取。
+
+出站网络：数据库、GitLab（`git.n.xiaomi.com`，创建 pipeline、读日志、下载 artifacts）、产物所在的 FDS S3 域名。使用依赖注入时，CI 的 runner 还要能访问存储的公开地址。
+
+首次启动时 worker 也会执行 `migrations/`，所以先让 API 完成迁移，再起 worker，避免两边同时迁移。

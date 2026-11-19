@@ -1,6 +1,6 @@
 # forge-server 小米内部镜像：在 Dockerfile 的基础上额外构建 kc-password，用 KeyCenter 解密数据库密码。
 # KeyCenter SDK 是公司内网私有模块，只在这个文件里引用，主 module 和默认 Dockerfile 不依赖它。
-# 使用方式见 docs/deployment.md 的「KeyCenter 数据库密码」一节。
+# 使用方式见 docs/deployment.md 的「KeyCenter 数据库密码」一节。同一个镜像部署 API 和 worker，worker 部署空间设置 FORGE_ROLE=worker。
 
 ARG GO_IMAGE=micr.cloud.mioffice.cn/devx-build-image/golang:1.25-ubuntu24-base
 ARG RUNTIME_IMAGE=micr.cloud.mioffice.cn/devx-build-image/base:ubuntu-2404-mini
@@ -12,7 +12,8 @@ RUN go mod download
 COPY . .
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1
 RUN go build -trimpath -ldflags "-s -w" -o /out/forge-server ./cmd/forge-server \
-    && go build -trimpath -ldflags "-s -w" -o /out/forge-migrate ./cmd/forge-migrate
+    && go build -trimpath -ldflags "-s -w" -o /out/forge-migrate ./cmd/forge-migrate \
+    && go build -trimpath -ldflags "-s -w" -o /out/forge-worker ./cmd/forge-worker
 
 # kc-password 是独立 module。tools/kc-password/go.sum 提交之前，用 go mod tidy 补全依赖校验和。
 WORKDIR /src/tools/kc-password
@@ -24,9 +25,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /out/forge-server /out/forge-migrate /out/kc-password /app/
+COPY --from=build /out/forge-server /out/forge-migrate /out/forge-worker /out/kc-password /app/
 COPY migrations/ /app/migrations/
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 USER work
 ENV HTTP_ADDR=:8080
 EXPOSE 8080
+# 部署平台不能自定义启动命令时，用 FORGE_ROLE=worker 让同一个镜像启动 forge-worker。用 sh 调用，不依赖文件的可执行位。
+ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
 CMD ["/app/forge-server"]
