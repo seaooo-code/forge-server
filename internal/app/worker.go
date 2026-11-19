@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
@@ -64,6 +65,18 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 		cleanupOTel()
 		return nil, fmt.Errorf("initialize secretbox: %w", err)
 	}
+	// 按运行环境自动禁用不能处理的构建方式：没有 git 或 Docker 的容器里，worker 只处理 gitlab_ci，不会领到 docker 构建。
+	capabilities := worker.DetectBuildModes(ctx, workerBuildModes(cfg.Worker.BuildModes), nil)
+	for mode, reason := range capabilities.Disabled {
+		logger.Warn("build mode disabled on this worker", "mode", mode, "reason", reason)
+	}
+	if len(capabilities.Enabled) == 0 {
+		postgresPool.Close()
+		cleanupOTel()
+		return nil, fmt.Errorf("worker 没有可处理的构建方式：FORGE_WORKER_BUILD_MODES=%s，当前环境都不可用", strings.Join(cfg.Worker.BuildModes, ","))
+	}
+	logger.Info("build modes enabled on this worker", "modes", capabilities.Enabled)
+
 	executor := worker.NewExecutor(cfg.Worker, worker.ExecutorDependencies{
 		// 构建适配器：读取适配器，渲染后把版本和 sha256 写回构建记录。
 		Adapters: service.NewBuildAdapterService(service.BuildAdapterServiceDependencies{
@@ -84,7 +97,7 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 		Concurrency:   cfg.Worker.Concurrency,
 		ID:            cfg.Worker.ID,
 		LeaseDuration: cfg.Worker.LeaseDuration,
-		Modes:         workerBuildModes(cfg.Worker.BuildModes),
+		Modes:         capabilities.Enabled,
 		PollInterval:  cfg.Worker.PollInterval,
 		ShutdownGrace: cfg.Worker.ShutdownGrace,
 	})

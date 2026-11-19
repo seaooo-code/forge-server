@@ -108,7 +108,7 @@ ENV_FILE=/path/to/forge.env go run ./cmd/forge-server
 | `POSTGRES_*` | PostgreSQL DSN 和连接池；`POSTGRES_PASSWORD_COMMAND` 可选，连接前执行命令取密码 |
 | `FEISHU_*` | 只剩调试开关 `FEISHU_DEBUG_LOG_SEARCH_RESPONSE`；租户在控制台维护，回调地址由前端传入，scope 写在代码里 |
 | `GITHUB_*` | GitHub App、回调地址、API 与 Web 地址 |
-| `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），处理的构建方式（`FORGE_WORKER_BUILD_MODES`）和 GitLab CI 构建的轮询与产物上限，扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |
+| `FORGE_WORKER_*` | worker ID、轮询、并发、租约、退出宽限期、构建超时、工作目录、产物前缀和依赖产物注入上限（`FORGE_WORKER_DEPS_MAX_BYTES`），处理的构建方式（`FORGE_WORKER_BUILD_MODES`，启动时自动禁用当前环境不可用的 docker 构建）和 GitLab CI 构建的轮询与产物上限，扩缩容见 [worker 扩缩容](docs/worker-scaling.md) |
 | `FORGE_METRICS_TOKEN` | `GET /metrics` 的可选 Bearer 令牌 |
 | `OTEL_*` | OTLP trace 与 log 导出 |
 

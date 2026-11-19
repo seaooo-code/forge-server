@@ -122,11 +122,16 @@ YRN 725 业务仓库的完整示例见 [`docs/adapters/yrn-725/gitlab-ci/`](adap
 
 ## 7. worker 部署
 
-`gitlab_ci` 构建不需要 Docker 和 git，worker 可以直接部署在容器平台。用 `FORGE_WORKER_BUILD_MODES` 指定 worker 处理哪些构建方式，避免没有 Docker 的 worker 领到 docker 构建：
+`gitlab_ci` 构建不需要 Docker 和 git，worker 可以直接部署在容器平台。`FORGE_WORKER_BUILD_MODES` 指定 worker 处理哪些构建方式：
+
+- **自动禁用**：worker 启动时会探测 `git` 和 Docker daemon（`docker version`）。不可用时自动禁用 `dockerfile` 和 `adapter`，在日志里记一条警告（`build mode disabled on this worker`，带原因），只处理 `gitlab_ci`，所以没有 Docker 的容器里不用特意配置。
+- 配置的构建方式在当前环境都不可用时（例如只配了 `dockerfile`，但没有 Docker），worker 启动失败并说明原因，避免它空转。
+- 只在启动时探测一次，运行中 Docker daemon 才出问题时，docker 构建会照常失败并显示原因。
+- 想固定只处理 CI 构建（例如机器上有 Docker，但不希望它接 docker 构建），显式设为 `gitlab_ci`。
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `FORGE_WORKER_BUILD_MODES` | `dockerfile,adapter,gitlab_ci` | 逗号分隔。只处理 CI 构建的 worker 设为 `gitlab_ci` |
+| `FORGE_WORKER_BUILD_MODES` | `dockerfile,adapter,gitlab_ci` | 逗号分隔；启动时会按环境自动禁用不可用的 docker 构建方式。只想处理 CI 构建时设为 `gitlab_ci` |
 | `FORGE_WORKER_CI_POLL_INTERVAL` | `5s` | 轮询 pipeline 状态和 job 日志的间隔，最小 1s |
 | `FORGE_WORKER_CI_ARTIFACT_MAX_BYTES` | `1073741824` | artifacts 下载和解压后的大小上限 |
 
