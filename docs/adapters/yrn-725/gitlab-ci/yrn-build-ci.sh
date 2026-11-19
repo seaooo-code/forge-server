@@ -88,7 +88,9 @@ fi
 
 read -r sdk native mapver pkgname < <(node -e '
 const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-console.log(c.SDKVersion, c.maxNativeApiLevel, c.moduleIdMapVersion, c.name);
+// 不用 console.log 输出多个参数：仓库的 .gitlab-ci.yml 设置了 FORCE_COLOR，console.log 会给数字加上颜色控制符，
+// 写进 forge.json 后就不是合法 JSON 了。
+process.stdout.write([c.SDKVersion, c.maxNativeApiLevel, c.moduleIdMapVersion, c.name].map(String).join(" ") + "\n");
 ' "$YRN_CONFIG_FILE")
 runtime="${sdk}-n${native}-m${mapver}"
 log "包名 $pkgname，runtimeVersion $runtime"
