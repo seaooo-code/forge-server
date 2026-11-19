@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -24,14 +26,17 @@ func TestMigrationFiles(t *testing.T) {
 	}
 }
 
-func TestProjectUsesSingleCanonicalMigration(t *testing.T) {
+func TestProjectMigrationsAreOrdered(t *testing.T) {
 	files, err := migrationFiles(os.DirFS("../../../migrations"))
 	if err != nil {
 		t.Fatalf("migration files: %v", err)
 	}
-
-	expected := []string{"000001_init_schema.sql"}
-	if !reflect.DeepEqual(files, expected) {
-		t.Fatalf("expected only canonical migration %v, got %v", expected, files)
+	if len(files) == 0 || files[0] != "000001_init_schema.sql" {
+		t.Fatalf("expected the baseline migration first, got %v", files)
+	}
+	for i, file := range files {
+		if want := fmt.Sprintf("%06d_", i+1); !strings.HasPrefix(file, want) {
+			t.Fatalf("migration %q must be numbered consecutively with prefix %q, files: %v", file, want, files)
+		}
 	}
 }

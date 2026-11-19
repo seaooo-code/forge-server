@@ -219,7 +219,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 │   ├── server/http/      # Echo handler、中间件、路由和 OpenAPI
 │   ├── service/          # 业务用例和仓储接口
 │   └── worker/           # 任务轮询、Git、Docker 和 S3 执行器
-├── migrations/           # 当前完整 PostgreSQL schema
+├── migrations/           # PostgreSQL 迁移：000001 为基线，之后是增量文件
 ├── .env.example          # 本地配置模板
 ├── AGENTS.md             # 开发与分层约束
 └── README.md             # 项目入口文档
@@ -233,4 +233,4 @@ go test ./...
 go vet ./...
 ```
 
-目录分层与提交规范以 [`AGENTS.md`](AGENTS.md) 为准。项目上线前数据库只维护 `migrations/000001_init_schema.sql` 这一份最新完整 schema；修改结构时还需要同步当前开发数据库。
+目录分层与提交规范以 [`AGENTS.md`](AGENTS.md) 为准。数据库迁移规则（增量文件、自动执行、可重复执行）也在其中。

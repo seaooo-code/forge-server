@@ -90,8 +90,10 @@ docker run --rm -p 18082:8080 --env-file <环境变量文件> forge-server:local
 
 ### 4.3 数据库迁移
 
-- forge-server 启动时会自动执行 `migrations/` 下尚未执行的迁移，每个迁移文件在一个事务里执行。
-- 多个实例同时首次启动时，可能同时执行同一个迁移，其中一个会因为表已存在而启动失败，重启后恢复正常。首次部署先起 1 个实例，或者先单独执行迁移：
+- forge-server 和 forge-worker 启动时都会自动执行 `migrations/` 下尚未执行的迁移，已执行的记录在 `schema_migrations` 表。每个迁移文件在一个事务里执行。
+- 迁移期间持有数据库 advisory lock，API 和 worker 同时启动时只有一个进程执行迁移，其他进程等它完成后跳过。多个实例同时发布不需要错开。
+- 已部署的库（`000001` 已执行）升级时只补执行新增的文件，不需要手工执行 SQL。新增迁移的写法见 `AGENTS.md`。
+- 需要在发布前单独执行迁移时：
 
 ```bash
 /app/forge-migrate
@@ -157,4 +159,4 @@ worker 和 API 使用同一个镜像（小米内部用 `Dockerfile.xiaomi`），
 
 出站网络：数据库、GitLab（`git.n.xiaomi.com`，创建 pipeline、读日志、下载 artifacts）、产物所在的 FDS S3 域名。使用依赖注入时，CI 的 runner 还要能访问存储的公开地址。
 
-首次启动时 worker 也会执行 `migrations/`，所以先让 API 完成迁移，再起 worker，避免两边同时迁移。
+worker 启动时也会执行 `migrations/`，和 API 同时发布没有问题。

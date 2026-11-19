@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -32,8 +33,30 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 	return runMigrations(ctx, pool, migrationsFS)
 }
 
-func runMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsFS fs.FS) error {
-	if _, err := pool.Exec(ctx, schemaMigrationsTableSQL); err != nil {
+// migrationLockKey 是迁移期间持有的 advisory lock 的键。API、worker 和 forge-migrate 每次部署都可能同时启动，
+// 加锁后只有一个进程执行迁移，其余进程等它完成后看到迁移已记录而跳过。
+const migrationLockKey int64 = 0x666f72676d696772
+
+func runMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsFS fs.FS) (err error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	if _, err := conn.Exec(ctx, `select pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		conn.Release()
+		return fmt.Errorf("lock migrations: %w", err)
+	}
+	defer func() {
+		// 解锁失败时不能把仍持有锁的连接放回连接池，直接关闭它，锁随会话结束释放。
+		if _, unlockErr := conn.Exec(context.Background(), `select pg_advisory_unlock($1)`, migrationLockKey); unlockErr != nil {
+			_ = conn.Hijack().Close(context.Background())
+			err = errors.Join(err, fmt.Errorf("unlock migrations: %w", unlockErr))
+			return
+		}
+		conn.Release()
+	}()
+
+	if _, err := conn.Exec(ctx, schemaMigrationsTableSQL); err != nil {
 		return fmt.Errorf("ensure schema migrations table: %w", err)
 	}
 
@@ -43,7 +66,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsFS fs.FS) 
 	}
 
 	for _, file := range files {
-		if err := runMigration(ctx, pool, migrationsFS, file); err != nil {
+		if err := runMigration(ctx, conn, migrationsFS, file); err != nil {
 			return err
 		}
 	}
@@ -69,13 +92,13 @@ func migrationFiles(migrationsFS fs.FS) ([]string, error) {
 	return files, nil
 }
 
-func runMigration(ctx context.Context, pool *pgxpool.Pool, migrationsFS fs.FS, file string) error {
+func runMigration(ctx context.Context, conn *pgxpool.Conn, migrationsFS fs.FS, file string) error {
 	sql, err := fs.ReadFile(migrationsFS, file)
 	if err != nil {
 		return fmt.Errorf("read migration %s: %w", file, err)
 	}
 
-	tx, err := pool.Begin(ctx)
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin migration %s: %w", file, err)
 	}
