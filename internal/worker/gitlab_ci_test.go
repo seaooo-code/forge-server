@@ -389,6 +389,24 @@ func TestExecuteGitLabCIResumesExistingPipeline(t *testing.T) {
 	}
 }
 
+// 续接已有 pipeline 时不会重新组装变量，但 job 日志仍可能回显密钥，脱敏规则必须照样生效。
+func TestExecuteGitLabCIRedactsSecretsWhenResumingPipeline(t *testing.T) {
+	client := ciTestSuccessClient(nil)
+	store := &fakeBuildLogStore{}
+	record := ciTestRecord()
+	record.CIPipelineID = 42
+
+	_, _ = newCITestExecutor(t, client, &fakeCIRecorder{}, store).Execute(context.Background(), record)
+
+	logs := store.content()
+	if strings.Contains(logs, "npm-secret-value") {
+		t.Fatalf("secret leaked into the log when resuming: %q", logs)
+	}
+	if !strings.Contains(logs, "npm notice using token [redacted]") {
+		t.Fatalf("expected the job trace to be forwarded and redacted, got %q", logs)
+	}
+}
+
 func TestExecuteGitLabCICreatesNewPipelineWhenRecordedOneIsGone(t *testing.T) {
 	client := ciTestSuccessClient(nil)
 	client.getErr = domain.ErrCIPipelineNotFound

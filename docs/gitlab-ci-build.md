@@ -60,6 +60,8 @@ pipeline 成功，并且 `ciJob` 对应的 job 成功后，worker 下载该 job 
 
 构建日志是 `ciJob` 对应 job 的日志，pipeline 失败时还会列出失败的 job 和 pipeline 链接。
 
+worker 读取 job 日志时会去掉 GitLab 加的时间戳前缀、折叠区标记和 ANSI 颜色码。GitLab 的 job 日志接口实测会忽略 `Range`，每次返回完整日志，所以日志越长，运行中读取日志的间隔越长（每 256 KiB 多 1 秒，最长 30 秒），pipeline 结束时一定读完。
+
 ## 5. 依赖产物注入
 
 Feature 模块构建时需要读取所属 Common 模块产物里的文件（例如 `commonMap`）。docker 构建由 worker 把依赖文件放进构建上下文；`gitlab_ci` 构建里 worker 不能写 runner 上的文件，改为：

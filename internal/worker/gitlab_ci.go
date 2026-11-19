@@ -30,6 +30,8 @@ const (
 	ciCancelTimeout = 15 * time.Second
 	// maxCIArtifactFiles 是 artifacts 压缩包里文件数的上限。
 	maxCIArtifactFiles = 50000
+	// maxCITraceInterval 是运行中读取 job 日志的最大间隔。
+	maxCITraceInterval = 30 * time.Second
 	// maxCITraceDrainRounds 限制 pipeline 结束后补读日志的轮数，避免异常服务端导致死循环。
 	maxCITraceDrainRounds = 200
 	// maxCIMissingJobNames 是「找不到 job」错误里最多列出的 job 数。
@@ -65,7 +67,13 @@ func (e *Executor) executeGitLabCI(ctx context.Context, record domain.BuildRecor
 		return domain.BuildRecordCompletion{}, fmt.Errorf("获取代码源 CI 客户端失败：%w", err)
 	}
 
-	pipeline, err := e.startCIPipeline(ctx, client, record, logs)
+	// 无论是新建还是续接 pipeline，都要先注册密钥变量的脱敏规则：job 日志可能回显它们，续接时尤其容易漏掉。
+	buildVariables, err := e.resolveCIBuildVariables(ctx, record, logs)
+	if err != nil {
+		return domain.BuildRecordCompletion{}, err
+	}
+
+	pipeline, err := e.startCIPipeline(ctx, client, record, buildVariables, logs)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
@@ -101,7 +109,7 @@ func (e *Executor) executeGitLabCI(ctx context.Context, record domain.BuildRecor
 
 // startCIPipeline 返回本次构建对应的 pipeline。构建记录里已有 pipeline（worker 被接管或退出后重新领取）时续接它，
 // 不重复触发；否则创建新的 pipeline，并立即把 ID 写回构建记录。
-func (e *Executor) startCIPipeline(ctx context.Context, client service.CIClient, record domain.BuildRecord, logs *buildLogStream) (domain.CIPipeline, error) {
+func (e *Executor) startCIPipeline(ctx context.Context, client service.CIClient, record domain.BuildRecord, buildVariables []domain.ModuleBuildVariable, logs *buildLogStream) (domain.CIPipeline, error) {
 	if record.CIPipelineID != 0 {
 		pipeline, err := client.GetPipeline(ctx, record.CIPipelineID)
 		switch {
@@ -115,7 +123,7 @@ func (e *Executor) startCIPipeline(ctx context.Context, client service.CIClient,
 		}
 	}
 
-	variables, err := e.ciVariables(ctx, record, logs)
+	variables, err := e.ciVariables(ctx, record, buildVariables, logs)
 	if err != nil {
 		return domain.CIPipeline{}, err
 	}
@@ -140,25 +148,32 @@ func (e *Executor) startCIPipeline(ctx context.Context, client service.CIClient,
 	return pipeline, nil
 }
 
-// ciVariables 组装触发 pipeline 的变量：模块构建变量（含密钥，值加入日志脱敏）在前，平台固定变量在后，用户变量不能覆盖。
-func (e *Executor) ciVariables(ctx context.Context, record domain.BuildRecord, logs *buildLogStream) ([]domain.CIVariable, error) {
-	var userVariables []domain.ModuleBuildVariable
-	if e.variables != nil {
-		resolved, err := e.variables.ResolveBuildVariables(ctx, record.ModuleID, record.Environment)
-		if err != nil {
-			return nil, fmt.Errorf("读取构建变量失败：%w", err)
-		}
-		userVariables = append(userVariables, resolved...)
+// resolveCIBuildVariables 读取模块在当前环境下生效的构建变量，并把密钥变量的值加入日志脱敏。
+func (e *Executor) resolveCIBuildVariables(ctx context.Context, record domain.BuildRecord, logs *buildLogStream) ([]domain.ModuleBuildVariable, error) {
+	if e.variables == nil {
+		return nil, nil
 	}
+	resolved, err := e.variables.ResolveBuildVariables(ctx, record.ModuleID, record.Environment)
+	if err != nil {
+		return nil, fmt.Errorf("读取构建变量失败：%w", err)
+	}
+	for _, variable := range resolved {
+		if variable.IsSecret {
+			logs.AddSecrets(variable.Value)
+		}
+	}
+	return resolved, nil
+}
+
+// ciVariables 组装触发 pipeline 的变量：模块构建变量（含密钥）在前，平台固定变量在后，用户变量不能覆盖。
+func (e *Executor) ciVariables(ctx context.Context, record domain.BuildRecord, buildVariables []domain.ModuleBuildVariable, logs *buildLogStream) ([]domain.CIVariable, error) {
+	userVariables := append([]domain.ModuleBuildVariable(nil), buildVariables...)
 	sort.SliceStable(userVariables, func(i, j int) bool { return userVariables[i].Key < userVariables[j].Key })
 
 	variables := make([]domain.CIVariable, 0, len(userVariables)+8)
 	for _, variable := range userVariables {
 		if !domain.IsValidBuildVariableKey(variable.Key) || strings.HasPrefix(variable.Key, "FORGE_") {
 			continue
-		}
-		if variable.IsSecret {
-			logs.AddSecrets(variable.Value)
 		}
 		variables = append(variables, domain.CIVariable{Key: variable.Key, Value: variable.Value})
 	}
@@ -248,6 +263,8 @@ func (e *Executor) waitCIPipeline(ctx context.Context, client service.CIClient, 
 	}
 
 	var traceOffset int64
+	var lastTraceRead time.Time
+	var formatter ciTraceFormatter
 	failures := 0
 	for {
 		current, jobs, err := pollCIPipeline(ctx, client, pipeline.ID)
@@ -255,8 +272,11 @@ func (e *Executor) waitCIPipeline(ctx context.Context, client service.CIClient, 
 		case err == nil:
 			failures = 0
 			target := findCIJob(jobs, jobName)
-			if target != nil {
-				traceOffset = e.streamCIJobTrace(ctx, client, target.ID, traceOffset, current.Status.IsTerminal(), logs)
+			// GitLab 的 job 日志接口会忽略 Range，每次都返回完整日志，日志越长读取越频繁代价越大，所以运行中按日志大小放慢读取；
+			// pipeline 结束时一定读完。
+			if target != nil && (current.Status.IsTerminal() || time.Since(lastTraceRead) >= ciTraceInterval(interval, traceOffset)) {
+				traceOffset = e.streamCIJobTrace(ctx, client, target.ID, traceOffset, current.Status.IsTerminal(), &formatter, logs)
+				lastTraceRead = time.Now()
 			}
 			if current.Status.IsTerminal() {
 				return ciPipelineResult(current, jobs, jobName)
@@ -279,6 +299,11 @@ func (e *Executor) waitCIPipeline(ctx context.Context, client service.CIClient, 
 	}
 }
 
+// ciTraceInterval 是读取 job 日志的最小间隔：基础轮询间隔加上每 256 KiB 已读日志多 1 秒，最多 30 秒。
+func ciTraceInterval(base time.Duration, offset int64) time.Duration {
+	return min(base+time.Duration(offset/(256<<10))*time.Second, maxCITraceInterval)
+}
+
 func pollCIPipeline(ctx context.Context, client service.CIClient, pipelineID int64) (domain.CIPipeline, []domain.CIJob, error) {
 	pipeline, err := client.GetPipeline(ctx, pipelineID)
 	if err != nil {
@@ -291,9 +316,9 @@ func pollCIPipeline(ctx context.Context, client service.CIClient, pipelineID int
 	return pipeline, jobs, nil
 }
 
-// streamCIJobTrace 把 job 日志从 offset 起的新增内容写入构建日志，返回新的偏移。drain 为 true 时一直读到没有新增内容。
-// 读日志失败只记警告，不影响构建结果。
-func (e *Executor) streamCIJobTrace(ctx context.Context, client service.CIClient, jobID int64, offset int64, drain bool, logs *buildLogStream) int64 {
+// streamCIJobTrace 把 job 日志从 offset 起的新增内容整理后写入构建日志，返回新的偏移。drain 为 true 时一直读到没有新增内容，
+// 并输出最后不完整的一行。读日志失败只记警告，不影响构建结果。
+func (e *Executor) streamCIJobTrace(ctx context.Context, client service.CIClient, jobID int64, offset int64, drain bool, formatter *ciTraceFormatter, logs *buildLogStream) int64 {
 	for range maxCITraceDrainRounds {
 		data, err := client.JobTrace(ctx, jobID, offset)
 		if err != nil {
@@ -303,13 +328,16 @@ func (e *Executor) streamCIJobTrace(ctx context.Context, client service.CIClient
 			return offset
 		}
 		if len(data) == 0 {
-			return offset
+			break
 		}
-		_, _ = logs.Write(data)
+		_, _ = logs.Write([]byte(formatter.Format(data)))
 		offset += int64(len(data))
 		if !drain {
 			return offset
 		}
+	}
+	if drain {
+		_, _ = logs.Write([]byte(formatter.Flush()))
 	}
 	return offset
 }
