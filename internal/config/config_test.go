@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadReadsConfiguredDotenvFile(t *testing.T) {
@@ -261,6 +263,62 @@ func TestLoadSplitsPostgresPasswordCommand(t *testing.T) {
 	got := cfg.Postgres.PasswordCommand
 	if len(got) != 2 || got[0] != "/app/kc-password" || got[1] != "--flag" {
 		t.Fatalf("expected command split on whitespace, got %q", got)
+	}
+}
+
+func TestLoadParsesWorkerBuildModesAndCISettings(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+	t.Setenv("ENV_FILE", envPath)
+
+	unsetEnv(t, "FORGE_WORKER_BUILD_MODES", "FORGE_WORKER_CI_POLL_INTERVAL", "FORGE_WORKER_CI_ARTIFACT_MAX_BYTES")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := strings.Join(cfg.Worker.BuildModes, ","); got != "dockerfile,adapter,gitlab_ci" {
+		t.Fatalf("expected all build modes by default, got %q", got)
+	}
+	if cfg.Worker.CIPollInterval != 5*time.Second || cfg.Worker.CIArtifactMaxBytes != 1<<30 {
+		t.Fatalf("unexpected CI defaults: %v %d", cfg.Worker.CIPollInterval, cfg.Worker.CIArtifactMaxBytes)
+	}
+
+	t.Setenv("FORGE_WORKER_BUILD_MODES", " GitLab_CI , gitlab_ci ")
+	t.Setenv("FORGE_WORKER_CI_POLL_INTERVAL", "2s")
+	t.Setenv("FORGE_WORKER_CI_ARTIFACT_MAX_BYTES", "1048576")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := strings.Join(cfg.Worker.BuildModes, ","); got != "gitlab_ci" {
+		t.Fatalf("expected a deduplicated lowercase mode list, got %q", got)
+	}
+	if cfg.Worker.CIPollInterval != 2*time.Second || cfg.Worker.CIArtifactMaxBytes != 1048576 {
+		t.Fatalf("unexpected CI settings: %v %d", cfg.Worker.CIPollInterval, cfg.Worker.CIArtifactMaxBytes)
+	}
+}
+
+func TestLoadRejectsInvalidWorkerCISettings(t *testing.T) {
+	envPath := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envPath, []byte(""), 0o600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+	t.Setenv("ENV_FILE", envPath)
+
+	cases := map[string]string{
+		"FORGE_WORKER_BUILD_MODES":           "docker",
+		"FORGE_WORKER_CI_POLL_INTERVAL":      "100ms",
+		"FORGE_WORKER_CI_ARTIFACT_MAX_BYTES": "0",
+	}
+	for key, value := range cases {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), key) {
+				t.Fatalf("expected %s to be rejected, got %v", key, err)
+			}
+		})
 	}
 }
 

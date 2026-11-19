@@ -87,6 +87,17 @@ YRN 包和客户端是否兼容，由 `SDKVersion`（RN 引擎版本）、`maxNa
 
 **构建变量**：如果私有 npm 源需要鉴权，在模块上配置密钥变量 `NPM_TOKEN`。
 
+### 5.1 用 GitLab CI 构建（gitlab_ci）
+
+worker 部署在 DevX/Matrix 容器里时没有 Docker，YRN 模块可以改用 `gitlab_ci` 构建方式：Forge 触发业务仓库的 GitLab CI，构建在公司共享 k8s runner 上执行，worker 只取回产物。契约、令牌权限和部署见 [转交 GitLab CI 构建](gitlab-ci-build.md)，YRN 的脚本和 `.gitlab-ci.yml` 改动示例见 [`adapters/yrn-725/gitlab-ci/`](adapters/yrn-725/gitlab-ci/)。
+
+与 docker 适配器相比的差异：
+
+- 构建配方（安装依赖、预处理、`yrn-cli build-*`）在业务仓库的 `scripts/forge/` 里，不再由控制台的适配器渲染；适配器的参数改为模块的构建变量（`YRN_KIND`、`YRN_ENTRY_FILE`、`YRN_CONFIG_FILE`、`YRN_INSTALL_COMMAND`、`YRN_PREBUILD_COMMAND` 等）。
+- GitLab 连接的令牌需要 `api` scope，并且在项目上至少是 Developer 角色（第 2 节的 Reporter 加 `read_api` 只够 docker 构建）。
+- 业务仓库现有的 `.gitlab-ci.yml` 里，`pre_pre` 会打印全部环境变量，`master_merge_notify_job` 对 `master` 是 `when: always`，都要排除 Forge 触发的 pipeline，示例里有具体写法。
+- 业务包依赖 common 包的 `commonMap`：Forge 把依赖的下载地址放进 `FORGE_DEPS`，由 `forge-fetch-deps.js` 下载，目录结构与 docker 构建的依赖注入一致。依赖构建所用的存储配置（FDS）需要有公开访问地址，并且 runner 能访问。
+
 ## 6. 与晴空塔的对应关系
 
 | 晴空塔 | Forge | 说明 |

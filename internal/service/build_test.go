@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +100,49 @@ func TestBuildServiceAcquireRequiresWorkerAndLease(t *testing.T) {
 	_, err = service.AcquireNextBuildRecord(context.Background(), "worker-1", 0)
 	if !errors.Is(err, domain.ErrInvalidBuildInput) {
 		t.Fatalf("expected invalid build input, got %v", err)
+	}
+}
+
+func TestBuildServiceAcquireDefaultsToAllModesAndValidatesThem(t *testing.T) {
+	repository := fakeBuildRecordRepository{}
+	service := NewBuildService(&repository)
+
+	if _, err := service.AcquireNextBuildRecord(context.Background(), "worker-1", time.Minute); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if len(repository.lastAcquireModes) != len(domain.BuildModes) {
+		t.Fatalf("expected all build modes by default, got %v", repository.lastAcquireModes)
+	}
+
+	if _, err := service.AcquireNextBuildRecord(context.Background(), "worker-1", time.Minute, domain.BuildModeGitLabCI); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if len(repository.lastAcquireModes) != 1 || repository.lastAcquireModes[0] != domain.BuildModeGitLabCI {
+		t.Fatalf("expected only gitlab_ci, got %v", repository.lastAcquireModes)
+	}
+
+	if _, err := service.AcquireNextBuildRecord(context.Background(), "worker-1", time.Minute, domain.BuildMode("bogus")); !errors.Is(err, domain.ErrInvalidBuildInput) {
+		t.Fatalf("expected invalid build input for an unknown mode, got %v", err)
+	}
+}
+
+func TestBuildServiceRecordsCIPipeline(t *testing.T) {
+	repository := fakeBuildRecordRepository{}
+	service := NewBuildService(&repository)
+
+	if err := service.RecordBuildCIPipeline(context.Background(), " build-1 ", " worker-1 ", 42, " https://gitlab.example.com/p/42 "); err != nil {
+		t.Fatalf("record pipeline: %v", err)
+	}
+	if repository.lastCIPipeline != "build-1|worker-1|42|https://gitlab.example.com/p/42" {
+		t.Fatalf("unexpected recorded pipeline %q", repository.lastCIPipeline)
+	}
+	for _, invalid := range []struct {
+		id, worker string
+		pipeline   int64
+	}{{"", "worker-1", 1}, {"build-1", " ", 1}, {"build-1", "worker-1", 0}} {
+		if err := service.RecordBuildCIPipeline(context.Background(), invalid.id, invalid.worker, invalid.pipeline, ""); !errors.Is(err, domain.ErrInvalidBuildInput) {
+			t.Fatalf("expected invalid build input for %#v, got %v", invalid, err)
+		}
 	}
 }
 
@@ -288,16 +332,18 @@ func TestBuildServiceGetBuildRecordKeepsEmptyTreeWhenManifestReadFails(t *testin
 }
 
 type fakeBuildRecordRepository struct {
-	createCalls     int
-	getCalls        int
-	listCalls       int
-	lastCreateInput domain.BuildRecordInput
-	lastCompletion  domain.BuildRecordCompletion
-	lastGetID       string
-	lastListFilters domain.BuildRecordFilters
-	record          domain.BuildRecord
-	records         []domain.BuildRecord
-	summary         domain.BuildRecordSummary
+	lastAcquireModes []domain.BuildMode
+	lastCIPipeline   string
+	createCalls      int
+	getCalls         int
+	listCalls        int
+	lastCreateInput  domain.BuildRecordInput
+	lastCompletion   domain.BuildRecordCompletion
+	lastGetID        string
+	lastListFilters  domain.BuildRecordFilters
+	record           domain.BuildRecord
+	records          []domain.BuildRecord
+	summary          domain.BuildRecordSummary
 }
 
 func (r *fakeBuildRecordRepository) CreateBuildRecord(_ context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {
@@ -313,8 +359,14 @@ func (r *fakeBuildRecordRepository) CreateBuildRecord(_ context.Context, input d
 	}, nil
 }
 
-func (r *fakeBuildRecordRepository) AcquireNextBuildRecord(context.Context, string, time.Duration) (domain.BuildRecord, error) {
+func (r *fakeBuildRecordRepository) AcquireNextBuildRecord(_ context.Context, _ string, _ time.Duration, modes []domain.BuildMode) (domain.BuildRecord, error) {
+	r.lastAcquireModes = modes
 	return domain.BuildRecord{ID: "build-1"}, nil
+}
+
+func (r *fakeBuildRecordRepository) RecordBuildCIPipeline(_ context.Context, id string, workerID string, pipelineID int64, pipelineURL string) error {
+	r.lastCIPipeline = fmt.Sprintf("%s|%s|%d|%s", id, workerID, pipelineID, pipelineURL)
+	return nil
 }
 
 func (r *fakeBuildRecordRepository) CompleteBuildRecord(_ context.Context, id string, _ string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {

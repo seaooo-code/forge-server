@@ -49,6 +49,12 @@ type BuildRecord struct {
 	BuildMode                BuildMode
 	ModuleBuildAdapterID     string
 	ModuleBuildAdapterParams map[string]string
+	// CIJob、CIArtifactPath 来自模块当前配置，gitlab_ci 模式下 worker 据此取产物。
+	CIJob          string
+	CIArtifactPath string
+	// CIPipelineID、CIPipelineURL 是 gitlab_ci 构建在代码源上创建的 pipeline，创建后立即写回，worker 被接管后据此续接。
+	CIPipelineID  int64
+	CIPipelineURL string
 	// BuildAdapterID、BuildAdapterVersion、RenderedDockerfileSHA256 是 worker 实际使用的适配器版本与渲染结果，Dockerfile 构建为空。
 	BuildAdapterID           string
 	BuildAdapterVersion      *int

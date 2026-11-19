@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"forge-server/internal/domain"
+
 	"github.com/joho/godotenv"
 )
 
@@ -96,7 +98,14 @@ type WorkerConfig struct {
 	// ArtifactDigests 是清单文件项 digests 字段要计算的摘要算法，来自 FORGE_ARTIFACT_DIGESTS。
 	ArtifactDigests []string
 	ArtifactPrefix  string
-	BuildTimeout    time.Duration
+	// BuildModes 是本 worker 处理的构建方式，来自 FORGE_WORKER_BUILD_MODES，默认处理全部。
+	// 只处理 gitlab_ci 的 worker 不需要 Docker 和 git。
+	BuildModes   []string
+	BuildTimeout time.Duration
+	// CIArtifactMaxBytes 是 gitlab_ci 构建下载的 artifacts 压缩包和解压后内容的大小上限，来自 FORGE_WORKER_CI_ARTIFACT_MAX_BYTES。
+	CIArtifactMaxBytes int64
+	// CIPollInterval 是轮询 GitLab pipeline 和 job 日志的间隔，来自 FORGE_WORKER_CI_POLL_INTERVAL。
+	CIPollInterval time.Duration
 	// Concurrency 是单个 worker 进程同时执行的构建数，来自 FORGE_WORKER_CONCURRENCY，默认 1。
 	Concurrency int
 	// DepsMaxBytes 是单次构建注入依赖产物的总大小上限，来自 FORGE_WORKER_DEPS_MAX_BYTES，超出时构建失败。
@@ -215,6 +224,27 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	workerBuildModes, err := buildModesEnv("FORGE_WORKER_BUILD_MODES")
+	if err != nil {
+		return Config{}, err
+	}
+
+	workerCIPollInterval, err := durationEnv("FORGE_WORKER_CI_POLL_INTERVAL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerCIPollInterval < time.Second {
+		return Config{}, errors.New("parse FORGE_WORKER_CI_POLL_INTERVAL: must be at least 1s")
+	}
+
+	workerCIArtifactMaxBytes, err := intEnv("FORGE_WORKER_CI_ARTIFACT_MAX_BYTES", 1024*1024*1024)
+	if err != nil {
+		return Config{}, err
+	}
+	if workerCIArtifactMaxBytes <= 0 {
+		return Config{}, errors.New("parse FORGE_WORKER_CI_ARTIFACT_MAX_BYTES: must be positive")
+	}
+
 	otelHeaders, err := stringMapEnv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", nil)
 	if err != nil {
 		return Config{}, err
@@ -312,19 +342,22 @@ func Load() (Config, error) {
 			OTLPLogHeaders:  otelLogHeaders,
 		},
 		Worker: WorkerConfig{
-			ArtifactDigests: artifactDigests,
-			ArtifactPrefix:  strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
-			BuildTimeout:    workerBuildTimeout,
-			Concurrency:     workerConcurrency,
-			DepsMaxBytes:    int64(workerDepsMaxBytes),
-			Dockerfile:      stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
-			ID:              workerID,
-			LeaseDuration:   workerLeaseDuration,
-			LogMaxBytes:     int64(workerLogMaxBytes),
-			LogRetention:    buildLogRetention,
-			PollInterval:    workerPollInterval,
-			ShutdownGrace:   workerShutdownGrace,
-			WorkDir:         stringEnv("FORGE_WORKER_WORK_DIR", "/tmp/forge-worker"),
+			ArtifactDigests:    artifactDigests,
+			ArtifactPrefix:     strings.Trim(stringEnv("FORGE_WORKER_ARTIFACT_PREFIX", "rn-bundles"), "/"),
+			BuildModes:         workerBuildModes,
+			BuildTimeout:       workerBuildTimeout,
+			CIArtifactMaxBytes: int64(workerCIArtifactMaxBytes),
+			CIPollInterval:     workerCIPollInterval,
+			Concurrency:        workerConcurrency,
+			DepsMaxBytes:       int64(workerDepsMaxBytes),
+			Dockerfile:         stringEnv("FORGE_WORKER_DOCKERFILE", "Dockerfile"),
+			ID:                 workerID,
+			LeaseDuration:      workerLeaseDuration,
+			LogMaxBytes:        int64(workerLogMaxBytes),
+			LogRetention:       buildLogRetention,
+			PollInterval:       workerPollInterval,
+			ShutdownGrace:      workerShutdownGrace,
+			WorkDir:            stringEnv("FORGE_WORKER_WORK_DIR", "/tmp/forge-worker"),
 		},
 	}
 
@@ -481,6 +514,25 @@ func artifactDigestsEnv(key string) ([]string, error) {
 		}
 		if !slices.Contains(values, algorithm) {
 			values = append(values, algorithm)
+		}
+	}
+	return values, nil
+}
+
+// buildModesEnv 解析 FORGE_WORKER_BUILD_MODES，未配置时处理全部构建方式。
+func buildModesEnv(key string) ([]string, error) {
+	fallback := make([]string, 0, len(domain.BuildModes))
+	for _, mode := range domain.BuildModes {
+		fallback = append(fallback, string(mode))
+	}
+	values := []string{}
+	for _, item := range stringListEnv(key, fallback) {
+		mode := strings.ToLower(item)
+		if !domain.IsValidBuildMode(domain.BuildMode(mode)) {
+			return nil, fmt.Errorf("parse %s: unsupported build mode %q, expected one of %s", key, item, strings.Join(fallback, ","))
+		}
+		if !slices.Contains(values, mode) {
+			values = append(values, mode)
 		}
 	}
 	return values, nil

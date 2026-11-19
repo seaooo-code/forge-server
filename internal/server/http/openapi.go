@@ -2205,7 +2205,7 @@ func moduleRepositoryRequestSchema() *openapi3.Schema {
 
 func moduleBuildConfigSchema() *openapi3.Schema {
 	return objectSchema().
-		WithProperty("buildMode", enumStringSchema("Build mode. dockerfile uses the repository Dockerfile (default); adapter uses a platform build adapter.", "dockerfile", "adapter")).
+		WithProperty("buildMode", enumStringSchema("Build mode. dockerfile uses the repository Dockerfile (default); adapter uses a platform build adapter; gitlab_ci hands the build to the repository's GitLab CI pipeline (GitLab connections only).", "dockerfile", "adapter", "gitlab_ci")).
 		WithProperty("buildAdapterId", stringSchema("Build adapter id. Required in adapter mode and must be empty in dockerfile mode. A newly selected adapter must be active.")).
 		WithProperty("buildAdapterName", stringSchema("Build adapter display name. Read only.")).
 		WithProperty("buildAdapterParams", stringMapSchema("Build adapter parameter values keyed by parameter key. Validated against the adapter parameter definitions: required parameters need a value and undeclared keys are rejected. Must be empty in dockerfile mode. Do not put secrets here; use build variables.")).
@@ -2214,7 +2214,9 @@ func moduleBuildConfigSchema() *openapi3.Schema {
 		WithProperty("autoPreviewRelease", boolSchema("Create a targeted release named after the branch when an automatic build succeeds.")).
 		WithProperty("autoPreviewTtlHours", int32Schema("Preview release lifetime in hours, 1-8760, default 168.")).
 		WithProperty("buildContext", stringSchema("Docker build context relative to the repository root, default \".\".")).
-		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE. Only used in dockerfile mode."))
+		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE. Only used in dockerfile mode.")).
+		WithProperty("ciJob", stringSchema("Name of the CI job that produces the build artifacts. Required in gitlab_ci mode and must be empty in other modes.")).
+		WithProperty("ciArtifactPath", stringSchema("Relative path of the artifact root inside the job artifacts, default \"dist\". Only used in gitlab_ci mode."))
 }
 
 func buildRecordCreateRequestSchema() *openapi3.Schema {
@@ -2292,6 +2294,8 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("buildAdapterId", stringSchema("Build adapter used by an adapter build. Empty for Dockerfile builds or before rendering.")).
 		WithProperty("buildAdapterVersion", int32Schema("Build adapter version used by an adapter build.").WithNullable()).
 		WithProperty("renderedDockerfileSha256", stringSchema("SHA-256 of the rendered Dockerfile for adapter builds. Empty for Dockerfile builds.")).
+		WithProperty("ciPipelineId", int64Schema("GitLab pipeline id created for a gitlab_ci build. 0 for other builds or before the pipeline is created.")).
+		WithProperty("ciPipelineUrl", stringSchema("Web URL of the GitLab pipeline created for a gitlab_ci build. Empty for other builds.")).
 		WithProperty("manifestKey", stringSchema("S3 object key of the artifact manifest.")).
 		WithProperty("fileCount", int32Schema("Uploaded artifact file count.")).
 		WithProperty("totalSizeBytes", int64Schema("Total uploaded artifact file size in bytes.")).

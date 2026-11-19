@@ -31,6 +31,8 @@ const (
 
 type Provider struct {
 	httpClient *http.Client
+	// ciHTTPClient 用于 CI 接口：不设整体超时，下载 artifacts 和读日志的时长由调用方的 context 控制。
+	ciHTTPClient *http.Client
 }
 
 func NewProvider(telemetryEnabled bool) *Provider {
@@ -38,7 +40,10 @@ func NewProvider(telemetryEnabled bool) *Provider {
 	if telemetryEnabled {
 		transport = otelhttp.NewTransport(transport)
 	}
-	return &Provider{httpClient: &http.Client{Timeout: 10 * time.Second, Transport: transport}}
+	return &Provider{
+		httpClient:   &http.Client{Timeout: 10 * time.Second, Transport: transport},
+		ciHTTPClient: &http.Client{Transport: transport},
+	}
 }
 
 func (p *Provider) Provider() domain.CodeSourceProvider {

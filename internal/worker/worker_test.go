@@ -247,7 +247,7 @@ func (r *fakeWorkerBuildRepository) acquiredHolders() []string {
 	return slices.Clone(r.acquireHolders)
 }
 
-func (r *fakeWorkerBuildRepository) AcquireNextBuildRecord(_ context.Context, workerID string, _ time.Duration) (domain.BuildRecord, error) {
+func (r *fakeWorkerBuildRepository) AcquireNextBuildRecord(_ context.Context, workerID string, _ time.Duration, _ []domain.BuildMode) (domain.BuildRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.queue) == 0 {
@@ -257,6 +257,10 @@ func (r *fakeWorkerBuildRepository) AcquireNextBuildRecord(_ context.Context, wo
 	r.queue = r.queue[1:]
 	r.acquireHolders = append(r.acquireHolders, workerID)
 	return record, nil
+}
+
+func (r *fakeWorkerBuildRepository) RecordBuildCIPipeline(context.Context, string, string, int64, string) error {
+	return nil
 }
 
 func (r *fakeWorkerBuildRepository) CreateBuildRecord(_ context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error) {

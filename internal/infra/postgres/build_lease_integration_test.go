@@ -25,7 +25,7 @@ func TestIntegrationBuildLeaseFencing(t *testing.T) {
 		t.Fatalf("create build: %v", err)
 	}
 
-	acquired, err := repository.AcquireNextBuildRecord(ctx, "worker-a", time.Minute)
+	acquired, err := repository.AcquireNextBuildRecord(ctx, "worker-a", time.Minute, domain.BuildModes)
 	if err != nil || acquired.ID != created.ID {
 		t.Fatalf("acquire: id=%s err=%v", acquired.ID, err)
 	}
@@ -44,7 +44,7 @@ func TestIntegrationBuildLeaseFencing(t *testing.T) {
 	if err != nil || stats.Waiting != 1 || stats.Running != 0 {
 		t.Fatalf("expected expired lease counted as waiting, got %+v err=%v", stats, err)
 	}
-	if taken, err := repository.AcquireNextBuildRecord(ctx, "worker-b#1", time.Minute); err != nil || taken.ID != created.ID {
+	if taken, err := repository.AcquireNextBuildRecord(ctx, "worker-b#1", time.Minute, domain.BuildModes); err != nil || taken.ID != created.ID {
 		t.Fatalf("take over: id=%s err=%v", taken.ID, err)
 	}
 	stats, err = repository.GetBuildQueueStats(ctx)
@@ -75,7 +75,7 @@ func TestIntegrationBuildLeaseFencing(t *testing.T) {
 		t.Fatalf("unexpected requeued build: status=%s worker=%q queuedAt=%s (was %s)", requeued.Status, requeued.WorkerID, requeued.QueuedAt, created.QueuedAt)
 	}
 
-	if _, err := repository.AcquireNextBuildRecord(ctx, "worker-c", time.Minute); err != nil {
+	if _, err := repository.AcquireNextBuildRecord(ctx, "worker-c", time.Minute, domain.BuildModes); err != nil {
 		t.Fatalf("acquire after requeue: %v", err)
 	}
 	record, err := repository.CompleteBuildRecord(ctx, created.ID, "worker-c", completion)

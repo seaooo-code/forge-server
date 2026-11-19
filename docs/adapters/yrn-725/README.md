@@ -7,6 +7,7 @@
 | `Dockerfile.tmpl` | Dockerfile 模板，使用晴空塔构建镜像执行 `.forge/yrn-build.sh`，产物输出到 `/app/dist`（Forge 构建契约约定的导出目录） |
 | `yrn-build.sh` | 辅助文件，内容包括：安装依赖、执行预处理、准备 `build-config`、为每个平台执行一次 `yrn-cli build-*`、解出 zip/tar 写入 `/app/dist/{platform}/`，最后写入 `forge.json` |
 | `params.json.tmpl` | 辅助文件，把模块参数和构建信息渲染成 JSON。脚本读取后用单引号导出成环境变量，避免 `$` 和反引号被 shell 展开 |
+| `gitlab-ci/` | 同一套构建在 GitLab CI 里的版本（`gitlab_ci` 构建方式）：`yrn-build-ci.sh`、业务仓库 `.gitlab-ci.yml` 的改动示例，见 [转交 GitLab CI 构建](../../gitlab-ci-build.md) |
 | `adapter.json` | 由上面三个文件和参数定义组合而成，可以直接 `POST /api/v1/build-adapters` 导入 |
 
 **产物结构**：每个平台目录下的内容与晴空塔包 tar 解开后一致，包括 hbc/bundle、`*.config.json`、`res`、`drawable-mdpi` 或 `assets`。如果是 common 包，还会额外放入 `commonMap.{platform}.json`。runtimeVersion 的格式为 `{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}`。

@@ -140,9 +140,11 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 			build_mode,
 			build_adapter_id,
 			build_adapter_params,
+			ci_job,
+			ci_artifact_path,
 			sort_order
 		) values (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23,
 			coalesce((select max(sort_order) + 10 from modules), 10)
 		)
 	`, moduleWriteArgs(input.ID, input)...); err != nil {
@@ -226,6 +228,8 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 			build_mode = $19,
 			build_adapter_id = $20,
 			build_adapter_params = $21::jsonb,
+			ci_job = $22,
+			ci_artifact_path = $23,
 			updated_at = now()
 		where id = $1
 	`, moduleWriteArgs(id, input)...); err != nil {
@@ -339,6 +343,8 @@ func moduleSelectSQL() string {
 			coalesce(m.build_adapter_id, ''),
 			coalesce(ba.name, ''),
 			m.build_adapter_params,
+			m.ci_job,
+			m.ci_artifact_path,
 			m.created_at,
 			m.updated_at
 		from modules m
@@ -386,6 +392,8 @@ func scanModule(row moduleRow) (domain.Module, error) {
 		&module.BuildConfig.BuildAdapterID,
 		&module.BuildConfig.BuildAdapterName,
 		&buildAdapterParams,
+		&module.BuildConfig.CIJob,
+		&module.BuildConfig.CIArtifactPath,
 		&module.CreatedAt,
 		&module.UpdatedAt,
 	); err != nil {
@@ -420,7 +428,7 @@ func moduleOwnerUser(input domain.ModuleInput) domain.UserInput {
 	}
 }
 
-// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$21）组织参数。
+// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$23）组织参数。
 func moduleWriteArgs(id string, input domain.ModuleInput) []any {
 	buildMode := input.BuildConfig.BuildMode
 	if buildMode == "" {
@@ -466,6 +474,8 @@ func moduleWriteArgs(id string, input domain.ModuleInput) []any {
 		string(buildMode),
 		buildAdapterID,
 		string(buildAdapterParamsJSON),
+		input.BuildConfig.CIJob,
+		input.BuildConfig.CIArtifactPath,
 	}
 }
 
@@ -546,7 +556,7 @@ func moduleUniqueViolationError(err error) error {
 		return domain.ErrModuleIDConflict
 	case "idx_modules_common_application_unique":
 		return domain.ErrModuleCommonConflict
-	case "modules_repository_dockerfile_unique":
+	case "modules_repository_dockerfile_unique", "modules_repository_gitlab_ci_unique":
 		return domain.ErrModuleRepositoryConflict
 	default:
 		return domain.ErrModuleIDConflict

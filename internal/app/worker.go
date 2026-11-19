@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"forge-server/internal/config"
+	"forge-server/internal/domain"
 	otelinfra "forge-server/internal/infra/otel"
 	"forge-server/internal/infra/postgres"
 	"forge-server/internal/infra/secretbox"
@@ -69,6 +70,9 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 			Repository: postgres.NewBuildAdapterRepository(postgresPool),
 			Usage:      buildRepository,
 		}),
+		// gitlab_ci 构建：通过代码源的 CI 构建，pipeline 写回构建记录。
+		CI:          codeSourceService,
+		CIPipelines: buildService,
 		Credentials: codeSourceService,
 		// 依赖产物注入：Feature 模块构建时读取所属 Common 模块生效中的默认路由构建，产物按依赖构建自己的存储配置下载。
 		Dependencies: service.NewBuildDependencyService(buildRepository),
@@ -80,6 +84,7 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 		Concurrency:   cfg.Worker.Concurrency,
 		ID:            cfg.Worker.ID,
 		LeaseDuration: cfg.Worker.LeaseDuration,
+		Modes:         workerBuildModes(cfg.Worker.BuildModes),
 		PollInterval:  cfg.Worker.PollInterval,
 		ShutdownGrace: cfg.Worker.ShutdownGrace,
 	})
@@ -90,6 +95,15 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 		otel:     otelShutdown,
 		worker:   buildWorker,
 	}, nil
+}
+
+// workerBuildModes 把配置里的构建方式转成领域类型；配置已校验过取值。
+func workerBuildModes(values []string) []domain.BuildMode {
+	modes := make([]domain.BuildMode, 0, len(values))
+	for _, value := range values {
+		modes = append(modes, domain.BuildMode(value))
+	}
+	return modes
 }
 
 func (a *WorkerApp) Run(ctx context.Context) error {

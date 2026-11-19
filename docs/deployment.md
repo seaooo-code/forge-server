@@ -1,6 +1,6 @@
 # 部署说明
 
-本文说明 forge-server（API 进程）的镜像和容器部署。worker 需要访问 Docker daemon，部署方式另定，不在本镜像内；扩缩容机制见 [worker 扩缩容](worker-scaling.md)。前端部署见 forge-console 的 `docs/deployment.md`。
+本文说明 forge-server（API 进程）的镜像和容器部署。`dockerfile` 和 `adapter` 构建的 worker 需要访问 Docker daemon，部署方式另定，不在本镜像内；只处理 `gitlab_ci` 构建的 worker 不需要 Docker，可以直接部署在容器平台（见 [转交 GitLab CI 构建](gitlab-ci-build.md) 第 7 节）。扩缩容机制见 [worker 扩缩容](worker-scaling.md)。前端部署见 forge-console 的 `docs/deployment.md`。
 
 ## 1. 镜像
 

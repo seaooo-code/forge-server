@@ -16,13 +16,18 @@ var (
 	ErrBuildAdapterVersionConflict = errors.New("build adapter was modified concurrently")
 )
 
-// BuildMode 是模块的构建方式：dockerfile 使用仓库自带 Dockerfile，adapter 使用平台维护的构建适配器。
+// BuildMode 是模块的构建方式：dockerfile 使用仓库自带 Dockerfile，adapter 使用平台维护的构建适配器，
+// gitlab_ci 把构建转交给代码源（GitLab）的 CI，由仓库自带的 .gitlab-ci.yml 执行。
 type BuildMode string
 
 const (
 	BuildModeDockerfile BuildMode = "dockerfile"
 	BuildModeAdapter    BuildMode = "adapter"
+	BuildModeGitLabCI   BuildMode = "gitlab_ci"
 )
+
+// BuildModes 是全部构建方式，worker 未配置 FORGE_WORKER_BUILD_MODES 时处理所有模式。
+var BuildModes = []BuildMode{BuildModeDockerfile, BuildModeAdapter, BuildModeGitLabCI}
 
 type BuildAdapterStatus string
 
@@ -159,7 +164,7 @@ type BuildAdapterUsage struct {
 }
 
 func IsValidBuildMode(mode BuildMode) bool {
-	return mode == BuildModeDockerfile || mode == BuildModeAdapter
+	return mode == BuildModeDockerfile || mode == BuildModeAdapter || mode == BuildModeGitLabCI
 }
 
 func IsValidBuildAdapterStatus(status BuildAdapterStatus) bool {

@@ -1,0 +1,62 @@
+# YRN 725 业务仓库（以 micar-rn-claw 为例）接入 Forge gitlab_ci 构建时，需要在 .gitlab-ci.yml 里增加和修改的部分。
+# 接入层数据，不属于 Forge 主线代码。契约见 docs/gitlab-ci-build.md。
+#
+# 前提：
+#   1. 把 yrn-build-ci.sh 和 docs/gitlab-ci/forge-fetch-deps.js 放进仓库的 scripts/forge/ 目录。
+#   2. Forge 里的模块配置：构建方式 gitlab_ci，CI job 填 forge_build，产物目录填 dist，
+#      构建变量填 YRN_KIND、YRN_ENTRY_FILE、YRN_CONFIG_FILE、YRN_INSTALL_COMMAND、YRN_PREBUILD_COMMAND 等（见 docs/adapters/yrn-725/README.md）。
+#   3. Forge 的 GitLab 连接令牌需要 api 权限，并且在本项目上至少是 Developer 角色。
+
+# ---- 1. 新增：Forge 构建 job（沿用现有的 stages、镜像和 KUBERNETES_* 资源变量） ----
+forge_build:
+  stage: buildRNBundle
+  rules:
+    - if: $FORGE_BUILD_ID
+  image:
+    name: $SKYTREE_IMAGE
+    entrypoint: ['']
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/**/*
+    policy: pull-push
+  script:
+    # 注意：不要在这个 job 里执行 env、printenv 等会打印全部变量的命令，Forge 传入的密钥变量会出现在日志里。
+    - bash scripts/forge/yrn-build-ci.sh
+  artifacts:
+    # Forge 只取这个 job 的 artifacts，产物目录由模块的「产物目录」配置指定，这里是 dist。
+    paths:
+      - dist/
+    expire_in: 1 day
+
+# ---- 2. 修改：让现有 job 不被 Forge 触发的 pipeline 误跑 ----
+
+# pre_pre 原来没有 rules，并且执行 env、env | sort，会把 pipeline 变量（包括 Forge 传入的密钥）全部打到日志里。
+# 给它加上 rules，在 Forge 的 pipeline 里不运行；更建议直接删掉那两行 env。
+pre_pre:
+  stage: pre-pre
+  rules:
+    - if: $FORGE_BUILD_ID
+      when: never
+    - when: on_success
+  script:
+    - echo "=== All Environment Variables ==="
+    - env
+    - echo "=== Sorted Environment Variables ==="
+    - env | sort
+
+# master_merge_notify_job 对 master 分支是 when: always，Forge 在 master 上触发的 API pipeline 也会命中，
+# 需要在最前面排除，否则会执行 notifyMergeInfo.js 上传合并记录。
+master_merge_notify_job:
+  rules:
+    - if: $FORGE_BUILD_ID
+      when: never
+    - if: $RN_BUNDLE_ID
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: always
+      allow_failure: true

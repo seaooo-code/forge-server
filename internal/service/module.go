@@ -13,6 +13,7 @@ const (
 	maxModuleAutoBuildBranches  = 20
 	maxModuleAutoPreviewTTLHour = 24 * 365
 	maxModuleBuildPathLength    = 255
+	maxModuleCIJobLength        = 255
 )
 
 type ModuleRepository interface {
@@ -163,6 +164,10 @@ func (s *ModuleService) normalizeModuleInput(ctx context.Context, input domain.M
 	if connection.Status != domain.CodeSourceConnectionStatusActive {
 		return domain.ModuleInput{}, domain.ErrCodeSourceConnectionInactive
 	}
+	// gitlab_ci 把构建转交给代码源的 CI，目前只有 GitLab 支持。
+	if normalized.BuildConfig.BuildMode == domain.BuildModeGitLabCI && connection.Provider != domain.CodeSourceProviderGitLab {
+		return domain.ModuleInput{}, domain.ErrInvalidModuleInput
+	}
 
 	repository, err := s.codeSources.GetCodeSourceRepository(ctx, connection.ID, normalized.Repository.ExternalRepositoryID)
 	if err != nil {
@@ -252,6 +257,8 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 		BuildAdapterParams:   NormalizeBuildAdapterParamValues(config.BuildAdapterParams),
 		DockerfilePath:       strings.TrimSpace(config.DockerfilePath),
 		BuildContext:         strings.TrimSpace(config.BuildContext),
+		CIJob:                strings.TrimSpace(config.CIJob),
+		CIArtifactPath:       strings.TrimSpace(config.CIArtifactPath),
 		AutoBuildBranches:    []string{},
 		AutoBuildEnvironment: strings.TrimSpace(config.AutoBuildEnvironment),
 		AutoPreviewRelease:   config.AutoPreviewRelease,
@@ -261,14 +268,23 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 		normalized.BuildMode = domain.BuildModeDockerfile
 	}
 	// dockerfile 模式不能带适配器；adapter 模式必须指定适配器。参数是否合法在 validateModuleBuildAdapter 中按参数定义校验。
+	// gitlab_ci 模式同样不能带适配器，并且必须指定产出产物的 job；其他模式不能带 CI 配置。
 	switch normalized.BuildMode {
 	case domain.BuildModeDockerfile:
-		if normalized.BuildAdapterID != "" || len(normalized.BuildAdapterParams) > 0 {
+		if normalized.BuildAdapterID != "" || len(normalized.BuildAdapterParams) > 0 || hasModuleCIConfig(normalized) {
 			return domain.ModuleBuildConfig{}, false
 		}
 	case domain.BuildModeAdapter:
-		if normalized.BuildAdapterID == "" {
+		if normalized.BuildAdapterID == "" || hasModuleCIConfig(normalized) {
 			return domain.ModuleBuildConfig{}, false
+		}
+	case domain.BuildModeGitLabCI:
+		if normalized.BuildAdapterID != "" || len(normalized.BuildAdapterParams) > 0 ||
+			normalized.CIJob == "" || len(normalized.CIJob) > maxModuleCIJobLength || strings.ContainsAny(normalized.CIJob, "\r\n") {
+			return domain.ModuleBuildConfig{}, false
+		}
+		if normalized.CIArtifactPath == "" {
+			normalized.CIArtifactPath = domain.DefaultModuleCIArtifactPath
 		}
 	default:
 		return domain.ModuleBuildConfig{}, false
@@ -284,7 +300,11 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 	}
 
 	// 构建路径必须是仓库内的相对路径。
-	for _, value := range []string{normalized.DockerfilePath, normalized.BuildContext} {
+	pathValues := []string{normalized.DockerfilePath, normalized.BuildContext}
+	if normalized.BuildMode == domain.BuildModeGitLabCI {
+		pathValues = append(pathValues, normalized.CIArtifactPath)
+	}
+	for _, value := range pathValues {
 		cleaned := path.Clean(value)
 		if len(value) > maxModuleBuildPathLength || strings.Contains(value, "\\") || path.IsAbs(value) ||
 			cleaned == ".." || strings.HasPrefix(cleaned, "../") {
@@ -316,6 +336,10 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 		return domain.ModuleBuildConfig{}, false
 	}
 	return normalized, true
+}
+
+func hasModuleCIConfig(config domain.ModuleBuildConfig) bool {
+	return config.CIJob != "" || config.CIArtifactPath != ""
 }
 
 func normalizeModuleListFilters(filters domain.ModuleListFilters) (domain.ModuleListFilters, error) {

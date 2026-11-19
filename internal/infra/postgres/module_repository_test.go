@@ -31,6 +31,11 @@ func TestModuleUniqueViolationError(t *testing.T) {
 			want:       domain.ErrModuleRepositoryConflict,
 		},
 		{
+			name:       "module repository gitlab ci job",
+			constraint: "modules_repository_gitlab_ci_unique",
+			want:       domain.ErrModuleRepositoryConflict,
+		},
+		{
 			name:       "unknown module unique constraint",
 			constraint: "unexpected_unique_constraint",
 			want:       domain.ErrModuleIDConflict,

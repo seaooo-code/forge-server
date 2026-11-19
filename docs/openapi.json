@@ -1818,6 +1818,15 @@
             "nullable": true,
             "type": "integer"
           },
+          "ciPipelineId": {
+            "description": "GitLab pipeline id created for a gitlab_ci build. 0 for other builds or before the pipeline is created.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "ciPipelineUrl": {
+            "description": "Web URL of the GitLab pipeline created for a gitlab_ci build. Empty for other builds.",
+            "type": "string"
+          },
           "codeSourceConnectionId": {
             "description": "Code source connection id of the module repository.",
             "type": "string"
@@ -3748,11 +3757,20 @@
             "type": "string"
           },
           "buildMode": {
-            "description": "Build mode. dockerfile uses the repository Dockerfile (default); adapter uses a platform build adapter.",
+            "description": "Build mode. dockerfile uses the repository Dockerfile (default); adapter uses a platform build adapter; gitlab_ci hands the build to the repository's GitLab CI pipeline (GitLab connections only).",
             "enum": [
               "dockerfile",
-              "adapter"
+              "adapter",
+              "gitlab_ci"
             ],
+            "type": "string"
+          },
+          "ciArtifactPath": {
+            "description": "Relative path of the artifact root inside the job artifacts, default \"dist\". Only used in gitlab_ci mode.",
+            "type": "string"
+          },
+          "ciJob": {
+            "description": "Name of the CI job that produces the build artifacts. Required in gitlab_ci mode and must be empty in other modes.",
             "type": "string"
           },
           "dockerfilePath": {

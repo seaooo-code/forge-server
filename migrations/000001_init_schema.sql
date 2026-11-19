@@ -292,9 +292,12 @@ create table modules (
     default_branch text not null default '',
     dockerfile_path text not null default 'Dockerfile',
     build_context text not null default '.',
-    build_mode text not null default 'dockerfile' check (build_mode in ('dockerfile', 'adapter')),
+    build_mode text not null default 'dockerfile' check (build_mode in ('dockerfile', 'adapter', 'gitlab_ci')),
     build_adapter_id text references build_adapters(id) on delete restrict,
     build_adapter_params jsonb not null default '{}',
+    -- gitlab_ci 模式：产出构建产物的 job 名，以及 job artifacts 中产物根目录的相对路径。其他模式为空串。
+    ci_job text not null default '',
+    ci_artifact_path text not null default '',
     auto_build_branches text[] not null default '{}',
     auto_build_environment_code text references environments(code) on delete set null,
     auto_preview_release boolean not null default false,
@@ -307,8 +310,12 @@ create table modules (
         or (kind = 'Feature' and common_module_id is not null and common_module_id <> id)
     ),
     constraint modules_build_adapter_check check (
-        (build_mode = 'dockerfile' and build_adapter_id is null)
+        (build_mode in ('dockerfile', 'gitlab_ci') and build_adapter_id is null)
         or (build_mode = 'adapter' and build_adapter_id is not null)
+    ),
+    constraint modules_gitlab_ci_check check (
+        (build_mode = 'gitlab_ci' and ci_job <> '' and ci_artifact_path <> '')
+        or (build_mode <> 'gitlab_ci' and ci_job = '' and ci_artifact_path = '')
     )
 );
 
@@ -319,6 +326,11 @@ create index idx_modules_application
 create unique index modules_repository_dockerfile_unique
     on modules(code_source_connection_id, external_repository_id, dockerfile_path)
     where build_mode = 'dockerfile';
+
+-- gitlab_ci 模式：同一仓库可以用不同的 job 绑定多个模块。
+create unique index modules_repository_gitlab_ci_unique
+    on modules(code_source_connection_id, external_repository_id, ci_job)
+    where build_mode = 'gitlab_ci';
 
 create unique index idx_modules_common_application_unique
     on modules(application_id)
@@ -385,6 +397,9 @@ create table build_records (
     -- 构建时注入到构建上下文的依赖构建：[{moduleId, runtimeVersion, buildRecordId}]。
     -- Feature 模块注入所属 Common 模块在当前环境下生效中的默认路由产物，其他构建为空数组。
     dependency_builds jsonb not null default '[]',
+    -- gitlab_ci 构建在代码源上创建的 pipeline。创建后立即写回，worker 被接管后据此续接而不重复触发。
+    ci_pipeline_id bigint,
+    ci_pipeline_url text not null default '',
     worker_id text not null default '',
     lease_expires_at timestamptz,
     artifact_key text not null default '',

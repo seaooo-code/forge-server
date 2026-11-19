@@ -14,13 +14,14 @@ import (
 )
 
 type BuildRecordRepository interface {
-	AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration) (domain.BuildRecord, error)
+	AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration, modes []domain.BuildMode) (domain.BuildRecord, error)
 	CompleteBuildRecord(ctx context.Context, id string, workerID string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error)
 	CreateBuildRecord(ctx context.Context, input domain.BuildRecordInput) (domain.BuildRecord, error)
 	FailBuildRecord(ctx context.Context, id string, workerID string, message string) (domain.BuildRecord, error)
 	GetBuildQueueStats(ctx context.Context) (domain.BuildQueueStats, error)
 	GetBuildRecord(ctx context.Context, id string) (domain.BuildRecord, error)
 	ListBuildRecords(ctx context.Context, filters domain.BuildRecordFilters) ([]domain.BuildRecord, domain.BuildRecordSummary, error)
+	RecordBuildCIPipeline(ctx context.Context, id string, workerID string, pipelineID int64, pipelineURL string) error
 	RenewBuildLease(ctx context.Context, id string, workerID string, leaseDuration time.Duration) error
 	RequeueBuildRecord(ctx context.Context, id string, workerID string) error
 }
@@ -97,12 +98,29 @@ func (s *BuildService) GetBuildRecord(ctx context.Context, id string) (domain.Bu
 	return record, nil
 }
 
-func (s *BuildService) AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration) (domain.BuildRecord, error) {
+// AcquireNextBuildRecord 领取下一个待执行的构建。modes 是 worker 处理的构建方式，为空时处理全部。
+func (s *BuildService) AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration, modes ...domain.BuildMode) (domain.BuildRecord, error) {
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" || leaseDuration <= 0 {
 		return domain.BuildRecord{}, domain.ErrInvalidBuildInput
 	}
-	return s.repository.AcquireNextBuildRecord(ctx, workerID, leaseDuration)
+	if len(modes) == 0 {
+		modes = domain.BuildModes
+	}
+	for _, mode := range modes {
+		if !domain.IsValidBuildMode(mode) {
+			return domain.BuildRecord{}, domain.ErrInvalidBuildInput
+		}
+	}
+	return s.repository.AcquireNextBuildRecord(ctx, workerID, leaseDuration, modes)
+}
+
+// RecordBuildCIPipeline 把 gitlab_ci 构建创建的 pipeline 写回构建记录。构建已不归 workerID 所有时返回 ErrBuildLeaseLost。
+func (s *BuildService) RecordBuildCIPipeline(ctx context.Context, id string, workerID string, pipelineID int64, pipelineURL string) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(workerID) == "" || pipelineID <= 0 {
+		return domain.ErrInvalidBuildInput
+	}
+	return s.repository.RecordBuildCIPipeline(ctx, strings.TrimSpace(id), strings.TrimSpace(workerID), pipelineID, strings.TrimSpace(pipelineURL))
 }
 
 // CompleteBuildRecord 写入构建结果。构建已不归 workerID 所有时返回 ErrBuildLeaseLost。

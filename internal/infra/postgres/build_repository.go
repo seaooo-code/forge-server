@@ -113,6 +113,23 @@ func (r *BuildRepository) RecordBuildDependencies(ctx context.Context, id string
 	return nil
 }
 
+// RecordBuildCIPipeline 把 gitlab_ci 构建创建的 pipeline 写回构建记录，只有构建仍由 workerID 持有时才写入，
+// 构建已被接管或已结束时返回 ErrBuildLeaseLost。
+func (r *BuildRepository) RecordBuildCIPipeline(ctx context.Context, id string, workerID string, pipelineID int64, pipelineURL string) error {
+	tag, err := r.pool.Exec(ctx, `
+		update build_records
+		set ci_pipeline_id = $3, ci_pipeline_url = $4, updated_at = now()
+		where id = $1 and worker_id = $2 and status = 'running'
+	`, id, workerID, pipelineID, pipelineURL)
+	if err != nil {
+		return fmt.Errorf("record build ci pipeline: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrBuildLeaseLost
+	}
+	return nil
+}
+
 // ListActiveDefaultReleaseBuilds 返回模块在环境下所有生效中的默认路由（route_type = 'default'、status = 'active'）
 // 指向的构建，按 runtime_version 排序。唯一索引保证每个运行时版本最多一条生效默认路由。
 // 构建记录的存储配置取构建自己的 storage_configuration_id。
@@ -401,15 +418,21 @@ func (r *BuildRepository) buildRecordSummary(ctx context.Context, filters domain
 	return summary, nil
 }
 
-func (r *BuildRepository) AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration) (domain.BuildRecord, error) {
+func (r *BuildRepository) AcquireNextBuildRecord(ctx context.Context, workerID string, leaseDuration time.Duration, modes []domain.BuildMode) (domain.BuildRecord, error) {
+	modeValues := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		modeValues = append(modeValues, string(mode))
+	}
 	record, err := scanBuildRecord(r.pool.QueryRow(ctx, `
 		with picked as (
-			select id
-			from build_records
-			where status = 'pending'
-			   or (status = 'running' and lease_expires_at < now())
-			order by queued_at asc, created_at asc
-			for update skip locked
+			select br.id
+			from build_records br
+			join modules m on m.id = br.module_id
+			where (br.status = 'pending'
+			   or (br.status = 'running' and br.lease_expires_at < now()))
+			  and m.build_mode = any($3::text[])
+			order by br.queued_at asc, br.created_at asc
+			for update of br skip locked
 			limit 1
 		),
 		updated as (
@@ -430,7 +453,7 @@ func (r *BuildRepository) AcquireNextBuildRecord(ctx context.Context, workerID s
 		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), workerID, intervalString(leaseDuration)))
+	`), workerID, intervalString(leaseDuration), modeValues))
 	if err != nil {
 		if errors.Is(err, domain.ErrBuildRecordNotFound) {
 			return domain.BuildRecord{}, domain.ErrNoBuildRecord
@@ -596,6 +619,10 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			m.build_mode,
 			coalesce(m.build_adapter_id, ''),
 			m.build_adapter_params,
+			m.ci_job,
+			m.ci_artifact_path,
+			coalesce(br.ci_pipeline_id, 0),
+			br.ci_pipeline_url,
 			coalesce(br.build_adapter_id, ''),
 			br.build_adapter_version,
 			br.rendered_dockerfile_sha256,
@@ -677,6 +704,10 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.BuildMode,
 		&record.ModuleBuildAdapterID,
 		&moduleAdapterParams,
+		&record.CIJob,
+		&record.CIArtifactPath,
+		&record.CIPipelineID,
+		&record.CIPipelineURL,
 		&record.BuildAdapterID,
 		&record.BuildAdapterVersion,
 		&record.RenderedDockerfileSHA256,

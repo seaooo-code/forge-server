@@ -333,3 +333,63 @@ func testServiceModule(id string, kind domain.ModuleKind) domain.Module {
 		UpdatedAt: time.Date(2026, 6, 9, 14, 40, 18, 0, time.UTC),
 	}
 }
+
+func TestModuleServiceAcceptsGitLabCIBuildConfig(t *testing.T) {
+	repository := fakeModuleRepository{}
+	service := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile")
+
+	input := validModuleInput("module-profile")
+	input.BuildConfig = domain.ModuleBuildConfig{BuildMode: domain.BuildModeGitLabCI, CIJob: " forge_build "}
+	if _, err := service.CreateModule(context.Background(), input); err != nil {
+		t.Fatalf("create module: %v", err)
+	}
+
+	config := repository.lastCreateInput.BuildConfig
+	if config.BuildMode != domain.BuildModeGitLabCI || config.CIJob != "forge_build" || config.CIArtifactPath != domain.DefaultModuleCIArtifactPath {
+		t.Fatalf("expected trimmed job and default artifact path, got %#v", config)
+	}
+}
+
+func TestModuleServiceValidatesGitLabCIBuildConfig(t *testing.T) {
+	tests := map[string]domain.ModuleBuildConfig{
+		"missing job":             {BuildMode: domain.BuildModeGitLabCI},
+		"job with newline":        {BuildMode: domain.BuildModeGitLabCI, CIJob: "build\nbad"},
+		"artifact path escapes":   {BuildMode: domain.BuildModeGitLabCI, CIJob: "forge_build", CIArtifactPath: "../dist"},
+		"absolute artifact path":  {BuildMode: domain.BuildModeGitLabCI, CIJob: "forge_build", CIArtifactPath: "/dist"},
+		"with adapter":            {BuildMode: domain.BuildModeGitLabCI, CIJob: "forge_build", BuildAdapterID: "yrn"},
+		"with adapter params":     {BuildMode: domain.BuildModeGitLabCI, CIJob: "forge_build", BuildAdapterParams: map[string]string{"a": "b"}},
+		"dockerfile mode with ci": {BuildMode: domain.BuildModeDockerfile, CIJob: "forge_build"},
+		"adapter mode with ci":    {BuildMode: domain.BuildModeAdapter, BuildAdapterID: "yrn", CIArtifactPath: "dist"},
+	}
+	for name, config := range tests {
+		t.Run(name, func(t *testing.T) {
+			repository := fakeModuleRepository{}
+			service := newTestModuleService(&repository)
+
+			input := validModuleInput("module-profile")
+			input.BuildConfig = config
+			if _, err := service.CreateModule(context.Background(), input); !errors.Is(err, domain.ErrInvalidModuleInput) {
+				t.Fatalf("expected invalid module input, got %v", err)
+			}
+			if repository.createCalls != 0 {
+				t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
+			}
+		})
+	}
+}
+
+func TestModuleServiceRejectsGitLabCIOnOtherProviders(t *testing.T) {
+	repository := fakeModuleRepository{}
+	store := newFakeModuleCodeSourceStore()
+	store.connection.Provider = domain.CodeSourceProviderGitHub
+	service := NewModuleService(&repository, store, "Dockerfile")
+
+	input := validModuleInput("module-profile")
+	input.BuildConfig = domain.ModuleBuildConfig{BuildMode: domain.BuildModeGitLabCI, CIJob: "forge_build"}
+	if _, err := service.CreateModule(context.Background(), input); !errors.Is(err, domain.ErrInvalidModuleInput) {
+		t.Fatalf("expected invalid module input for a GitHub connection, got %v", err)
+	}
+	if repository.createCalls != 0 {
+		t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
+	}
+}

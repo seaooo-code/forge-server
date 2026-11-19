@@ -40,6 +40,16 @@ type BuildAdapterProvider interface {
 	RecordBuildAdapterUsage(ctx context.Context, buildID string, usage domain.BuildAdapterUsage) error
 }
 
+// CIClientProvider 获取仓库所在代码源的 CI 客户端，由 service.CodeSourceService 实现。gitlab_ci 构建使用。
+type CIClientProvider interface {
+	CIClient(ctx context.Context, repository domain.ModuleRepository) (service.CIClient, error)
+}
+
+// CIPipelineRecorder 把 gitlab_ci 构建创建的 pipeline 写回构建记录，由 service.BuildService 实现。
+type CIPipelineRecorder interface {
+	RecordBuildCIPipeline(ctx context.Context, id string, workerID string, pipelineID int64, pipelineURL string) error
+}
+
 const dockerBuildArtifactDir = "/app/dist"
 
 // renderedDockerfileName 是适配器渲染出的 Dockerfile 文件名，写在构建工作目录（仓库之外）。
@@ -48,6 +58,8 @@ const renderedDockerfileName = "Dockerfile.adapter"
 type Executor struct {
 	adapters     BuildAdapterProvider
 	cfg          config.WorkerConfig
+	ci           CIClientProvider
+	ciPipelines  CIPipelineRecorder
 	credentials  RepositoryCredentialsProvider
 	dependencies BuildDependencyProvider
 	// dependencyArtifacts 读取依赖构建的清单和文件，为空时使用 infra/s3。
@@ -62,7 +74,10 @@ type Executor struct {
 }
 
 type ExecutorDependencies struct {
-	Adapters    BuildAdapterProvider
+	Adapters BuildAdapterProvider
+	// CI 和 CIPipelines 为空时不能执行 gitlab_ci 构建。
+	CI          CIClientProvider
+	CIPipelines CIPipelineRecorder
 	Credentials RepositoryCredentialsProvider
 	// Dependencies 为空时不注入依赖产物。
 	Dependencies BuildDependencyProvider
@@ -86,6 +101,8 @@ func NewExecutor(cfg config.WorkerConfig, deps ExecutorDependencies, logger *slo
 	return &Executor{
 		adapters:            deps.Adapters,
 		cfg:                 cfg,
+		ci:                  deps.CI,
+		ciPipelines:         deps.CIPipelines,
 		credentials:         deps.Credentials,
 		dependencies:        deps.Dependencies,
 		dependencyArtifacts: dependencyArtifacts,
@@ -124,6 +141,11 @@ func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (doma
 // execute 按检出、docker 构建、产物校验、生成清单、上传的顺序串行执行，每一步的输出都进入构建日志。
 func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs *buildLogStream) (domain.BuildRecordCompletion, error) {
 	logs.Linef("开始构建 %s（#%d）：模块 %s，环境 %s，分支 %s", record.ID, record.Number, record.ModuleID, record.Environment, record.Branch)
+
+	// gitlab_ci 把构建转交给代码源的 CI：不检出代码、不执行 docker，只触发、等待并取回产物。
+	if record.BuildMode == domain.BuildModeGitLabCI {
+		return e.executeGitLabCI(ctx, record, logs)
+	}
 
 	// 适配器在构建开始时读取，整个构建使用这一刻的版本；停用的适配器直接失败。
 	var adapter *domain.BuildAdapter
@@ -222,6 +244,11 @@ func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs 
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
+	return e.publishArtifact(ctx, record, artifactRoot, commitSHA, logs)
+}
+
+// publishArtifact 校验产物契约、生成清单并上传，返回写回构建记录的结果。docker 构建和 gitlab_ci 构建共用。
+func (e *Executor) publishArtifact(ctx context.Context, record domain.BuildRecord, artifactRoot string, commitSHA string, logs *buildLogStream) (domain.BuildRecordCompletion, error) {
 	forgeManifest, platforms, err := validateArtifactContract(artifactRoot)
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
@@ -247,6 +274,12 @@ func (e *Executor) execute(ctx context.Context, record domain.BuildRecord, logs 
 func (e *Executor) validateBuildTask(record domain.BuildRecord) error {
 	if record.Repository.ConnectionID == "" {
 		return domain.ErrInvalidBuildInput
+	}
+	if record.BuildMode == domain.BuildModeGitLabCI {
+		if e.ci == nil || e.ciPipelines == nil {
+			return domain.ErrCINotSupported
+		}
+		return nil
 	}
 	if e.credentials == nil {
 		return domain.ErrCodeSourceAuthNotConfigured
@@ -605,7 +638,7 @@ func generateArtifactManifest(artifactRoot string, artifactKey string, digests [
 		return domain.ArtifactManifest{}, fmt.Errorf("list build artifacts: %w", err)
 	}
 	if len(files) == 0 {
-		return domain.ArtifactManifest{}, errors.New("docker build produced no artifacts")
+		return domain.ArtifactManifest{}, errors.New("build produced no artifacts")
 	}
 
 	manifest := newArtifactManifest(artifactKey)

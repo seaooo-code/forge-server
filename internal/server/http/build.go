@@ -50,6 +50,8 @@ type buildRecordResponse struct {
 	BuildAdapterID           string                    `json:"buildAdapterId"`
 	BuildAdapterVersion      *int                      `json:"buildAdapterVersion"`
 	RenderedDockerfileSHA256 string                    `json:"renderedDockerfileSha256"`
+	CIPipelineID             int64                     `json:"ciPipelineId"`
+	CIPipelineURL            string                    `json:"ciPipelineUrl"`
 	ModuleID                 string                    `json:"moduleId"`
 	ModuleName               string                    `json:"moduleName"`
 	ManifestKey              string                    `json:"manifestKey"`
@@ -248,6 +250,8 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		BuildAdapterID:           record.BuildAdapterID,
 		BuildAdapterVersion:      record.BuildAdapterVersion,
 		RenderedDockerfileSHA256: record.RenderedDockerfileSHA256,
+		CIPipelineID:             record.CIPipelineID,
+		CIPipelineURL:            record.CIPipelineURL,
 		ModuleID:                 record.ModuleID,
 		ModuleName:               record.ModuleName,
 		ManifestKey:              record.ManifestKey,

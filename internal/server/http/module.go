@@ -63,6 +63,8 @@ type moduleBuildConfigResponse struct {
 	AutoPreviewTTLHours  int               `json:"autoPreviewTtlHours"`
 	BuildContext         string            `json:"buildContext"`
 	DockerfilePath       string            `json:"dockerfilePath"`
+	CIArtifactPath       string            `json:"ciArtifactPath"`
+	CIJob                string            `json:"ciJob"`
 }
 
 type moduleSummaryResponse struct {
@@ -105,6 +107,8 @@ type moduleBuildConfigRequest struct {
 	AutoPreviewTTLHours  int               `json:"autoPreviewTtlHours"`
 	BuildContext         string            `json:"buildContext"`
 	DockerfilePath       string            `json:"dockerfilePath"`
+	CIArtifactPath       string            `json:"ciArtifactPath"`
+	CIJob                string            `json:"ciJob"`
 }
 
 func registerModuleRoutes(group *echo.Group, service ModuleService, authService AuthorizationService) {
@@ -248,6 +252,8 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 			AutoPreviewTTLHours:  request.BuildConfig.AutoPreviewTTLHours,
 			BuildContext:         request.BuildConfig.BuildContext,
 			DockerfilePath:       request.BuildConfig.DockerfilePath,
+			CIArtifactPath:       request.BuildConfig.CIArtifactPath,
+			CIJob:                request.BuildConfig.CIJob,
 		},
 	}
 	if includeID {
@@ -313,6 +319,8 @@ func newModuleResponse(module domain.Module) moduleResponse {
 			AutoPreviewTTLHours:  module.BuildConfig.AutoPreviewTTLHours,
 			BuildContext:         module.BuildConfig.BuildContext,
 			DockerfilePath:       module.BuildConfig.DockerfilePath,
+			CIArtifactPath:       module.BuildConfig.CIArtifactPath,
+			CIJob:                module.BuildConfig.CIJob,
 		},
 		CodeSourceConnectionID:   module.Repository.ConnectionID,
 		CodeSourceConnectionName: module.ConnectionName,

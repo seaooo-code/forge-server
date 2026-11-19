@@ -41,6 +41,7 @@ type Worker struct {
 	pollInterval  time.Duration
 	buildTimeout  time.Duration
 	shutdownGrace time.Duration
+	modes         []domain.BuildMode
 	logger        *slog.Logger
 }
 
@@ -54,6 +55,8 @@ type Options struct {
 	PollInterval  time.Duration
 	// ShutdownGrace 是收到退出信号后等待进行中构建完成的时长，超时后中断构建并放回队列。
 	ShutdownGrace time.Duration
+	// Modes 是本 worker 处理的构建方式，为空时处理全部。只处理 gitlab_ci 的 worker 不需要 Docker 和 git。
+	Modes []domain.BuildMode
 }
 
 func New(builds *service.BuildService, executor BuildExecutor, logger *slog.Logger, opts Options) *Worker {
@@ -90,6 +93,7 @@ func New(builds *service.BuildService, executor BuildExecutor, logger *slog.Logg
 		pollInterval:  pollInterval,
 		buildTimeout:  buildTimeout,
 		shutdownGrace: shutdownGrace,
+		modes:         opts.Modes,
 		logger:        logger,
 	}
 }
@@ -174,7 +178,7 @@ func (w *Worker) runOnce(acquireCtx context.Context, buildsCtx context.Context, 
 	if acquireCtx.Err() != nil {
 		return false, nil
 	}
-	record, err := w.builds.AcquireNextBuildRecord(acquireCtx, holder, w.leaseDuration)
+	record, err := w.builds.AcquireNextBuildRecord(acquireCtx, holder, w.leaseDuration, w.modes...)
 	if err != nil {
 		if errors.Is(err, domain.ErrNoBuildRecord) || acquireCtx.Err() != nil {
 			return false, nil

@@ -27,18 +27,23 @@ const (
 const (
 	DefaultModuleDockerfilePath      = "Dockerfile"
 	DefaultModuleBuildContext        = "."
+	DefaultModuleCIArtifactPath      = "dist"
 	DefaultModuleAutoPreviewTTLHours = 168
 )
 
 // ModuleBuildConfig 是模块的构建与自动触发配置。
 type ModuleBuildConfig struct {
 	// BuildMode 为空时按 dockerfile 处理；DockerfilePath 只在 dockerfile 模式下生效。
-	BuildMode            BuildMode
-	BuildAdapterID       string
-	BuildAdapterName     string
-	BuildAdapterParams   map[string]string
-	DockerfilePath       string
-	BuildContext         string
+	BuildMode          BuildMode
+	BuildAdapterID     string
+	BuildAdapterName   string
+	BuildAdapterParams map[string]string
+	DockerfilePath     string
+	BuildContext       string
+	// CIJob、CIArtifactPath 只在 gitlab_ci 模式下生效：CIJob 是产出构建产物的 job 名，
+	// CIArtifactPath 是该 job 的 artifacts 里产物根目录的相对路径，默认 dist。
+	CIJob                string
+	CIArtifactPath       string
 	AutoBuildBranches    []string
 	AutoBuildEnvironment string
 	AutoPreviewRelease   bool
