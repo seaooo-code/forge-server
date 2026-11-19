@@ -394,3 +394,38 @@ func storageRequest() map[string]string {
 }
 
 var _ StorageService = (*fakeStorageService)(nil)
+
+func TestStorageConfigurationForcePathStyleRoundTrip(t *testing.T) {
+	configuration := testHTTPStorageConfiguration("storage-fds", domain.StorageStatusHealthy)
+	configuration.ForcePathStyle = true
+	service := &fakeStorageService{configuration: configuration}
+	e := newAuthorizedTestServer(Dependencies{StorageService: service})
+
+	body := map[string]any{}
+	for key, value := range storageRequest() {
+		body[key] = value
+	}
+	body["forcePathStyle"] = true
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/configurations", jsonBody(body))
+	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	if !service.lastCreateInput.ForcePathStyle {
+		t.Fatal("expected forcePathStyle to be bound into the create input")
+	}
+	var response struct {
+		Configuration storageConfigurationResponse `json:"configuration"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.Configuration.ForcePathStyle {
+		t.Fatalf("expected forcePathStyle in response, got %#v", response.Configuration)
+	}
+}

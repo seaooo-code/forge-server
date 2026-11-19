@@ -38,6 +38,7 @@ func optionsFromStorageConfigurationInput(input domain.StorageConfigurationInput
 		Endpoint:        input.Endpoint,
 		AccessKeyID:     input.AccessKeyID,
 		SecretAccessKey: input.SecretAccessKey,
+		ForcePathStyle:  input.ForcePathStyle,
 	}
 }
 

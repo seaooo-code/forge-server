@@ -42,6 +42,7 @@ func (r *StorageRepository) ListStorageConfigurations(ctx context.Context, pagin
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
 			c.public_base_url,
+			c.force_path_style,
 			c.status,
 			c.last_verified_at,
 			c.created_at,
@@ -86,6 +87,7 @@ func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id stri
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
 			c.public_base_url,
+			c.force_path_style,
 			c.status,
 			c.last_verified_at,
 			c.created_at,
@@ -158,6 +160,7 @@ func (r *StorageRepository) createStorageConfiguration(ctx context.Context, id s
 			access_key_id,
 			secret_access_key,
 			status,
+			force_path_style,
 			sort_order
 		) values (
 			$1,
@@ -171,6 +174,7 @@ func (r *StorageRepository) createStorageConfiguration(ctx context.Context, id s
 			$9,
 			$10,
 			$11,
+			$12,
 			coalesce((select max(sort_order) + 10 from storage_configurations), 10)
 		)
 		returning id
@@ -186,6 +190,7 @@ func (r *StorageRepository) createStorageConfiguration(ctx context.Context, id s
 		input.AccessKeyID,
 		input.SecretAccessKey,
 		input.Status,
+		input.ForcePathStyle,
 	).Scan(&configurationID); err != nil {
 		if isUniqueViolation(err) {
 			return domain.StorageConfiguration{}, err
@@ -222,6 +227,7 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 			access_key_id = $9,
 			secret_access_key = $10,
 			status = $11,
+			force_path_style = $12,
 			updated_at = now()
 		where id = $1
 		returning id
@@ -237,6 +243,7 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 		input.AccessKeyID,
 		input.SecretAccessKey,
 		input.Status,
+		input.ForcePathStyle,
 	).Scan(&configurationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
@@ -277,6 +284,7 @@ func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id s
 				region,
 				owner_user_id,
 				public_base_url,
+				force_path_style,
 				status,
 				last_verified_at,
 				created_at,
@@ -294,6 +302,7 @@ func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id s
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
 			d.public_base_url,
+			d.force_path_style,
 			d.status,
 			d.last_verified_at,
 			d.created_at,
@@ -332,6 +341,7 @@ func scanStorageConfiguration(row storageConfigurationRow) (domain.StorageConfig
 		&configuration.OwnerEmail,
 		&configuration.OwnerAvatarURL,
 		&configuration.PublicBaseURL,
+		&configuration.ForcePathStyle,
 		&configuration.Status,
 		&lastVerifiedAt,
 		&configuration.CreatedAt,

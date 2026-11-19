@@ -4507,6 +4507,10 @@
             "description": "S3-compatible endpoint.",
             "type": "string"
           },
+          "forcePathStyle": {
+            "description": "Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.",
+            "type": "boolean"
+          },
           "id": {
             "description": "Storage configuration id.",
             "type": "string"
@@ -4559,6 +4563,7 @@
           "adapter",
           "bucket",
           "endpoint",
+          "forcePathStyle",
           "lastVerifiedAt",
           "ownerUserId",
           "owner",
@@ -4590,6 +4595,10 @@
           "endpoint": {
             "description": "S3-compatible endpoint.",
             "type": "string"
+          },
+          "forcePathStyle": {
+            "description": "Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.",
+            "type": "boolean"
           },
           "name": {
             "description": "Storage configuration display name.",
@@ -4706,6 +4715,10 @@
             "description": "S3-compatible endpoint.",
             "type": "string"
           },
+          "forcePathStyle": {
+            "description": "Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.",
+            "type": "boolean"
+          },
           "id": {
             "description": "Existing storage configuration id. When set and both credentials are empty, the stored pair is used.",
             "type": "string"
@@ -4813,6 +4826,10 @@
           "endpoint": {
             "description": "S3-compatible endpoint.",
             "type": "string"
+          },
+          "forcePathStyle": {
+            "description": "Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.",
+            "type": "boolean"
           },
           "name": {
             "description": "Storage configuration display name.",

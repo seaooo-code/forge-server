@@ -64,5 +64,6 @@ func clientFromBuildRecord(record domain.BuildRecord) (*Client, error) {
 		Endpoint:        record.StorageEndpoint,
 		AccessKeyID:     record.StorageAccessKeyID,
 		SecretAccessKey: record.StorageSecretAccessKey,
+		ForcePathStyle:  record.StorageForcePathStyle,
 	})
 }

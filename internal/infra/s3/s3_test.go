@@ -215,3 +215,48 @@ type roundTripHTTPClient struct {
 func (c roundTripHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	return c.do(req)
 }
+
+func TestNewClientAddressingStyle(t *testing.T) {
+	tests := []struct {
+		name           string
+		forcePathStyle bool
+		wantHost       string
+		wantPath       string
+	}{
+		{name: "virtual-hosted by default", forcePathStyle: false, wantHost: "forge-assets.s3.example.com", wantPath: "/bundles/a.js"},
+		{name: "path style when forced", forcePathStyle: true, wantHost: "s3.example.com", wantPath: "/forge-assets/bundles/a.js"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewClient(Options{
+				Region:          "us-east-1",
+				Bucket:          "forge-assets",
+				Endpoint:        "https://s3.example.com",
+				AccessKeyID:     "access-key",
+				SecretAccessKey: "secret-key",
+				ForcePathStyle:  tt.forcePathStyle,
+			})
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			rawURL, err := client.PresignGetObject(context.Background(), "bundles/a.js")
+			if err != nil {
+				t.Fatalf("presign: %v", err)
+			}
+			parsed, err := url.Parse(rawURL)
+			if err != nil {
+				t.Fatalf("parse presigned url: %v", err)
+			}
+			if parsed.Host != tt.wantHost || parsed.Path != tt.wantPath {
+				t.Fatalf("expected %s%s, got %s%s", tt.wantHost, tt.wantPath, parsed.Host, parsed.Path)
+			}
+		})
+	}
+}
+
+func TestOptionsFromStorageConfigurationInputKeepsForcePathStyle(t *testing.T) {
+	options := optionsFromStorageConfigurationInput(domain.StorageConfigurationInput{ForcePathStyle: true})
+	if !options.ForcePathStyle {
+		t.Fatal("expected force path style to be passed to the client options")
+	}
+}

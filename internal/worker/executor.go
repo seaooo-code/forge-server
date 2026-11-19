@@ -663,6 +663,7 @@ func (e *Executor) uploadArtifact(ctx context.Context, record domain.BuildRecord
 		Endpoint:        record.StorageEndpoint,
 		AccessKeyID:     record.StorageAccessKeyID,
 		SecretAccessKey: record.StorageSecretAccessKey,
+		ForcePathStyle:  record.StorageForcePathStyle,
 	})
 	if err != nil {
 		return err

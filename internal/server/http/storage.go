@@ -32,6 +32,7 @@ type storageConfigurationResponse struct {
 	Adapter        string `json:"adapter"`
 	Bucket         string `json:"bucket"`
 	Endpoint       string `json:"endpoint"`
+	ForcePathStyle bool   `json:"forcePathStyle"`
 	ID             string `json:"id"`
 	LastVerifiedAt string `json:"lastVerifiedAt"`
 	Name           string `json:"name"`
@@ -49,6 +50,7 @@ type storageConfigurationRequest struct {
 	Adapter            string `json:"adapter"`
 	Bucket             string `json:"bucket"`
 	Endpoint           string `json:"endpoint"`
+	ForcePathStyle     bool   `json:"forcePathStyle"`
 	Name               string `json:"name"`
 	OwnerUserID        string `json:"ownerUserId"`
 	Owner              string `json:"owner"`
@@ -234,6 +236,7 @@ func newStorageConfigurationInput(request storageConfigurationRequest) (domain.S
 		Adapter:            domain.StorageAdapter(request.Adapter),
 		Bucket:             request.Bucket,
 		Endpoint:           request.Endpoint,
+		ForcePathStyle:     request.ForcePathStyle,
 		Name:               request.Name,
 		OwnerUserID:        request.OwnerUserID,
 		Owner:              request.Owner,
@@ -289,6 +292,7 @@ func newStorageConfigurationResponse(configuration domain.StorageConfiguration) 
 		Adapter:        string(configuration.Adapter),
 		Bucket:         configuration.Bucket,
 		Endpoint:       configuration.Endpoint,
+		ForcePathStyle: configuration.ForcePathStyle,
 		ID:             configuration.ID,
 		LastVerifiedAt: lastVerifiedAt,
 		Name:           configuration.Name,

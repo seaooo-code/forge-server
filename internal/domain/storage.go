@@ -38,6 +38,8 @@ type StorageConfiguration struct {
 	OwnerEmail     string
 	OwnerAvatarURL string
 	PublicBaseURL  string
+	// ForcePathStyle 为 true 时用路径风格访问（endpoint/bucket），否则把 Bucket 拼进域名（bucket.endpoint）。
+	ForcePathStyle bool
 	Status         StorageStatus
 	LastVerifiedAt *time.Time
 	CreatedAt      time.Time
@@ -64,6 +66,7 @@ type StorageConfigurationInput struct {
 	OwnerFeishuOpenID  string
 	OwnerFeishuUserID  string
 	PublicBaseURL      string
+	ForcePathStyle     bool
 	AccessKeyID        string
 	SecretAccessKey    string
 	Status             StorageStatus

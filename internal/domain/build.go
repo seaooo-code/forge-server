@@ -74,6 +74,7 @@ type BuildRecord struct {
 	StoragePublicBaseURL     string
 	StorageAccessKeyID       string
 	StorageSecretAccessKey   string
+	StorageForcePathStyle    bool
 	ArtifactKey              string
 	ArtifactURL              string
 	ManifestKey              string

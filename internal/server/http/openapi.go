@@ -2692,6 +2692,7 @@ func storageConfigurationSchema() *openapi3.Schema {
 		"adapter",
 		"bucket",
 		"endpoint",
+		"forcePathStyle",
 		"lastVerifiedAt",
 		"ownerUserId",
 		"owner",
@@ -2706,6 +2707,7 @@ func storageConfigurationSchema() *openapi3.Schema {
 		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
 		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
+		WithProperty("forcePathStyle", boolSchema("Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.")).
 		WithProperty("lastVerifiedAt", stringSchema("Last verification display time.")).
 		WithProperty("ownerUserId", stringSchema("Configuration owner user id.")).
 		WithProperty("owner", stringSchema("Configuration owner.")).
@@ -2747,6 +2749,7 @@ func storageConfigurationRequestSchema(requireCredentials bool) *openapi3.Schema
 		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
 		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
+		WithProperty("forcePathStyle", boolSchema("Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.")).
 		WithProperty("ownerUserId", stringSchema("Configuration owner user id. Use the id returned by Feishu user search when available.")).
 		WithProperty("owner", stringSchema("Configuration owner.")).
 		WithProperty("ownerEmail", stringSchema("Configuration owner email.")).
@@ -2768,6 +2771,7 @@ func storageConfigurationTestRequestSchema() *openapi3.Schema {
 		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
 		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
+		WithProperty("forcePathStyle", boolSchema("Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.")).
 		WithProperty("ownerUserId", stringSchema("Configuration owner user id. Use the id returned by Feishu user search when available.")).
 		WithProperty("owner", stringSchema("Configuration owner.")).
 		WithProperty("ownerEmail", stringSchema("Configuration owner email.")).

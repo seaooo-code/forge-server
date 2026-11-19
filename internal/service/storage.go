@@ -132,6 +132,7 @@ func validateStorageConfigurationInput(input domain.StorageConfigurationInput) (
 		Endpoint:           strings.TrimSpace(input.Endpoint),
 		Region:             strings.TrimSpace(input.Region),
 		PublicBaseURL:      strings.TrimSpace(input.PublicBaseURL),
+		ForcePathStyle:     input.ForcePathStyle,
 		AccessKeyID:        strings.TrimSpace(input.AccessKeyID),
 		SecretAccessKey:    strings.TrimSpace(input.SecretAccessKey),
 		Status:             input.Status,
