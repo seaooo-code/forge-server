@@ -393,3 +393,31 @@ func TestModuleServiceRejectsGitLabCIOnOtherProviders(t *testing.T) {
 		t.Fatalf("expected repository not to be called, got %d calls", repository.createCalls)
 	}
 }
+
+type recordingBranchSearcher struct {
+	repository domain.ModuleRepository
+	query      string
+}
+
+func (s *recordingBranchSearcher) SearchBranches(_ context.Context, repository domain.ModuleRepository, query string) ([]string, error) {
+	s.repository = repository
+	s.query = query
+	return []string{"main"}, nil
+}
+
+func TestModuleServiceSearchBranchesUsesModuleRepository(t *testing.T) {
+	repository := fakeModuleRepository{module: testServiceModule("module-home", domain.ModuleKindFeature)}
+	searcher := &recordingBranchSearcher{}
+	service := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").WithBranchSearcher(searcher)
+
+	branches, err := service.SearchBranches(context.Background(), "module-home", "ma")
+	if err != nil {
+		t.Fatalf("search branches: %v", err)
+	}
+	if len(branches) != 1 || searcher.query != "ma" || searcher.repository != repository.module.Repository {
+		t.Fatalf("unexpected search: %#v %+v", branches, searcher)
+	}
+	if _, err := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").SearchBranches(context.Background(), "module-home", ""); !errors.Is(err, domain.ErrCodeSourceProviderNotFound) {
+		t.Fatalf("expected provider not found without searcher, got %v", err)
+	}
+}

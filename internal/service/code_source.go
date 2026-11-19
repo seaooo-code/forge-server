@@ -15,6 +15,7 @@ import (
 const (
 	defaultRepositorySearchPageSize = 20
 	maxRepositorySearchPageSize     = 100
+	defaultBranchSearchLimit        = 50
 	maxCodeSourceConnectionNameLen  = 100
 	webhookPathPrefix               = "/api/v1/webhooks/"
 )
@@ -26,6 +27,8 @@ type CodeSourceProvider interface {
 	VerifyConnection(ctx context.Context, conn domain.CodeSourceConnection) (domain.CodeSourceConnectionInfo, error)
 	// SearchRepositories 列出该连接可访问的仓库，返回统一的仓库结构。
 	SearchRepositories(ctx context.Context, conn domain.CodeSourceConnection, input domain.RepositorySearchInput) (domain.RepositoryPage, error)
+	// SearchBranches 按关键词搜索仓库分支名，最多返回 input.Limit 条。
+	SearchBranches(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, input domain.BranchSearchInput) ([]string, error)
 	// CloneCredentials 提供 clone 凭证，worker 通过 GIT_ASKPASS 使用。
 	CloneCredentials(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository) (domain.GitCredentials, error)
 	// ParseWebhook 校验 webhook 来源并解析出统一事件；不需要处理的事件返回 ok=false。
@@ -294,6 +297,25 @@ func (s *CodeSourceService) GetConnectionWebhook(ctx context.Context, id string)
 		webhook.Path += "/" + url.PathEscape(conn.ID)
 	}
 	return webhook, nil
+}
+
+// SearchBranches 通过模块绑定仓库所在的连接搜索分支名，最多返回 defaultBranchSearchLimit 条。
+func (s *CodeSourceService) SearchBranches(ctx context.Context, repository domain.ModuleRepository, query string) ([]string, error) {
+	conn, provider, err := s.openConnection(ctx, repository.ConnectionID, true)
+	if err != nil {
+		return nil, err
+	}
+	branches, err := provider.SearchBranches(ctx, conn, repository, domain.BranchSearchInput{
+		Query: strings.TrimSpace(query),
+		Limit: defaultBranchSearchLimit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if branches == nil {
+		branches = []string{}
+	}
+	return branches, nil
 }
 
 // CloneCredentials 供 worker 获取仓库 clone 凭证。

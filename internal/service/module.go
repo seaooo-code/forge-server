@@ -31,12 +31,18 @@ type ModuleCodeSourceStore interface {
 	GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error)
 }
 
+// ModuleBranchSearcher 按模块绑定的仓库搜索分支，由 CodeSourceService 实现。
+type ModuleBranchSearcher interface {
+	SearchBranches(ctx context.Context, repository domain.ModuleRepository, query string) ([]string, error)
+}
+
 // ModuleBuildAdapterReader 用于在模块选用构建适配器时校验适配器状态和参数定义。
 type ModuleBuildAdapterReader interface {
 	GetBuildAdapter(ctx context.Context, id string) (domain.BuildAdapter, error)
 }
 
 type ModuleService struct {
+	branches              ModuleBranchSearcher
 	buildAdapters         ModuleBuildAdapterReader
 	codeSources           ModuleCodeSourceStore
 	defaultDockerfilePath string
@@ -60,6 +66,24 @@ func NewModuleService(repository ModuleRepository, codeSources ModuleCodeSourceS
 func (s *ModuleService) WithBuildAdapters(reader ModuleBuildAdapterReader) *ModuleService {
 	s.buildAdapters = reader
 	return s
+}
+
+// WithBranchSearcher 注入分支搜索；未注入时搜索分支返回 ErrCodeSourceProviderNotFound。
+func (s *ModuleService) WithBranchSearcher(searcher ModuleBranchSearcher) *ModuleService {
+	s.branches = searcher
+	return s
+}
+
+// SearchBranches 搜索模块绑定仓库的分支，供新增构建时选择分支。
+func (s *ModuleService) SearchBranches(ctx context.Context, id string, query string) ([]string, error) {
+	module, err := s.GetModule(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if s.branches == nil {
+		return nil, domain.ErrCodeSourceProviderNotFound
+	}
+	return s.branches.SearchBranches(ctx, module.Repository, query)
 }
 
 func (s *ModuleService) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {

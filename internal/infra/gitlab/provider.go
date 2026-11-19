@@ -129,6 +129,29 @@ func (p *Provider) SearchRepositories(ctx context.Context, conn domain.CodeSourc
 	}, nil
 }
 
+// SearchBranches 调用 GitLab 分支接口，search 由 GitLab 按名称包含匹配。
+func (p *Provider) SearchBranches(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, input domain.BranchSearchInput) ([]string, error) {
+	projectID := strings.TrimSpace(repo.ExternalRepositoryID)
+	if projectID == "" || input.Limit < 1 {
+		return nil, domain.ErrInvalidCodeSourceInput
+	}
+	query := url.Values{}
+	query.Set("per_page", strconv.Itoa(input.Limit))
+	if search := strings.TrimSpace(input.Query); search != "" {
+		query.Set("search", search)
+	}
+
+	var branches []branchResponse
+	if _, err := p.get(ctx, conn, "/projects/"+url.PathEscape(projectID)+"/repository/branches", query, &branches); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(branches))
+	for _, branch := range branches {
+		names = append(names, branch.Name)
+	}
+	return names, nil
+}
+
 func (p *Provider) CloneCredentials(_ context.Context, conn domain.CodeSourceConnection, _ domain.ModuleRepository) (domain.GitCredentials, error) {
 	if strings.TrimSpace(conn.Credential) == "" {
 		return domain.GitCredentials{}, fmt.Errorf("%w: gitlab access token is required", domain.ErrCodeSourceCredentialInvalid)
@@ -236,6 +259,10 @@ type projectResponse struct {
 	PathWithNamespace string `json:"path_with_namespace"`
 	Visibility        string `json:"visibility"`
 	WebURL            string `json:"web_url"`
+}
+
+type branchResponse struct {
+	Name string `json:"name"`
 }
 
 type pushPayload struct {

@@ -210,6 +210,26 @@ func (c *Client) listInstallationRepositories(ctx context.Context, token string,
 	}, nil
 }
 
+func (c *Client) listRepositoryBranches(ctx context.Context, token string, fullName string, page int, pageSize int) ([]string, bool, error) {
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(page))
+	query.Set("per_page", strconv.Itoa(pageSize))
+	req, err := c.newAPIRequest(ctx, http.MethodGet, "/repos/"+fullName+"/branches", query, nil, token)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var response []branchResponse
+	if err := c.do(req, &response); err != nil {
+		return nil, false, err
+	}
+	names := make([]string, 0, len(response))
+	for _, branch := range response {
+		names = append(names, branch.Name)
+	}
+	return names, hasNextPage(req.Response), nil
+}
+
 type installationToken struct {
 	ExpiresAt time.Time
 	Token     string
@@ -474,6 +494,10 @@ type installationResponse struct {
 type accessTokenResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	Token     string    `json:"token"`
+}
+
+type branchResponse struct {
+	Name string `json:"name"`
 }
 
 type repositoriesResponse struct {

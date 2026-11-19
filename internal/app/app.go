@@ -85,7 +85,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	moduleRepository := postgres.NewModuleRepository(postgresPool)
 	buildAdapterRepository := postgres.NewBuildAdapterRepository(postgresPool)
 	moduleService := service.NewModuleService(moduleRepository, codeSourceRepository, cfg.Worker.Dockerfile).
-		WithBuildAdapters(buildAdapterRepository)
+		WithBuildAdapters(buildAdapterRepository).
+		WithBranchSearcher(codeSourceService)
 	buildAdapterService := service.NewBuildAdapterService(service.BuildAdapterServiceDependencies{
 		Modules:    moduleRepository,
 		Repository: buildAdapterRepository,

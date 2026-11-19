@@ -197,6 +197,23 @@ func TestCodeSourceServiceCloneCredentialsUsesDecryptedConnection(t *testing.T) 
 	}
 }
 
+func TestCodeSourceServiceSearchBranchesTrimsQueryAndLimits(t *testing.T) {
+	provider := &fakeCodeSourceProvider{provider: domain.CodeSourceProviderGitLab}
+	service, store := newTestCodeSourceService(provider)
+	store.put(testGitLabConnection())
+
+	branches, err := service.SearchBranches(context.Background(), domain.ModuleRepository{ConnectionID: "code-source-1", ExternalRepositoryID: "42"}, "  feat  ")
+	if err != nil {
+		t.Fatalf("search branches: %v", err)
+	}
+	if branches == nil || len(branches) != 0 {
+		t.Fatalf("expected empty non-nil branches, got %#v", branches)
+	}
+	if provider.lastBranchInput.Query != "feat" || provider.lastBranchInput.Limit != defaultBranchSearchLimit || provider.lastBranchRepo.ExternalRepositoryID != "42" {
+		t.Fatalf("unexpected provider call: %+v %+v", provider.lastBranchInput, provider.lastBranchRepo)
+	}
+}
+
 func TestCodeSourceServiceConnectionWebhook(t *testing.T) {
 	service, store := newTestCodeSourceService(
 		&fakeCodeSourceProvider{provider: domain.CodeSourceProviderGitLab},
@@ -458,6 +475,7 @@ type fakeCodeSourceProvider struct {
 	info        domain.CodeSourceConnectionInfo
 	verifyErr   error
 	page        domain.RepositoryPage
+	branches    []string
 	credentials domain.GitCredentials
 	event       domain.PushEvent
 	parseOK     bool
@@ -466,6 +484,8 @@ type fakeCodeSourceProvider struct {
 	lastVerified    domain.CodeSourceConnection
 	lastSearchConn  domain.CodeSourceConnection
 	lastSearchInput domain.RepositorySearchInput
+	lastBranchRepo  domain.ModuleRepository
+	lastBranchInput domain.BranchSearchInput
 	lastCloneConn   domain.CodeSourceConnection
 	lastCloneRepo   domain.ModuleRepository
 	lastWebhook     domain.WebhookRequest
@@ -484,6 +504,12 @@ func (p *fakeCodeSourceProvider) SearchRepositories(_ context.Context, conn doma
 	p.lastSearchConn = conn
 	p.lastSearchInput = input
 	return p.page, nil
+}
+
+func (p *fakeCodeSourceProvider) SearchBranches(_ context.Context, _ domain.CodeSourceConnection, repo domain.ModuleRepository, input domain.BranchSearchInput) ([]string, error) {
+	p.lastBranchRepo = repo
+	p.lastBranchInput = input
+	return p.branches, nil
 }
 
 func (p *fakeCodeSourceProvider) CloneCredentials(_ context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository) (domain.GitCredentials, error) {

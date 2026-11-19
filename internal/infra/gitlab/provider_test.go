@@ -129,6 +129,24 @@ func TestSearchRepositoriesMapsProjects(t *testing.T) {
 	}
 }
 
+func TestSearchBranchesUsesProjectBranchesAPI(t *testing.T) {
+	provider := newTestProvider(t, func(r *http.Request) *http.Response {
+		query := r.URL.Query()
+		if r.URL.EscapedPath() != "/sub/api/v4/projects/42/repository/branches" || query.Get("search") != "feat" || query.Get("per_page") != "50" {
+			t.Fatalf("unexpected request %s?%s", r.URL.EscapedPath(), r.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `[{"name":"feature/login"},{"name":"feat-home"}]`, nil)
+	})
+
+	branches, err := provider.SearchBranches(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, domain.BranchSearchInput{Query: " feat ", Limit: 50})
+	if err != nil {
+		t.Fatalf("search branches: %v", err)
+	}
+	if len(branches) != 2 || branches[0] != "feature/login" || branches[1] != "feat-home" {
+		t.Fatalf("unexpected branches: %#v", branches)
+	}
+}
+
 func TestCloneCredentialsUsesOAuth2Username(t *testing.T) {
 	credentials, err := NewProvider(false).CloneCredentials(context.Background(), testConnection(), domain.ModuleRepository{})
 	if err != nil {

@@ -17,9 +17,11 @@ import (
 const (
 	cloneUsername          = "x-access-token"
 	repositoryFetchPerPage = 100
-	signaturePrefix        = "sha256="
-	zeroCommitSHA          = "0000000000000000000000000000000000000000"
-	branchRefPrefix        = "refs/heads/"
+	// branchFetchMaxPages 限制分支遍历页数，单次搜索最多扫描 1000 个分支。
+	branchFetchMaxPages = 10
+	signaturePrefix     = "sha256="
+	zeroCommitSHA       = "0000000000000000000000000000000000000000"
+	branchRefPrefix     = "refs/heads/"
 )
 
 // AppConfigStore 读取保存在数据库中的 GitHub App 配置，由 postgres.CodeSourceRepository 实现。
@@ -123,6 +125,40 @@ func (p *Provider) SearchRepositories(ctx context.Context, conn domain.CodeSourc
 		Repositories: matched[offset:end],
 		HasMore:      len(matched) > end,
 	}, nil
+}
+
+// SearchBranches 分页遍历仓库分支并在本地按名称包含匹配，GitHub 没有按关键词搜索分支的接口。
+func (p *Provider) SearchBranches(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, input domain.BranchSearchInput) ([]string, error) {
+	fullName := strings.Trim(strings.TrimSpace(repo.FullName), "/")
+	if fullName == "" || input.Limit < 1 {
+		return nil, domain.ErrInvalidCodeSourceInput
+	}
+	config, installationID, err := p.connectionContext(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	token, err := p.installationAccessToken(ctx, config, installationID)
+	if err != nil {
+		return nil, err
+	}
+
+	query := strings.ToLower(strings.TrimSpace(input.Query))
+	matched := make([]string, 0, input.Limit)
+	for page := 1; page <= branchFetchMaxPages && len(matched) < input.Limit; page++ {
+		branches, hasMore, err := p.listRepositoryBranches(ctx, token.Token, fullName, page, repositoryFetchPerPage)
+		if err != nil {
+			return nil, err
+		}
+		for _, branch := range branches {
+			if len(matched) < input.Limit && (query == "" || strings.Contains(strings.ToLower(branch), query)) {
+				matched = append(matched, branch)
+			}
+		}
+		if !hasMore {
+			break
+		}
+	}
+	return matched, nil
 }
 
 func (p *Provider) CloneCredentials(ctx context.Context, conn domain.CodeSourceConnection, _ domain.ModuleRepository) (domain.GitCredentials, error) {

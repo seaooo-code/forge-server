@@ -3715,6 +3715,21 @@
         ],
         "type": "object"
       },
+      "ModuleBranchesResponse": {
+        "properties": {
+          "branches": {
+            "description": "Matched branch names.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "branches"
+        ],
+        "type": "object"
+      },
       "ModuleBuildConfig": {
         "properties": {
           "autoBuildBranches": {
@@ -9849,6 +9864,98 @@
           }
         },
         "summary": "Update module",
+        "tags": [
+          "Modules"
+        ]
+      }
+    },
+    "/api/v1/modules/{id}/branches": {
+      "get": {
+        "operationId": "searchModuleBranches",
+        "parameters": [
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch name keyword. Empty lists branches in provider order.",
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "description": "Branch name keyword.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleBranchesResponse"
+                }
+              }
+            },
+            "description": "Matched branch names, at most 50."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source connection is inactive or request is invalid."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot create builds for this module."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module or code source connection not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          }
+        },
+        "summary": "Search branches of the module repository",
         "tags": [
           "Modules"
         ]

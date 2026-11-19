@@ -293,6 +293,12 @@ type fakeModuleService struct {
 	updateErr error
 	deleteErr error
 	lastInput *domain.ModuleInput
+	branches  []string
+	branchErr error
+}
+
+func (s fakeModuleService) SearchBranches(context.Context, string, string) ([]string, error) {
+	return s.branches, s.branchErr
 }
 
 func (s fakeModuleService) ListModules(_ context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
@@ -426,5 +432,48 @@ func testModuleRequest(id string) moduleRequest {
 			AutoPreviewRelease:   true,
 			DockerfilePath:       "apps/home/Dockerfile",
 		},
+	}
+}
+
+func TestSearchModuleBranches(t *testing.T) {
+	e := newAuthorizedTestServer(Dependencies{
+		ModuleService: fakeModuleService{branches: []string{"main", "feature/login"}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/branches?query=feat", nil)
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var response moduleBranchesResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Branches) != 2 || response.Branches[1] != "feature/login" {
+		t.Fatalf("unexpected branches: %#v", response.Branches)
+	}
+}
+
+func TestSearchModuleBranchesMapsErrors(t *testing.T) {
+	cases := []struct {
+		err    error
+		status int
+	}{
+		{domain.ErrModuleNotFound, http.StatusNotFound},
+		{domain.ErrCodeSourceConnectionInactive, http.StatusBadRequest},
+		{domain.ErrCodeSourceAuthorization, http.StatusBadGateway},
+	}
+	for _, tc := range cases {
+		e := newAuthorizedTestServer(Dependencies{ModuleService: fakeModuleService{branchErr: tc.err}})
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/branches", nil)
+		addTestConsoleSession(req)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != tc.status {
+			t.Fatalf("%v: expected status %d, got %d: %s", tc.err, tc.status, rec.Code, rec.Body.String())
+		}
 	}
 }

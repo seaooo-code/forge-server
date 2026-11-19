@@ -124,6 +124,12 @@ type RepositoryPage struct {
 	PageSize int
 }
 
+// BranchSearchInput 按关键词搜索仓库分支，Query 为空时列出全部分支，Limit 是最多返回的分支数。
+type BranchSearchInput struct {
+	Query string
+	Limit int
+}
+
 // ModuleRepository 是模块绑定的外部仓库。
 type ModuleRepository struct {
 	ConnectionID         string

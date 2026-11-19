@@ -224,6 +224,47 @@ func TestSearchRepositoriesFiltersAcrossPages(t *testing.T) {
 	}
 }
 
+func TestSearchBranchesFiltersAcrossPagesUpToLimit(t *testing.T) {
+	provider := newTestProvider(t)
+	pages := map[string]string{
+		"1": `[{"name":"main"},{"name":"feature/Login"}]`,
+		"2": `[{"name":"release"},{"name":"feature/home"},{"name":"feature/pay"}]`,
+	}
+	var requestedPages []string
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/app/installations/1001/access_tokens":
+			return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"token":"installation-token"}`))}, nil
+		case "/repos/acme/home/branches":
+			if r.Header.Get("Authorization") != "Bearer installation-token" {
+				t.Fatalf("unexpected authorization header %q", r.Header.Get("Authorization"))
+			}
+			page := r.URL.Query().Get("page")
+			requestedPages = append(requestedPages, page)
+			header := make(http.Header)
+			if _, ok := pages[fmt.Sprint(atoi(page)+1)]; ok {
+				header.Set("Link", `<https://api.github.test/repos/acme/home/branches?page=next>; rel="next"`)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(pages[page]))}, nil
+		default:
+			t.Fatalf("unexpected github path %s", r.URL.Path)
+			return nil, nil
+		}
+	})}
+	conn := domain.CodeSourceConnection{Provider: domain.CodeSourceProviderGitHub, ExternalID: "1001"}
+
+	branches, err := provider.SearchBranches(context.Background(), conn, domain.ModuleRepository{FullName: "acme/home"}, domain.BranchSearchInput{Query: "FEATURE", Limit: 2})
+	if err != nil {
+		t.Fatalf("search branches: %v", err)
+	}
+	if len(branches) != 2 || branches[0] != "feature/Login" || branches[1] != "feature/home" {
+		t.Fatalf("unexpected branches: %#v", branches)
+	}
+	if len(requestedPages) != 2 {
+		t.Fatalf("expected to stop after page 2, requested %v", requestedPages)
+	}
+}
+
 func TestCloneCredentialsUsesInstallationToken(t *testing.T) {
 	provider := newTestProvider(t)
 	provider.httpClient = &http.Client{Transport: installationTransport(t, nil)}

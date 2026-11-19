@@ -67,6 +67,10 @@ type moduleBuildConfigResponse struct {
 	CIJob                string            `json:"ciJob"`
 }
 
+type moduleBranchesResponse struct {
+	Branches []string `json:"branches"`
+}
+
 type moduleSummaryResponse struct {
 	Common  int `json:"common"`
 	Feature int `json:"feature"`
@@ -116,6 +120,7 @@ func registerModuleRoutes(group *echo.Group, service ModuleService, authService 
 
 	group.GET("/modules", handler.list)
 	group.GET("/modules/:id", handler.detail)
+	group.GET("/modules/:id/branches", handler.branches)
 	group.POST("/modules", handler.create)
 	group.PATCH("/modules/:id", handler.update)
 	group.DELETE("/modules/:id", handler.delete)
@@ -160,6 +165,25 @@ func (h moduleHandler) detail(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, moduleDetailResponse{Module: newModuleResponse(module)})
+}
+
+// branches 供新增构建时搜索分支，权限与创建构建一致（build:create）。
+func (h moduleHandler) branches(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "module service unavailable"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionBuildCreate, domain.AuthorizationResource{ModuleID: c.Param("id")}); err != nil {
+		return err
+	}
+
+	branches, err := h.service.SearchBranches(c.Request().Context(), c.Param("id"), c.QueryParam("query"))
+	if err != nil {
+		if errors.Is(err, domain.ErrModuleNotFound) {
+			return moduleErrorResponse(c, err)
+		}
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, moduleBranchesResponse{Branches: branches})
 }
 
 func (h moduleHandler) create(c echo.Context) error {

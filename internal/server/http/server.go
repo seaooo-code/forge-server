@@ -133,6 +133,7 @@ type ModuleService interface {
 	DeleteModule(ctx context.Context, id string) error
 	GetModule(ctx context.Context, id string) (domain.Module, error)
 	ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error)
+	SearchBranches(ctx context.Context, id string, query string) ([]string, error)
 	UpdateModule(ctx context.Context, id string, input domain.ModuleInput) (domain.Module, error)
 }
 
