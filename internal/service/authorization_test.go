@@ -57,6 +57,41 @@ func TestAuthorizationServiceRoleMatrix(t *testing.T) {
 			action:  domain.ActionBuildCreate,
 			wantErr: nil,
 		},
+		{
+			name:    "developer can manage test plans",
+			appRole: domain.ApplicationMemberRoleDeveloper,
+			action:  domain.ActionTestPlanManage,
+			wantErr: nil,
+		},
+		{
+			name:    "qa can manage test plans",
+			appRole: domain.ApplicationMemberRoleQA,
+			action:  domain.ActionTestPlanManage,
+			wantErr: nil,
+		},
+		{
+			name:    "owner can manage test plans",
+			appRole: domain.ApplicationMemberRoleOwner,
+			action:  domain.ActionTestPlanManage,
+			wantErr: nil,
+		},
+		{
+			name:    "release member cannot manage test plans",
+			appRole: domain.ApplicationMemberRoleRelease,
+			action:  domain.ActionTestPlanManage,
+			wantErr: domain.ErrForbidden,
+		},
+		{
+			name:    "non member cannot manage test plans",
+			action:  domain.ActionTestPlanManage,
+			wantErr: domain.ErrForbidden,
+		},
+		{
+			name:    "platform admin can manage test plans",
+			roles:   []domain.GlobalRole{domain.GlobalRolePlatformAdmin},
+			action:  domain.ActionTestPlanManage,
+			wantErr: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -129,6 +164,10 @@ func (r *fakeAuthorizationRepository) ApplicationIDByBuildID(_ context.Context, 
 }
 
 func (r *fakeAuthorizationRepository) ApplicationIDByReleaseID(context.Context, string) (string, error) {
+	return r.applicationID, nil
+}
+
+func (r *fakeAuthorizationRepository) ApplicationIDByTestPlanID(context.Context, string) (string, error) {
 	return r.applicationID, nil
 }
 

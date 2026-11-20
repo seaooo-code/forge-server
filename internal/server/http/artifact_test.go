@@ -91,22 +91,20 @@ func TestGetArtifactManifest(t *testing.T) {
 			Environment:    domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
 			Platform:       domain.PlatformAndroid,
 			RuntimeVersion: "1.0.0",
-			Identifier:     "staff-1",
+			UserID:         "1001",
 			Modules: []domain.ArtifactModuleManifest{
 				{
-					ID:             "module-profile",
-					Name:           "profile",
-					Kind:           domain.ModuleKindFeature,
-					ReleaseID:      "018f4d7a-0a6c-789b-9c12-36a4dfd9d001",
-					ReleaseType:    domain.ReleaseTypeGray,
-					GrayStrategy:   domain.ReleaseGrayStrategyTargeted,
-					GrayPercentage: 0,
-					Identifier:     "staff-1",
-					BuildRecordID:  "018f4d7a-0a6c-789b-9c12-36a4dfd9c001",
-					Branch:         "feature/login",
-					CommitSHA:      "abc123",
-					ArtifactKey:    "rn-bundles/seaooo/profile/QA/build-1",
-					ManifestKey:    "rn-bundles/seaooo/profile/QA/build-1/manifest.json",
+					ID:            "module-profile",
+					Name:          "profile",
+					Kind:          domain.ModuleKindFeature,
+					Source:        domain.ArtifactSourceTestPlan,
+					TestPlanID:    "018f4d7a-0a6c-789b-9c12-36a4dfd9e001",
+					TestPlanName:  "登录改版",
+					BuildRecordID: "018f4d7a-0a6c-789b-9c12-36a4dfd9c001",
+					Branch:        "feature/login",
+					CommitSHA:     "abc123",
+					ArtifactKey:   "rn-bundles/seaooo/profile/QA/build-1",
+					ManifestKey:   "rn-bundles/seaooo/profile/QA/build-1/manifest.json",
 					Files: []domain.ArtifactManifestResolvedFile{
 						{
 							Path:        "assets/icon.png",
@@ -126,7 +124,7 @@ func TestGetArtifactManifest(t *testing.T) {
 	}
 	e := New(config.Config{}, testArtifactDependencies(service))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?platform=android&runtimeVersion=1.0.0&identifier=staff-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?platform=android&runtimeVersion=1.0.0&userId=1001", nil)
 	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
@@ -142,7 +140,7 @@ func TestGetArtifactManifest(t *testing.T) {
 	}
 	if response.Application.Slug != "seaooo" ||
 		response.Environment.ID != "qa" ||
-		response.Identifier != "staff-1" ||
+		response.UserID != "1001" ||
 		len(response.Modules) != 1 ||
 		len(response.MissingModules) != 1 ||
 		response.Modules[0].Files[0].URL != "https://cdn.example.com/assets/icon.png" {
@@ -153,11 +151,14 @@ func TestGetArtifactManifest(t *testing.T) {
 		response.MissingModules[0].Reason != "platform_unavailable" {
 		t.Fatalf("expected runtime echo and build source fields, got %#v", response)
 	}
+	if module := response.Modules[0]; module.Source != "testPlan" || module.TestPlan == nil || module.TestPlan.Name != "登录改版" || module.ReleaseID != "" {
+		t.Fatalf("expected test plan source on module, got %#v", module)
+	}
 	file := response.Modules[0].Files[0]
 	if file.SHA256 != "hash" || len(file.Digests) != 2 || file.Digests["sha256"] != "hash" || file.Digests["md5"] != "md5-hash" {
 		t.Fatalf("expected sha256 and digests on manifest file, got %#v", file)
 	}
-	if service.lastManifestInput.Identifier != "staff-1" ||
+	if service.lastManifestInput.UserID != "1001" ||
 		service.lastManifestInput.Platform != "android" ||
 		service.lastManifestInput.RuntimeVersion != "1.0.0" {
 		t.Fatalf("expected query params to be passed to service, got %+v", service.lastManifestInput)

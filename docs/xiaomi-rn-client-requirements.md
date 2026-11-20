@@ -5,7 +5,7 @@
 Forge 是 RN Bundle 构建与交付平台，部署在公司内网，第一阶段只服务测试环境。它和晴空塔的主要区别有三点：
 
 - push 代码后自动构建；
-- 每个分支是一个"通道"，测试同学指定分支名就能拉到这个分支的最新包；
+- 一个需求一张「提测单」：研发选好要测的模块分支，测试同学把自己的测试账号加进去，App 用这个账号请求时就拿到提测单里的包，研发修复后自动换成新构建；
 - 不需要人工打包、发版。
 
 线上包继续走晴空塔，本需求**只改测试包**（debug / 测试构建变体），release 构建中不能出现 Forge 相关的入口和令牌。
@@ -17,20 +17,18 @@ Forge 是 RN Bundle 构建与交付平台，部署在公司内网，第一阶段
 ### R1 包源切换（新功能，必做）
 
 - 在测试包的调试菜单里新增一个「RN 包源」选项，可选：内置包、晴空塔（现有逻辑）、Forge。
-- 选择 Forge 后，需要填写或选择：
-  - 环境：先固定为 `test`，选项从配置读取；
-  - 通道：填分支名，例如 `feature/login`，可以留空。留空时拉取该环境的默认发布。
-- 支持扫码填入。扫描 Forge 控制台生成的二维码后，自动填好环境和通道。二维码内容格式由双方另行约定，Forge 这边负责在构建详情页生成二维码。
+- 选择 Forge 后，环境先固定为 `test`，选项从配置读取。不需要填分支或通道：要测哪个需求的包，由测试同学在 Forge 控制台把自己的测试账号加入对应的提测单。
+- 调试菜单里显示当前登录账号的 ID（即请求里的 `userId`），并提供复制按钮，方便测试同学把账号登记到 Forge 的「我的测试账号」。
 - 切换后的设置需要持久化，重启 App 后依然生效。调试菜单里要能一键恢复成默认包源。
 
 ### R2 拉包协议（必做）
 
-- 接口：`GET /api/v1/artifacts/applications/{appSlug}/environments/{env}/manifest?platform=&runtimeVersion=&identifier=`
+- 接口：`GET /api/v1/artifacts/applications/{appSlug}/environments/{env}/manifest?platform=&runtimeVersion=&userId=`
 - 请求头：`Authorization: Bearer {访问令牌}`。令牌由 Forge 生成，只内置在测试构建中。
 - 参数：
   - `platform`：`android` 或 `ios`。
   - `runtimeVersion`：按 `{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}` 拼接，例如 `725-n1-m24`。三个值分别取自客户端的 RN 引擎版本、`nativeApiLevel`，以及当前 common 包配置里的 `moduleIdMapVersion`。
-  - `identifier`：通道名，也就是 R1 里填的分支名，需要做 URL 编码。
+  - `userId`：当前登录账号的 ID，未登录时不传。Forge 按它匹配提测单成员和比例灰度分桶；不传时只返回全量发布。
 - 一次请求会返回该应用下所有模块的包，包括 common 包和业务包。不需要像晴空塔那样分两步请求。
 
 ### R3 下载与校验（必做，改造现有逻辑）
@@ -51,7 +49,7 @@ Forge 是 RN Bundle 构建与交付平台，部署在公司内网，第一阶段
 - 响应里的 `missingModules` 会列出没有可用包的模块，原因有三种：
   - `no_release_for_runtime`：这个 runtimeVersion 没有发布；
   - `platform_unavailable`：构建产物里没有这个平台；
-  - `release not found`：这个通道没有发布。
+  - `release not found`：这个 runtimeVersion 下有发布，但都没有命中本次请求（例如只有未分到的比例灰度）。
 - 处理规则：
   - common 包缺失：整组回退到内置包，并提示"Forge 上没有与当前 App 兼容的 common 包"。
   - 只有业务包缺失：这些模块回退到内置包，其余模块照常使用 Forge 包。
@@ -60,6 +58,10 @@ Forge 是 RN Bundle 构建与交付平台，部署在公司内网，第一阶段
 ### R6 包信息展示（必做）
 
 在调试菜单里展示当前每个模块的来源，以及 `branch`、`commitSha`（短 SHA）、`buildRecordId`、`runtimeVersion`，方便提 bug 时附上。最好提供"一键复制"。
+
+模块的来源取响应里的 `source`：`testPlan`（命中提测单，`testPlan.name` 是提测单名称，要一起展示）、`percentage`（比例灰度）、`full`（全量）。
+
+调试菜单提供「刷新」按钮重新请求 manifest；如果客户端缓存了 manifest，App 回到前台时也要重新请求，否则研发在提测单里换了构建，测试要等缓存过期才能拿到。
 
 ### R7 网络（约束）
 
@@ -73,8 +75,9 @@ Forge 和对象存储都只能在内网访问，测试设备需要连公司 Wi-F
 
 ## 验收
 
-- 测试包切到 Forge、填入分支名后，冷启动能加载到该分支最新构建的包。调试菜单里展示的 commit 与 GitLab 一致。
-- 同一分支推送新提交并构建完成后，点「立即检查更新」能加载到新包，只重新下载有变化的文件。
+- 测试包切到 Forge，测试账号加入提测单后，冷启动能加载到提测单里的构建，调试菜单显示来源为提测单及其名称，展示的 commit 与 GitLab 一致。
+- 提测单里跟随分支的条目在分支推送新提交并构建完成后，点「刷新」能加载到新包，只重新下载有变化的文件。
+- 账号退出提测单（或提测单关闭、过期）后刷新，回到全量版本。
 - 篡改任意一个文件，导致 sha256 不一致时，不会切换，当前包保持可用。
-- 换用 `runtimeVersion` 不匹配的 App，或者请求没有发布的通道时，按 R5 正确回退并提示。
+- 换用 `runtimeVersion` 不匹配的 App，或者模块没有可用发布时，按 R5 正确回退并提示。
 - release 构建中没有 Forge 入口，也没有内置令牌。

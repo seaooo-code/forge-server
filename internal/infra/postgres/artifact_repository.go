@@ -50,16 +50,21 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 		return domain.ArtifactManifestSource{}, err
 	}
 
+	// 每个模块按「提测单 > 比例灰度 > 全量」取第一个命中的构建，规则见 docs/test-plans.md 第 4 节。
+	// 提测单：userId 是成员、提测单进行中且所在环境开启了提测单，条目构建的运行时版本与请求一致。
 	rows, err := r.pool.Query(ctx, `
 		select
 			m.id,
 			m.name,
 			m.kind,
+			coalesce(plan.test_plan_id, ''),
+			coalesce(plan.test_plan_name, ''),
+			coalesce(plan.matches, 0),
+			coalesce(plan.build_record_id, ''),
 			coalesce(selected.release_id::text, ''),
 			coalesce(selected.release_type, ''),
 			coalesce(selected.gray_strategy, ''),
 			coalesce(selected.gray_percentage, 0),
-			coalesce(selected.identifier, ''),
 			coalesce(selected.build_record_id::text, ''),
 			exists(
 				select 1
@@ -67,57 +72,66 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 				join release_records runtime_rr on runtime_rr.id = runtime_route.release_id
 				where runtime_route.module_id = m.id
 					and runtime_route.environment_code = $2
-					and runtime_route.runtime_version = $5
+					and runtime_route.runtime_version = $4
+					and runtime_route.route_type in ('default', 'percentage')
 					and runtime_route.status = 'active'
 					and runtime_rr.status = 'active'
 			) as has_runtime_route
 		from modules m
 		left join lateral (
 			select
+				tp.id::text as test_plan_id,
+				tp.name as test_plan_name,
+				item.build_record_id::text as build_record_id,
+				count(*) over () as matches
+			from test_plan_items item
+			join test_plans tp on tp.id = item.test_plan_id
+			join test_plan_members member on member.test_plan_id = tp.id and member.user_id = $3
+			join environments env on env.code = tp.environment_code
+			join build_records plan_build on plan_build.id = item.build_record_id
+			where $3 <> ''
+				and item.module_id = m.id
+				and tp.environment_code = $2
+				and tp.status = 'open'
+				and tp.expires_at > now()
+				and env.allow_test_plans
+				and plan_build.runtime_version = $4
+			order by item.updated_at desc
+			limit 1
+		) plan on true
+		left join lateral (
+			select
 				rr.id as release_id,
 				rr.release_type,
 				rr.gray_strategy,
 				rr.gray_percentage,
-				route.identifier,
 				rr.build_record_id
 			from release_routes route
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = m.id
 				and route.environment_code = $2
-				and route.runtime_version = $5
+				and route.runtime_version = $4
 				and route.status = 'active'
 				and rr.status = 'active'
 				and (
 					(
 						$3 <> ''
-						and route.route_type = 'identifier'
-						and route.identifier = $3
-						and rr.release_type = 'gray'
-						and rr.gray_strategy = 'targeted'
-						and rr.expires_at > now()
-					)
-					or (
-						$4 <> ''
 						and route.route_type = 'percentage'
 						and rr.release_type = 'gray'
 						and rr.gray_strategy = 'percentage'
 						and rr.gray_percentage > 0
-						and (('x' || substr(md5($4 || ':' || rr.id::text), 1, 7))::bit(28)::int % 100) < rr.gray_percentage
+						and (('x' || substr(md5($3 || ':' || rr.id::text), 1, 7))::bit(28)::int % 100) < rr.gray_percentage
 					)
 					or route.route_type = 'default'
 				)
 			order by
-				case
-					when $3 <> '' and route.route_type = 'identifier' and route.identifier = $3 then 0
-					when $4 <> '' and route.route_type = 'percentage' then 1
-					else 2
-				end,
+				case when route.route_type = 'percentage' then 0 else 1 end,
 				route.created_at desc
 			limit 1
 		) selected on true
 		where m.application_id = $1
 		order by m.sort_order asc, m.created_at asc
-	`, source.Application.ID, input.Environment, input.Identifier, input.UserID, input.RuntimeVersion)
+	`, source.Application.ID, input.Environment, input.UserID, input.RuntimeVersion)
 	if err != nil {
 		return domain.ArtifactManifestSource{}, fmt.Errorf("query artifact manifest modules: %w", err)
 	}
@@ -128,19 +142,31 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 		var module domain.ArtifactModuleReleaseSource
 		var releaseType string
 		var grayStrategy string
+		var planBuildRecordID string
 		if err := rows.Scan(
 			&module.ID,
 			&module.Name,
 			&module.Kind,
+			&module.TestPlanID,
+			&module.TestPlanName,
+			&module.TestPlanMatches,
+			&planBuildRecordID,
 			&module.ReleaseID,
 			&releaseType,
 			&grayStrategy,
 			&module.GrayPercentage,
-			&module.Identifier,
 			&module.BuildRecordID,
 			&module.HasRuntimeRoute,
 		); err != nil {
 			return domain.ArtifactManifestSource{}, fmt.Errorf("scan artifact manifest module: %w", err)
+		}
+		if module.TestPlanID != "" {
+			// 命中提测单时不返回发布信息，避免客户端误以为这是一次发布。
+			module.BuildRecordID = planBuildRecordID
+			module.ReleaseID = ""
+			releaseType = ""
+			grayStrategy = ""
+			module.GrayPercentage = 0
 		}
 		module.ReleaseType = domain.ReleaseType(releaseType)
 		module.GrayStrategy = domain.ReleaseGrayStrategy(grayStrategy)

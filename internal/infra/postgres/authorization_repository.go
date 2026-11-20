@@ -6,6 +6,7 @@ import (
 
 	"forge-server/internal/domain"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -171,6 +172,20 @@ func (r *AuthorizationRepository) ApplicationIDByReleaseID(ctx context.Context, 
 			return "", domain.ErrReleaseNotFound
 		}
 		return "", fmt.Errorf("query release application: %w", err)
+	}
+	return id, nil
+}
+
+func (r *AuthorizationRepository) ApplicationIDByTestPlanID(ctx context.Context, testPlanID string) (string, error) {
+	if _, err := uuid.Parse(testPlanID); err != nil {
+		return "", domain.ErrTestPlanNotFound
+	}
+	var id string
+	if err := r.pool.QueryRow(ctx, `select application_id from test_plans where id = $1`, testPlanID).Scan(&id); err != nil {
+		if err == pgx.ErrNoRows {
+			return "", domain.ErrTestPlanNotFound
+		}
+		return "", fmt.Errorf("query test plan application: %w", err)
 	}
 	return id, nil
 }

@@ -30,6 +30,7 @@ func (r *EnvironmentRepository) ListEnvironments(ctx context.Context) ([]domain.
 			e.description,
 			coalesce(e.storage_configuration_id, '') as storage_configuration_id,
 			coalesce(s.name, '') as storage_configuration_name,
+			e.allow_test_plans,
 			e.updated_at
 		from environments e
 		left join storage_configurations s on s.id = e.storage_configuration_id
@@ -66,6 +67,7 @@ func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, input dom
 				tone,
 				description,
 				storage_configuration_id,
+				allow_test_plans,
 				sort_order
 			) values (
 				$1,
@@ -74,6 +76,7 @@ func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, input dom
 				$4,
 				$5,
 				$6,
+				$7,
 				coalesce((select max(sort_order) + 10 from environments), 10)
 			)
 			returning
@@ -83,6 +86,7 @@ func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, input dom
 				tone,
 				description,
 				storage_configuration_id,
+				allow_test_plans,
 				updated_at
 		)
 		select
@@ -93,6 +97,7 @@ func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, input dom
 			i.description,
 			coalesce(i.storage_configuration_id, '') as storage_configuration_id,
 			coalesce(s.name, '') as storage_configuration_name,
+			i.allow_test_plans,
 			i.updated_at
 		from inserted i
 		left join storage_configurations s on s.id = i.storage_configuration_id
@@ -103,6 +108,7 @@ func (r *EnvironmentRepository) CreateEnvironment(ctx context.Context, input dom
 		input.Tone,
 		input.Description,
 		input.StorageConfigurationID,
+		input.AllowTestPlans,
 	))
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -126,6 +132,7 @@ func (r *EnvironmentRepository) GetEnvironmentDetail(ctx context.Context, code s
 			e.description,
 			coalesce(e.storage_configuration_id, '') as storage_configuration_id,
 			coalesce(s.name, '') as storage_configuration_name,
+			e.allow_test_plans,
 			e.updated_at
 		from environments e
 		left join storage_configurations s on s.id = e.storage_configuration_id
@@ -151,6 +158,7 @@ func (r *EnvironmentRepository) UpdateEnvironment(ctx context.Context, code stri
 				tone = $4,
 				description = $5,
 				storage_configuration_id = $6,
+				allow_test_plans = $7,
 				updated_at = now()
 			where code = $1
 			returning
@@ -160,6 +168,7 @@ func (r *EnvironmentRepository) UpdateEnvironment(ctx context.Context, code stri
 				tone,
 				description,
 				storage_configuration_id,
+				allow_test_plans,
 				updated_at
 		)
 		select
@@ -170,6 +179,7 @@ func (r *EnvironmentRepository) UpdateEnvironment(ctx context.Context, code stri
 			u.description,
 			coalesce(u.storage_configuration_id, '') as storage_configuration_id,
 			coalesce(s.name, '') as storage_configuration_name,
+			u.allow_test_plans,
 			u.updated_at
 		from updated u
 		left join storage_configurations s on s.id = u.storage_configuration_id
@@ -180,6 +190,7 @@ func (r *EnvironmentRepository) UpdateEnvironment(ctx context.Context, code stri
 		input.Tone,
 		input.Description,
 		input.StorageConfigurationID,
+		input.AllowTestPlans,
 	))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -210,6 +221,7 @@ func scanEnvironment(row environmentRow) (domain.Environment, error) {
 		&environment.Description,
 		&environment.StorageConfigurationID,
 		&environment.StorageConfigurationName,
+		&environment.AllowTestPlans,
 		&environment.UpdatedAt,
 	); err != nil {
 		return domain.Environment{}, fmt.Errorf("scan environment: %w", err)

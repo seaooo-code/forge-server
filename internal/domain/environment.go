@@ -25,7 +25,9 @@ type Environment struct {
 	Description              string
 	StorageConfigurationID   string
 	StorageConfigurationName string
-	UpdatedAt                time.Time
+	// AllowTestPlans 表示该环境里的提测单会在 manifest 解析中生效，默认关闭，见 docs/test-plans.md。
+	AllowTestPlans bool
+	UpdatedAt      time.Time
 }
 
 type EnvironmentInput struct {
@@ -35,6 +37,7 @@ type EnvironmentInput struct {
 	Tone                   string
 	Description            string
 	StorageConfigurationID string
+	AllowTestPlans         bool
 }
 
 func (s EnvironmentStatus) Label() string {

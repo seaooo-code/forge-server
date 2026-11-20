@@ -20,7 +20,7 @@ type artifactManifestResponse struct {
 	Environment    artifactEnvironmentResponse      `json:"environment"`
 	Platform       string                           `json:"platform"`
 	RuntimeVersion string                           `json:"runtimeVersion"`
-	Identifier     string                           `json:"identifier"`
+	UserID         string                           `json:"userId"`
 	Modules        []artifactModuleManifestResponse `json:"modules"`
 	MissingModules []artifactMissingModuleResponse  `json:"missingModules"`
 }
@@ -44,7 +44,8 @@ type artifactModuleManifestResponse struct {
 	ReleaseType    string                         `json:"releaseType"`
 	GrayStrategy   string                         `json:"grayStrategy"`
 	GrayPercentage int                            `json:"grayPercentage"`
-	Identifier     string                         `json:"identifier"`
+	Source         string                         `json:"source"`
+	TestPlan       *artifactTestPlanResponse      `json:"testPlan"`
 	BuildRecordID  string                         `json:"buildRecordId"`
 	Branch         string                         `json:"branch"`
 	CommitSHA      string                         `json:"commitSha"`
@@ -61,6 +62,11 @@ type artifactManifestFileResponse struct {
 	SHA256      string `json:"sha256"`
 	// Digests 键为算法名（sha256、md5），由 FORGE_ARTIFACT_DIGESTS 决定。
 	Digests map[string]string `json:"digests"`
+}
+
+type artifactTestPlanResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type artifactMissingModuleResponse struct {
@@ -123,7 +129,6 @@ func (h artifactHandler) manifest(c echo.Context) error {
 		Environment:     c.Param("environment"),
 		Platform:        c.QueryParam("platform"),
 		RuntimeVersion:  c.QueryParam("runtimeVersion"),
-		Identifier:      c.QueryParam("identifier"),
 		UserID:          c.QueryParam("userId"),
 	})
 	if err != nil {
@@ -159,7 +164,7 @@ func newArtifactManifestResponse(manifest domain.ArtifactApplicationManifest) ar
 		},
 		Platform:       manifest.Platform,
 		RuntimeVersion: manifest.RuntimeVersion,
-		Identifier:     manifest.Identifier,
+		UserID:         manifest.UserID,
 		Modules:        newArtifactModuleManifestResponses(manifest.Modules),
 		MissingModules: newArtifactMissingModuleResponses(manifest.MissingModules),
 	}
@@ -168,6 +173,10 @@ func newArtifactManifestResponse(manifest domain.ArtifactApplicationManifest) ar
 func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest) []artifactModuleManifestResponse {
 	responses := make([]artifactModuleManifestResponse, 0, len(modules))
 	for _, module := range modules {
+		var testPlan *artifactTestPlanResponse
+		if module.TestPlanID != "" {
+			testPlan = &artifactTestPlanResponse{ID: module.TestPlanID, Name: module.TestPlanName}
+		}
 		responses = append(responses, artifactModuleManifestResponse{
 			ID:             module.ID,
 			Name:           module.Name,
@@ -176,7 +185,8 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 			ReleaseType:    string(module.ReleaseType),
 			GrayStrategy:   string(module.GrayStrategy),
 			GrayPercentage: module.GrayPercentage,
-			Identifier:     module.Identifier,
+			Source:         string(module.Source),
+			TestPlan:       testPlan,
 			BuildRecordID:  module.BuildRecordID,
 			Branch:         module.Branch,
 			CommitSHA:      module.CommitSHA,

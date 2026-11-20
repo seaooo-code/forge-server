@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"testing"
-	"time"
 
 	"forge-server/internal/domain"
 )
@@ -136,73 +135,35 @@ func TestBuildTriggerReturnsErrorOnlyWhenAllMatchedModulesFail(t *testing.T) {
 	}
 }
 
-func TestBuildTriggerCreatesPreviewReleaseAfterWebhookBuild(t *testing.T) {
-	module := testAutoBuildModule("module-feature", []string{"feature/*"}, "qa")
-	module.BuildConfig.AutoPreviewRelease = true
-	module.BuildConfig.AutoPreviewTTLHours = 48
-	modules := &fakeAutoBuildModuleRepository{modules: []domain.Module{module}}
-	releases := &fakePreviewReleaseCreator{}
-	trigger := newTestBuildTriggerService(modules, newFakeWebhookBuildRepository(), releases)
-	// 预览有效期由发布服务按真实时间校验，这里不能写死日期，否则测试会随日历过期。
-	now := time.Now().UTC().Truncate(time.Second)
-	trigger.now = func() time.Time { return now }
-
-	trigger.HandleBuildSucceeded(context.Background(), testSucceededWebhookBuild())
-
-	if len(releases.inputs) != 1 {
-		t.Fatalf("expected one preview release, got %d", len(releases.inputs))
-	}
-	input := releases.inputs[0]
-	if input.BuildRecordID != "build-1" ||
-		input.ReleaseType != domain.ReleaseTypeGray ||
-		input.GrayStrategy != domain.ReleaseGrayStrategyTargeted ||
-		input.Identifier != "feature/login" ||
-		input.GrayPercentage != 0 ||
-		input.CreatedByUserID != "user-owner" ||
-		input.ExpiresAt == nil || !input.ExpiresAt.Equal(now.Add(48*time.Hour)) {
-		t.Fatalf("unexpected preview release input: %+v", input)
-	}
-	// 预览发布参数必须能通过发布服务的校验。
-	if _, err := validateReleaseCreateInput(input); err != nil {
-		t.Fatalf("preview release input should be valid: %v", err)
-	}
-}
-
-func TestBuildTriggerSkipsPreviewReleaseWhenNotApplicable(t *testing.T) {
-	enabled := testAutoBuildModule("module-feature", []string{"feature/*"}, "qa")
-	enabled.BuildConfig.AutoPreviewRelease = true
-	disabled := testAutoBuildModule("module-feature", []string{"feature/*"}, "qa")
+func TestBuildTriggerFollowsBuildInTestPlans(t *testing.T) {
+	followers := &fakeTestPlanFollower{planIDs: []string{"plan-1"}}
+	trigger := newTestBuildTriggerService(&fakeAutoBuildModuleRepository{}, newFakeWebhookBuildRepository(), followers)
 
 	manual := testSucceededWebhookBuild()
 	manual.TriggerType = domain.BuildTriggerTypeManual
-	noCreator := testSucceededWebhookBuild()
-	noCreator.CreatedByUserID = ""
-	for name, tc := range map[string]struct {
-		module domain.Module
-		record domain.BuildRecord
-	}{
-		"manual build":     {module: enabled, record: manual},
-		"preview disabled": {module: disabled, record: testSucceededWebhookBuild()},
-		"build no creator": {module: enabled, record: noCreator},
-	} {
-		releases := &fakePreviewReleaseCreator{}
-		trigger := newTestBuildTriggerService(&fakeAutoBuildModuleRepository{modules: []domain.Module{tc.module}}, newFakeWebhookBuildRepository(), releases)
-		trigger.HandleBuildSucceeded(context.Background(), tc.record)
-		if len(releases.inputs) != 0 {
-			t.Fatalf("%s: expected no preview release, got %+v", name, releases.inputs)
-		}
+	trigger.HandleBuildSucceeded(context.Background(), manual)
+
+	if len(followers.records) != 1 || followers.records[0].ID != "build-1" || followers.records[0].Branch != "feature/login" {
+		t.Fatalf("expected the succeeded build to be followed regardless of trigger type, got %+v", followers.records)
 	}
 }
 
-func TestBuildServiceCompleteInvokesSucceededHookAndIgnoresPreviewFailure(t *testing.T) {
-	module := testAutoBuildModule("module-feature", []string{"feature/*"}, "qa")
-	module.BuildConfig.AutoPreviewRelease = true
-	releases := &fakePreviewReleaseCreator{err: domain.ErrInvalidReleaseInput}
-	trigger := newTestBuildTriggerService(
-		&fakeAutoBuildModuleRepository{modules: []domain.Module{module}},
-		newFakeWebhookBuildRepository(),
-		releases,
-	)
+func TestBuildTriggerSkipsFollowWithoutBranch(t *testing.T) {
+	followers := &fakeTestPlanFollower{}
+	trigger := newTestBuildTriggerService(&fakeAutoBuildModuleRepository{}, newFakeWebhookBuildRepository(), followers)
+
+	record := testSucceededWebhookBuild()
+	record.Branch = " "
+	trigger.HandleBuildSucceeded(context.Background(), record)
+
+	if len(followers.records) != 0 {
+		t.Fatalf("expected no follow for a build without branch, got %+v", followers.records)
+	}
+}
+
+func TestBuildServiceCompleteInvokesSucceededHookAndIgnoresFollowFailure(t *testing.T) {
+	followers := &fakeTestPlanFollower{err: errors.New("database unavailable")}
+	trigger := newTestBuildTriggerService(&fakeAutoBuildModuleRepository{}, newFakeWebhookBuildRepository(), followers)
 	repository := &succeededBuildRepository{record: testSucceededWebhookBuild()}
 	service := NewBuildService(repository).WithSucceededHook(trigger)
 
@@ -212,19 +173,19 @@ func TestBuildServiceCompleteInvokesSucceededHookAndIgnoresPreviewFailure(t *tes
 		Platforms:      []string{domain.PlatformAndroid},
 	})
 	if err != nil || record.Status != domain.BuildStatusSucceeded {
-		t.Fatalf("expected build completion to succeed despite preview failure, got %+v, %v", record, err)
+		t.Fatalf("expected build completion to succeed despite follow failure, got %+v, %v", record, err)
 	}
-	if len(releases.inputs) != 1 {
-		t.Fatalf("expected succeeded hook to attempt preview release, got %d", len(releases.inputs))
+	if len(followers.records) != 1 {
+		t.Fatalf("expected succeeded hook to attempt follow, got %d", len(followers.records))
 	}
 }
 
-func newTestBuildTriggerService(modules AutoBuildModuleRepository, builds WebhookBuildRepository, releases PreviewReleaseCreator) *BuildTriggerService {
+func newTestBuildTriggerService(modules AutoBuildModuleRepository, builds WebhookBuildRepository, testPlans TestPlanBuildFollower) *BuildTriggerService {
 	return NewBuildTriggerService(BuildTriggerServiceDependencies{
-		Builds:   builds,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Modules:  modules,
-		Releases: releases,
+		Builds:    builds,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Modules:   modules,
+		TestPlans: testPlans,
 	})
 }
 
@@ -316,17 +277,15 @@ func (r *fakeWebhookBuildRepository) CreateBuildRecordUnlessActive(_ context.Con
 	return domain.BuildRecord{ID: id}, true, nil
 }
 
-type fakePreviewReleaseCreator struct {
-	err    error
-	inputs []domain.ReleaseCreateInput
+type fakeTestPlanFollower struct {
+	err     error
+	planIDs []string
+	records []domain.BuildRecord
 }
 
-func (c *fakePreviewReleaseCreator) CreateRelease(_ context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
-	c.inputs = append(c.inputs, input)
-	if c.err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, c.err
-	}
-	return domain.ReleaseRecord{ID: "release-1"}, domain.ReleaseRoute{ID: "route-1"}, nil
+func (f *fakeTestPlanFollower) FollowBuild(_ context.Context, record domain.BuildRecord) ([]string, error) {
+	f.records = append(f.records, record)
+	return f.planIDs, f.err
 }
 
 type succeededBuildRepository struct {

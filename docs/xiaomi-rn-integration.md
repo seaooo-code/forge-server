@@ -109,13 +109,13 @@ worker 部署在 DevX/Matrix 容器里时没有 Docker，YRN 模块可以改用 
 | `buildnum` / `maketime` / `pack_version` | `buildRecordId`、构建号、`commitSha`、`branch` | 客户端用 `buildRecordId` 判断是否有新版本 |
 | `updateType` / `residentMemory` | 不提供 | 测试源由客户端固定生效方式 |
 | 一次请求拉取所有 `moduleNames` | 一次请求返回应用下所有模块 | |
-| 灰度 uid / 白名单 | 定向发布的 `identifier`（分支名） | 测试场景下用"通道"代替人群灰度 |
+| 灰度 uid / 白名单 | 提测单成员 `userId` 与比例灰度 | 测试场景下由提测单决定成员拿哪个分支的构建 |
 
 ## 7. 客户端拉包
 
 ```
 GET {forgeBaseUrl}/api/v1/artifacts/applications/{appSlug}/environments/{env}/manifest
-    ?platform={android|ios}&runtimeVersion={第 4 节规则}&identifier={分支名，可选}
+    ?platform={android|ios}&runtimeVersion={第 4 节规则}&userId={登录账号 ID，可选}
 Authorization: Bearer {访问令牌}
 ```
 

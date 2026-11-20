@@ -97,6 +97,10 @@
             "description": "Whether current user can manage this application members.",
             "type": "boolean"
           },
+          "canManageTestPlans": {
+            "description": "Whether current user can create and manage test plans for this application.",
+            "type": "boolean"
+          },
           "canRelease": {
             "description": "Whether current user can create or rollback releases for this application.",
             "type": "boolean"
@@ -111,7 +115,8 @@
           "canManageMembers",
           "canUpdateStatus",
           "canCreateBuild",
-          "canRelease"
+          "canRelease",
+          "canManageTestPlans"
         ],
         "type": "object"
       },
@@ -1129,17 +1134,12 @@
             "description": "Matched gray strategy.",
             "enum": [
               "",
-              "targeted",
               "percentage"
             ],
             "type": "string"
           },
           "id": {
             "description": "Module id.",
-            "type": "string"
-          },
-          "identifier": {
-            "description": "Matched targeting identifier for targeted gray releases.",
             "type": "string"
           },
           "kind": {
@@ -1159,16 +1159,35 @@
             "type": "string"
           },
           "releaseId": {
-            "description": "Matched release UUID.",
+            "description": "Matched release UUID. Empty when the module came from a test plan.",
             "type": "string"
           },
           "releaseType": {
-            "description": "Matched release type.",
+            "description": "Matched release type. Empty when the module came from a test plan.",
             "enum": [
+              "",
               "full",
               "gray"
             ],
             "type": "string"
+          },
+          "source": {
+            "description": "Which rule matched this module.",
+            "enum": [
+              "testPlan",
+              "percentage",
+              "full"
+            ],
+            "type": "string"
+          },
+          "testPlan": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TestPlanRef"
+              }
+            ],
+            "description": "Matched test plan when source is testPlan, otherwise null.",
+            "nullable": true
           }
         },
         "required": [
@@ -1177,6 +1196,8 @@
           "kind",
           "releaseId",
           "releaseType",
+          "source",
+          "testPlan",
           "buildRecordId",
           "branch",
           "commitSha",
@@ -1193,10 +1214,6 @@
           },
           "environment": {
             "$ref": "#/components/schemas/ArtifactManifestEnvironment"
-          },
-          "identifier": {
-            "description": "Requested targeting identifier.",
-            "type": "string"
           },
           "missingModules": {
             "items": {
@@ -1222,6 +1239,10 @@
           "runtimeVersion": {
             "description": "Requested runtimeVersion.",
             "type": "string"
+          },
+          "userId": {
+            "description": "Requested client user id, empty when not provided.",
+            "type": "string"
           }
         },
         "required": [
@@ -1229,7 +1250,7 @@
           "environment",
           "platform",
           "runtimeVersion",
-          "identifier",
+          "userId",
           "modules",
           "missingModules"
         ],
@@ -2927,6 +2948,10 @@
       },
       "Environment": {
         "properties": {
+          "allowTestPlans": {
+            "description": "Whether test plans in this environment take effect in client manifest resolution. Defaults to false.",
+            "type": "boolean"
+          },
           "description": {
             "description": "Environment description.",
             "type": "string"
@@ -2980,12 +3005,17 @@
           "description",
           "storageConfigurationId",
           "storageConfigurationName",
+          "allowTestPlans",
           "updatedAt"
         ],
         "type": "object"
       },
       "EnvironmentCreateRequest": {
         "properties": {
+          "allowTestPlans": {
+            "description": "Whether test plans in this environment take effect in client manifest resolution. Defaults to false.",
+            "type": "boolean"
+          },
           "code": {
             "description": "Environment id.",
             "type": "string"
@@ -3044,6 +3074,10 @@
       },
       "EnvironmentUpdateRequest": {
         "properties": {
+          "allowTestPlans": {
+            "description": "Whether test plans in this environment take effect in client manifest resolution. Defaults to false.",
+            "type": "boolean"
+          },
           "code": {
             "description": "Environment id.",
             "type": "string"
@@ -3561,6 +3595,10 @@
           "canManageStorage": {
             "description": "Whether current user can manage storage configurations.",
             "type": "boolean"
+          },
+          "canManageTestPlans": {
+            "description": "Whether current user can manage test plans of every application.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3574,7 +3612,8 @@
           "canManageEnvironments",
           "canManageAccessTokens",
           "canManageBuildAdapters",
-          "canManageFeishuTenants"
+          "canManageFeishuTenants",
+          "canManageTestPlans"
         ],
         "type": "object"
       },
@@ -3744,11 +3783,11 @@
             "type": "string"
           },
           "autoPreviewRelease": {
-            "description": "Create a targeted release named after the branch when an automatic build succeeds.",
+            "description": "Deprecated and ignored: the preview channel was replaced by test plan items that follow a branch.",
             "type": "boolean"
           },
           "autoPreviewTtlHours": {
-            "description": "Preview release lifetime in hours, 1-8760, default 168.",
+            "description": "Deprecated and ignored together with autoPreviewRelease.",
             "format": "int32",
             "type": "integer"
           },
@@ -4099,31 +4138,21 @@
             "description": "Release description.",
             "type": "string"
           },
-          "expiresAt": {
-            "description": "Expiration time. Required for targeted gray releases and forbidden otherwise.",
-            "format": "date-time",
-            "type": "string"
-          },
           "grayPercentage": {
             "description": "Initial percentage for percentage gray releases. Create supports 0 to 99.",
             "format": "int32",
             "type": "integer"
           },
           "grayStrategy": {
-            "description": "Gray strategy. Required for gray releases.",
+            "description": "Gray strategy. Required for gray releases; only percentage is supported. Targeted gray was replaced by test plans.",
             "enum": [
               "",
-              "targeted",
               "percentage"
             ],
             "type": "string"
           },
-          "identifier": {
-            "description": "Targeting identifier. Required for targeted gray releases and forbidden otherwise.",
-            "type": "string"
-          },
           "releaseType": {
-            "description": "Release type. full updates the default route, gray updates a targeted or percentage gray route.",
+            "description": "Release type. full updates the default route, gray updates the percentage gray route.",
             "enum": [
               "full",
               "gray"
@@ -4209,7 +4238,7 @@
             "type": "string"
           },
           "expiresAt": {
-            "description": "Expiration time for targeted gray releases, or empty otherwise.",
+            "description": "Expiration time of historical targeted gray releases, or empty otherwise.",
             "type": "string"
           },
           "grayPercentage": {
@@ -4218,7 +4247,7 @@
             "type": "integer"
           },
           "grayStrategy": {
-            "description": "Gray strategy.",
+            "description": "Gray strategy. Historical releases may still show targeted, which was replaced by test plans.",
             "enum": [
               "",
               "targeted",
@@ -4228,10 +4257,6 @@
           },
           "id": {
             "description": "Release UUID.",
-            "type": "string"
-          },
-          "identifier": {
-            "description": "Targeting identifier for targeted gray releases.",
             "type": "string"
           },
           "moduleId": {
@@ -4366,7 +4391,7 @@
             "type": "integer"
           },
           "grayStrategy": {
-            "description": "Gray strategy.",
+            "description": "Gray strategy. Historical releases may still show targeted.",
             "enum": [
               "",
               "targeted",
@@ -4376,10 +4401,6 @@
           },
           "id": {
             "description": "Release route id.",
-            "type": "string"
-          },
-          "identifier": {
-            "description": "Targeting identifier for identifier routes.",
             "type": "string"
           },
           "moduleId": {
@@ -4395,7 +4416,7 @@
             "type": "string"
           },
           "routeType": {
-            "description": "Route type.",
+            "description": "Route type. Historical routes may still show identifier.",
             "enum": [
               "default",
               "identifier",
@@ -4925,6 +4946,699 @@
         },
         "required": [
           "configurations",
+          "pagination"
+        ],
+        "type": "object"
+      },
+      "TestAccount": {
+        "properties": {
+          "createdAt": {
+            "description": "Saved time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "environment": {
+            "description": "Environment code. Account systems may differ between environments.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Note.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Client user id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "userId",
+          "note",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "TestAccountRequest": {
+        "properties": {
+          "environment": {
+            "description": "Environment code.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Optional note, at most 64 characters.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Client user id, 1-64 characters of [A-Za-z0-9._-].",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "userId"
+        ],
+        "type": "object"
+      },
+      "TestAccountsResponse": {
+        "properties": {
+          "testAccounts": {
+            "items": {
+              "$ref": "#/components/schemas/TestAccount"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "testAccounts"
+        ],
+        "type": "object"
+      },
+      "TestPlan": {
+        "properties": {
+          "applicationId": {
+            "description": "Application id.",
+            "type": "string"
+          },
+          "applicationName": {
+            "description": "Application display name.",
+            "type": "string"
+          },
+          "applicationSlug": {
+            "description": "Application slug.",
+            "type": "string"
+          },
+          "closedAt": {
+            "description": "Close time, or empty.",
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Creation time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "description": "Creator display name.",
+            "type": "string"
+          },
+          "createdByUserId": {
+            "description": "Creator user id.",
+            "type": "string"
+          },
+          "environment": {
+            "description": "Environment code.",
+            "type": "string"
+          },
+          "environmentName": {
+            "description": "Environment display name.",
+            "type": "string"
+          },
+          "expiresAt": {
+            "description": "Expiration time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "Test plan UUID.",
+            "type": "string"
+          },
+          "itemCount": {
+            "description": "Item count.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "link": {
+            "description": "Related link, for example the requirement ticket.",
+            "type": "string"
+          },
+          "memberCount": {
+            "description": "Member count.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Test plan name, for example the requirement title.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Derived status. Only open test plans take effect and take part in conflict checks.",
+            "enum": [
+              "open",
+              "closed",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last change of the plan, its items or members.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "applicationId",
+          "applicationName",
+          "applicationSlug",
+          "environment",
+          "environmentName",
+          "name",
+          "link",
+          "status",
+          "expiresAt",
+          "createdByUserId",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+          "closedAt",
+          "itemCount",
+          "memberCount"
+        ],
+        "type": "object"
+      },
+      "TestPlanConflictErrorResponse": {
+        "properties": {
+          "branch": {
+            "description": "Branch in use.",
+            "type": "string"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanMemberConflict"
+            },
+            "type": "array"
+          },
+          "error": {
+            "description": "Conflict kind.",
+            "enum": [
+              "test plan member conflict",
+              "test plan branch in use",
+              "test plan closed",
+              "test plans disabled for environment"
+            ],
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Module whose branch is in use.",
+            "type": "string"
+          },
+          "testPlan": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TestPlanRef"
+              }
+            ],
+            "description": "Test plan occupying the branch.",
+            "nullable": true
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "TestPlanCreateRequest": {
+        "properties": {
+          "applicationId": {
+            "description": "Application id.",
+            "type": "string"
+          },
+          "environment": {
+            "description": "Environment code. The environment must be bound to the application and allow test plans.",
+            "type": "string"
+          },
+          "expiresAt": {
+            "description": "Optional expiration, default 7 days, at most 30 days from now.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanItemRequest"
+            },
+            "type": "array"
+          },
+          "link": {
+            "description": "Optional http(s) link.",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanMemberRequest"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Name, 1-100 characters.",
+            "type": "string"
+          },
+          "resolveConflicts": {
+            "description": "Remove conflicting user ids from the other test plans instead of returning 409 test plan member conflict.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "applicationId",
+          "environment",
+          "name"
+        ],
+        "type": "object"
+      },
+      "TestPlanDetailResponse": {
+        "properties": {
+          "commonDependencyWarning": {
+            "description": "Items contain both a Common module and Feature modules. Feature builds were built against the released common, not the common build in this test plan, so they may be incompatible.",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanEvent"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanItem"
+            },
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanMember"
+            },
+            "type": "array"
+          },
+          "testPlan": {
+            "$ref": "#/components/schemas/TestPlan"
+          }
+        },
+        "required": [
+          "testPlan",
+          "items",
+          "members",
+          "events",
+          "commonDependencyWarning"
+        ],
+        "type": "object"
+      },
+      "TestPlanEvent": {
+        "properties": {
+          "actor": {
+            "description": "Who did it; empty for automatic updates.",
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Event time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "description": "Event specific fields, for example userId, moduleIds and causedByTestPlanId for member_removed_by_conflict.",
+            "type": "object"
+          },
+          "id": {
+            "description": "Event id.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "Event kind.",
+            "enum": [
+              "created",
+              "updated",
+              "closed",
+              "extended",
+              "item_set",
+              "item_deleted",
+              "item_followed",
+              "member_added",
+              "member_removed",
+              "member_removed_by_conflict"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "detail",
+          "actor",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "TestPlanExtendRequest": {
+        "properties": {
+          "expiresAt": {
+            "description": "New expiration, in the future and at most 30 days from now.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expiresAt"
+        ],
+        "type": "object"
+      },
+      "TestPlanItem": {
+        "properties": {
+          "branch": {
+            "description": "Bound branch. The same branch of a module belongs to at most one open test plan per environment.",
+            "type": "string"
+          },
+          "buildNumber": {
+            "description": "Build number within the module.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "buildRecordId": {
+            "description": "Current build record UUID.",
+            "type": "string"
+          },
+          "commitSha": {
+            "description": "Commit SHA of the build.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "follow: replaced by every newer succeeded build of the branch. pinned: fixed build.",
+            "enum": [
+              "follow",
+              "pinned"
+            ],
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Module id.",
+            "type": "string"
+          },
+          "moduleKind": {
+            "description": "Module kind.",
+            "enum": [
+              "Common",
+              "Feature"
+            ],
+            "type": "string"
+          },
+          "moduleName": {
+            "description": "Module display name.",
+            "type": "string"
+          },
+          "platforms": {
+            "description": "Platforms in the build.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "runtimeVersion": {
+            "description": "runtimeVersion of the build. Clients with another runtimeVersion skip this item.",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last update time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "updatedBy": {
+            "description": "Who last set the item; empty when updated by a followed build.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moduleId",
+          "moduleName",
+          "moduleKind",
+          "branch",
+          "mode",
+          "buildRecordId",
+          "buildNumber",
+          "commitSha",
+          "runtimeVersion",
+          "platforms",
+          "updatedBy",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "TestPlanItemRequest": {
+        "properties": {
+          "branch": {
+            "description": "Branch to bind.",
+            "type": "string"
+          },
+          "buildRecordId": {
+            "description": "Build to use. Required for pinned; for follow, empty means the latest succeeded build of the branch.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Defaults to follow.",
+            "enum": [
+              "follow",
+              "pinned"
+            ],
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Module id of this application.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moduleId",
+          "branch"
+        ],
+        "type": "object"
+      },
+      "TestPlanItemSetRequest": {
+        "properties": {
+          "branch": {
+            "description": "Branch to bind.",
+            "type": "string"
+          },
+          "buildRecordId": {
+            "description": "Build to use. Required for pinned; for follow, empty means the latest succeeded build of the branch.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Defaults to follow.",
+            "enum": [
+              "follow",
+              "pinned"
+            ],
+            "type": "string"
+          },
+          "resolveConflicts": {
+            "description": "Remove conflicting user ids from the other test plans instead of returning 409 test plan member conflict.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "branch"
+        ],
+        "type": "object"
+      },
+      "TestPlanJoinRequest": {
+        "properties": {
+          "resolveConflicts": {
+            "description": "Remove conflicting user ids from the other test plans instead of returning 409 test plan member conflict.",
+            "type": "boolean"
+          },
+          "userIds": {
+            "description": "My test account user ids to add; empty adds all of them in the test plan environment.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TestPlanLeaveRequest": {
+        "properties": {
+          "userIds": {
+            "description": "My test account user ids to remove; empty removes all.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TestPlanMember": {
+        "properties": {
+          "addedBy": {
+            "description": "Who added the member.",
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Added time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "note": {
+            "description": "Note, for example who the account belongs to.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Client user id, matched against the manifest userId.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "note",
+          "addedBy",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "TestPlanMemberConflict": {
+        "properties": {
+          "moduleIds": {
+            "description": "Modules contained in both test plans.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "testPlan": {
+            "$ref": "#/components/schemas/TestPlanRef"
+          },
+          "userId": {
+            "description": "Client user id that is also in another open test plan.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "testPlan",
+          "moduleIds"
+        ],
+        "type": "object"
+      },
+      "TestPlanMemberRequest": {
+        "properties": {
+          "note": {
+            "description": "Optional note, at most 64 characters.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Client user id, 1-64 characters of [A-Za-z0-9._-].",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId"
+        ],
+        "type": "object"
+      },
+      "TestPlanMembersAddRequest": {
+        "properties": {
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanMemberRequest"
+            },
+            "type": "array"
+          },
+          "resolveConflicts": {
+            "description": "Remove conflicting user ids from the other test plans instead of returning 409 test plan member conflict.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "members"
+        ],
+        "type": "object"
+      },
+      "TestPlanMutationResponse": {
+        "description": "Test plan detail after the change. removed lists user ids that were removed from other test plans because resolveConflicts was true.",
+        "properties": {
+          "commonDependencyWarning": {
+            "description": "Same as TestPlanDetailResponse.",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanEvent"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanItem"
+            },
+            "type": "array"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanMember"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlanMemberConflict"
+            },
+            "type": "array"
+          },
+          "testPlan": {
+            "$ref": "#/components/schemas/TestPlan"
+          }
+        },
+        "required": [
+          "testPlan",
+          "items",
+          "members",
+          "events",
+          "commonDependencyWarning",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "TestPlanRef": {
+        "properties": {
+          "id": {
+            "description": "Test plan UUID.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Test plan name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "TestPlanUpdateRequest": {
+        "properties": {
+          "link": {
+            "description": "New link; empty string clears it.",
+            "type": "string"
+          },
+          "name": {
+            "description": "New name.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TestPlansResponse": {
+        "properties": {
+          "pagination": {
+            "$ref": "#/components/schemas/Pagination"
+          },
+          "testPlans": {
+            "items": {
+              "$ref": "#/components/schemas/TestPlan"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "testPlans",
           "pagination"
         ],
         "type": "object"
@@ -6198,20 +6912,11 @@
             }
           },
           {
-            "description": "Optional targeting identifier. Targeted gray wins when present, percentage gray may use userId, otherwise default release is used.",
-            "in": "query",
-            "name": "identifier",
-            "schema": {
-              "description": "Targeting identifier.",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Optional user id for percentage gray bucketing.",
+            "description": "Optional client user id, for example the signed-in account id. Each module resolves in order: an active test plan this user is a member of, then percentage gray bucketed by userId, then the full release. Without userId only full releases are returned.",
             "in": "query",
             "name": "userId",
             "schema": {
-              "description": "User id for percentage gray bucketing.",
+              "description": "Client user id.",
               "type": "string"
             }
           }
@@ -9487,6 +10192,184 @@
         ]
       }
     },
+    "/api/v1/me/test-accounts": {
+      "get": {
+        "operationId": "listMyTestAccounts",
+        "parameters": [
+          {
+            "description": "Only accounts of this environment.",
+            "in": "query",
+            "name": "environment",
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestAccountsResponse"
+                }
+              }
+            },
+            "description": "My test accounts."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List my test accounts",
+        "tags": [
+          "TestPlans"
+        ]
+      },
+      "post": {
+        "operationId": "upsertMyTestAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestAccountRequest"
+              }
+            }
+          },
+          "description": "Test account payload.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestAccount"
+                }
+              }
+            },
+            "description": "Test account saved; an existing one only updates its note."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Save a test account",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/me/test-accounts/{environment}/{userId}": {
+      "delete": {
+        "operationId": "deleteMyTestAccount",
+        "parameters": [
+          {
+            "description": "Environment code.",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client user id.",
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "description": "Client user id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test account not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Delete a test account",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
     "/api/v1/modules": {
       "get": {
         "operationId": "listModules",
@@ -10440,15 +11323,6 @@
             }
           },
           {
-            "description": "Optional targeting identifier. Falls back to the default route when no identifier route exists.",
-            "in": "query",
-            "name": "identifier",
-            "schema": {
-              "description": "Targeting identifier.",
-              "type": "string"
-            }
-          },
-          {
             "description": "Optional user id for percentage gray bucketing.",
             "in": "query",
             "name": "userId",
@@ -10585,79 +11459,6 @@
           }
         },
         "summary": "Update percentage gray release",
-        "tags": [
-          "Releases"
-        ]
-      }
-    },
-    "/api/v1/releases/{id}/inactivate": {
-      "patch": {
-        "operationId": "inactivateTargetedGrayRelease",
-        "parameters": [
-          {
-            "description": "Release UUID.",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "description": "Release UUID.",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReleaseDetailResponse"
-                }
-              }
-            },
-            "description": "Targeted gray release inactivated."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Release is not an active targeted gray release."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Current user cannot rollback this release."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Release not found."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Server error."
-          }
-        },
-        "summary": "Inactivate targeted gray release",
         "tags": [
           "Releases"
         ]
@@ -11187,6 +11988,1141 @@
         ]
       }
     },
+    "/api/v1/test-plans": {
+      "get": {
+        "operationId": "listTestPlans",
+        "parameters": [
+          {
+            "description": "Filter by application id.",
+            "in": "query",
+            "name": "applicationId",
+            "schema": {
+              "description": "Application id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by environment code.",
+            "in": "query",
+            "name": "environment",
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "open: open and not expired. closed: closed or expired.",
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "Status filter.",
+              "enum": [
+                "open",
+                "closed"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only test plans that contain this client user id.",
+            "in": "query",
+            "name": "memberUserId",
+            "schema": {
+              "description": "Client user id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "One-based page number.",
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "description": "Page.",
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Rows per page.",
+            "in": "query",
+            "name": "pageSize",
+            "schema": {
+              "description": "Page size.",
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlansResponse"
+                }
+              }
+            },
+            "description": "Test plan list."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid filters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List test plans",
+        "tags": [
+          "TestPlans"
+        ]
+      },
+      "post": {
+        "operationId": "createTestPlan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanCreateRequest"
+              }
+            }
+          },
+          "description": "Test plan creation payload.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanMutationResponse"
+                }
+              }
+            },
+            "description": "Test plan created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request, or a build is not a succeeded build of that module, branch and environment."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage test plans of this application."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanConflictErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict. error is \"test plan member conflict\" with conflicts (retry with resolveConflicts=true to remove those user ids from the other test plans), \"test plan branch in use\" with the occupying test plan, \"test plan closed\", or \"test plans disabled for environment\"."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Create test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}": {
+      "get": {
+        "operationId": "getTestPlan",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Test plan detail."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Get test plan detail",
+        "tags": [
+          "TestPlans"
+        ]
+      },
+      "patch": {
+        "operationId": "updateTestPlan",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanUpdateRequest"
+              }
+            }
+          },
+          "description": "Fields to update.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Test plan updated."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan is closed or expired."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Update test plan name or link",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/close": {
+      "post": {
+        "operationId": "closeTestPlan",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Test plan closed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan is already closed or expired."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Close test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/extend": {
+      "post": {
+        "operationId": "extendTestPlan",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanExtendRequest"
+              }
+            }
+          },
+          "description": "New expiration.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Expiration changed."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "expiresAt must be in the future and at most 30 days from now."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan is closed or expired; create a new one instead."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Change test plan expiration",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/items/{moduleId}": {
+      "delete": {
+        "operationId": "deleteTestPlanItem",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "moduleId",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Item removed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan or item not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan is closed or expired."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Remove a module from a test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      },
+      "put": {
+        "operationId": "setTestPlanItem",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "moduleId",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanItemSetRequest"
+              }
+            }
+          },
+          "description": "Item payload.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanMutationResponse"
+                }
+              }
+            },
+            "description": "Item set."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request, or no usable build for the branch."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan or module not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanConflictErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict. error is \"test plan member conflict\" with conflicts (retry with resolveConflicts=true to remove those user ids from the other test plans), \"test plan branch in use\" with the occupying test plan, \"test plan closed\", or \"test plans disabled for environment\"."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Set the build of a module in a test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/join": {
+      "post": {
+        "operationId": "joinTestPlan",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanJoinRequest"
+              }
+            }
+          },
+          "description": "Which of my test accounts to add. Empty userIds adds all of my test accounts in the test plan environment.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanMutationResponse"
+                }
+              }
+            },
+            "description": "Joined."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid user ids or member limit exceeded."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found, or the user ids are not my test accounts in this environment."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanConflictErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict. error is \"test plan member conflict\" with conflicts (retry with resolveConflicts=true to remove those user ids from the other test plans), \"test plan branch in use\" with the occupying test plan, \"test plan closed\", or \"test plans disabled for environment\"."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Join a test plan with my test accounts",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/leave": {
+      "post": {
+        "operationId": "leaveTestPlan",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanLeaveRequest"
+              }
+            }
+          },
+          "description": "Which of my test accounts to remove. Empty userIds removes all.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Left."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found, or none of my test accounts is a member."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan is closed or expired."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Remove my test accounts from a test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/members": {
+      "post": {
+        "operationId": "addTestPlanMembers",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestPlanMembersAddRequest"
+              }
+            }
+          },
+          "description": "Members to add.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanMutationResponse"
+                }
+              }
+            },
+            "description": "Members added."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid user ids or member limit exceeded."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanConflictErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict. error is \"test plan member conflict\" with conflicts (retry with resolveConflicts=true to remove those user ids from the other test plans), \"test plan branch in use\" with the occupying test plan, \"test plan closed\", or \"test plans disabled for environment\"."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Add client user ids to a test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
+    "/api/v1/test-plans/{id}/members/{userId}": {
+      "delete": {
+        "operationId": "removeTestPlanMember",
+        "parameters": [
+          {
+            "description": "Test plan UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Test plan UUID.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Client user id.",
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "description": "Client user id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestPlanDetailResponse"
+                }
+              }
+            },
+            "description": "Member removed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot manage this test plan."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan or member not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Test plan is closed or expired."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Remove a client user id from a test plan",
+        "tags": [
+          "TestPlans"
+        ]
+      }
+    },
     "/api/v1/webhooks/github": {
       "post": {
         "description": "Shared by all GitHub App installations. Verified with X-Hub-Signature-256 (HMAC-SHA256 of the App webhook secret); only push events are processed.",
@@ -11579,6 +13515,10 @@
     {
       "description": "Feishu contact integrations.",
       "name": "Feishu"
+    },
+    {
+      "description": "Test plans: per-requirement sets of module builds delivered to a list of client user ids.",
+      "name": "TestPlans"
     }
   ]
 }

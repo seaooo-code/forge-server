@@ -23,8 +23,8 @@ const (
 	ReleaseTypeGray ReleaseType = "gray"
 )
 
+// 按 identifier 定向灰度（targeted）已由提测单取代，见 docs/test-plans.md；历史发布记录里仍可能读到 "targeted"。
 const (
-	ReleaseGrayStrategyTargeted   ReleaseGrayStrategy = "targeted"
 	ReleaseGrayStrategyPercentage ReleaseGrayStrategy = "percentage"
 )
 
@@ -35,7 +35,6 @@ const (
 
 const (
 	ReleaseRouteTypeDefault    ReleaseRouteType = "default"
-	ReleaseRouteTypeIdentifier ReleaseRouteType = "identifier"
 	ReleaseRouteTypePercentage ReleaseRouteType = "percentage"
 )
 
@@ -53,7 +52,6 @@ type ReleaseRecord struct {
 	EnvironmentName string
 	BuildRecordID   string
 	RuntimeVersion  string
-	Identifier      string
 	ReleaseType     ReleaseType
 	GrayStrategy    ReleaseGrayStrategy
 	GrayPercentage  int
@@ -79,7 +77,6 @@ type ReleaseRoute struct {
 	BuildRecordID   string
 	RuntimeVersion  string
 	RouteType       ReleaseRouteType
-	Identifier      string
 	GrayStrategy    ReleaseGrayStrategy
 	GrayPercentage  int
 	Status          ReleaseRouteStatus
@@ -96,8 +93,6 @@ type ReleaseCreateInput struct {
 	ReleaseType     ReleaseType
 	GrayStrategy    ReleaseGrayStrategy
 	GrayPercentage  int
-	ExpiresAt       *time.Time
-	Identifier      string
 	Description     string
 	CreatedByUserID string
 }
@@ -123,17 +118,11 @@ type ReleaseGrayPercentageUpdateInput struct {
 	UpdatedByUserID string
 }
 
-type ReleaseInactivateInput struct {
-	ID              string
-	UpdatedByUserID string
-}
-
 type ReleaseResolveInput struct {
 	ModuleID    string
 	Environment string
 	// RuntimeVersion 为空时不限制运行时版本，按创建时间取最新路由；非空时只在该运行时版本下解析。
 	RuntimeVersion string
-	Identifier     string
 	UserID         string
 }
 
@@ -146,5 +135,5 @@ func IsValidReleaseStatus(status ReleaseStatus) bool {
 }
 
 func IsValidReleaseGrayStrategy(strategy ReleaseGrayStrategy) bool {
-	return strategy == ReleaseGrayStrategyTargeted || strategy == ReleaseGrayStrategyPercentage
+	return strategy == ReleaseGrayStrategyPercentage
 }

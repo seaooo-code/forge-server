@@ -146,11 +146,9 @@ func TestArtifactServiceManifestResolvesURLsAndMissingModules(t *testing.T) {
 					ID:              "module-profile",
 					Name:            "profile",
 					Kind:            domain.ModuleKindFeature,
-					ReleaseID:       "018f4d7a-0a6c-789b-9c12-36a4dfd9d001",
-					ReleaseType:     domain.ReleaseTypeGray,
-					GrayStrategy:    domain.ReleaseGrayStrategyTargeted,
-					GrayPercentage:  0,
-					Identifier:      "staff-1",
+					TestPlanID:      "018f4d7a-0a6c-789b-9c12-36a4dfd9e001",
+					TestPlanName:    "登录改版",
+					TestPlanMatches: 1,
 					BuildRecordID:   firstRecord.ID,
 					HasRuntimeRoute: true,
 				},
@@ -164,7 +162,7 @@ func TestArtifactServiceManifestResolvesURLsAndMissingModules(t *testing.T) {
 					HasRuntimeRoute: true,
 				},
 				{ID: "module-settings", Name: "settings", Kind: domain.ModuleKindFeature},
-				{ID: "module-targeted-only", Name: "targeted-only", Kind: domain.ModuleKindFeature, HasRuntimeRoute: true},
+				{ID: "module-gray-only", Name: "gray-only", Kind: domain.ModuleKindFeature, HasRuntimeRoute: true},
 				{
 					ID:              "module-ios",
 					Name:            "ios",
@@ -209,19 +207,25 @@ func TestArtifactServiceManifestResolvesURLsAndMissingModules(t *testing.T) {
 		Environment:     "qa",
 		Platform:        " android ",
 		RuntimeVersion:  "1.0.0",
-		Identifier:      "staff-1",
+		UserID:          " 1001 ",
 	})
 	if err != nil {
 		t.Fatalf("get application manifest: %v", err)
 	}
 
-	if manifest.Identifier != "staff-1" || manifest.Platform != domain.PlatformAndroid || manifest.RuntimeVersion != "1.0.0" ||
+	if manifest.UserID != "1001" || manifest.Platform != domain.PlatformAndroid || manifest.RuntimeVersion != "1.0.0" ||
 		len(manifest.Modules) != 2 || len(manifest.MissingModules) != 3 {
 		t.Fatalf("unexpected manifest shape: %+v", manifest)
 	}
 	profile := manifest.Modules[0]
 	if profile.Branch != "feature/login" || profile.CommitSHA != "abc123" {
 		t.Fatalf("expected build branch and commit on module, got %+v", profile)
+	}
+	if profile.Source != domain.ArtifactSourceTestPlan || profile.TestPlanName != "登录改版" || profile.ReleaseID != "" {
+		t.Fatalf("expected module from test plan without release fields, got %+v", profile)
+	}
+	if home := manifest.Modules[1]; home.Source != domain.ArtifactSourceFull || home.TestPlanID != "" {
+		t.Fatalf("expected full release module, got %+v", home)
 	}
 	if len(profile.Files) != 1 || profile.Files[0].Path != "assets/icon.png" || profile.Files[0].SHA256 != "hash-1" {
 		t.Fatalf("expected only android files with platform prefix removed, got %+v", profile.Files)
@@ -246,7 +250,7 @@ func TestArtifactServiceManifestResolvesURLsAndMissingModules(t *testing.T) {
 		reasons[missing.ID] = missing.Reason
 	}
 	if reasons["module-settings"] != domain.ArtifactMissingReasonNoReleaseForRuntime ||
-		reasons["module-targeted-only"] != domain.ArtifactMissingReasonReleaseNotFound ||
+		reasons["module-gray-only"] != domain.ArtifactMissingReasonReleaseNotFound ||
 		reasons["module-ios"] != domain.ArtifactMissingReasonPlatformUnavailable {
 		t.Fatalf("unexpected missing module reasons: %+v", reasons)
 	}

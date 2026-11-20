@@ -74,7 +74,6 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		environment,
 		runtimeVersion,
 		routeType,
-		input.Identifier,
 	)
 	if err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
@@ -83,7 +82,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseAlreadyActive
 	}
 	if routeType == domain.ReleaseRouteTypePercentage {
-		exists, err := activeReleaseRouteExists(ctx, tx, moduleID, environment, runtimeVersion, routeType, input.Identifier)
+		exists, err := activeReleaseRouteExists(ctx, tx, moduleID, environment, runtimeVersion, routeType)
 		if err != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 		}
@@ -123,7 +122,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			$11,
 			$12
 		)
-	`, releaseID, moduleID, environment, input.BuildRecordID, input.ReleaseType, input.GrayStrategy, input.GrayPercentage, input.ExpiresAt, artifactKey, artifactURL, input.Description, input.CreatedByUserID); err != nil {
+	`, releaseID, moduleID, environment, input.BuildRecordID, input.ReleaseType, input.GrayStrategy, input.GrayPercentage, nil, artifactKey, artifactURL, input.Description, input.CreatedByUserID); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("insert release record: %w", err)
 	}
 
@@ -134,9 +133,8 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			set status = 'inactive', updated_at = now()
 			where module_id = $1
 				and environment_code = $2
-				and runtime_version = $5
+				and runtime_version = $4
 				and route_type = $3
-				and identifier = $4
 				and status = 'active'
 			returning release_id
 		)
@@ -144,7 +142,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		set status = 'inactive', updated_at = now()
 		from deactivated_routes
 		where rr.id = deactivated_routes.release_id
-	`, moduleID, environment, routeType, input.Identifier, runtimeVersion); err != nil {
+	`, moduleID, environment, routeType, runtimeVersion); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("deactivate previous release route: %w", err)
 	}
 
@@ -165,13 +163,13 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			$2,
 			$3,
 			$4,
-			$8,
+			$7,
 			$5,
-			$6,
+			'',
 			'active',
-			$7
+			$6
 		)
-	`, routeID, moduleID, environment, releaseID, routeType, input.Identifier, input.CreatedByUserID, runtimeVersion); err != nil {
+	`, routeID, moduleID, environment, releaseID, routeType, input.CreatedByUserID, runtimeVersion); err != nil {
 		if isCheckViolation(err) || isUniqueViolation(err) || isForeignKeyViolation(err) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
 		}
@@ -193,7 +191,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	return record, route, nil
 }
 
-func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID string, moduleID string, environment string, runtimeVersion string, routeType domain.ReleaseRouteType, identifier string) (bool, error) {
+func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID string, moduleID string, environment string, runtimeVersion string, routeType domain.ReleaseRouteType) (bool, error) {
 	var exists bool
 	err := tx.QueryRow(ctx, `
 		select exists(
@@ -202,21 +200,20 @@ func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID s
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = $1
 				and route.environment_code = $2
-				and route.runtime_version = $6
+				and route.runtime_version = $5
 				and route.route_type = $3
-				and route.identifier = $4
 				and route.status = 'active'
 				and rr.status = 'active'
-				and rr.build_record_id = $5
+				and rr.build_record_id = $4
 		)
-	`, moduleID, environment, routeType, identifier, buildRecordID, runtimeVersion).Scan(&exists)
+	`, moduleID, environment, routeType, buildRecordID, runtimeVersion).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("query existing active release route: %w", err)
 	}
 	return exists, nil
 }
 
-func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, environment string, runtimeVersion string, routeType domain.ReleaseRouteType, identifier string) (bool, error) {
+func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, environment string, runtimeVersion string, routeType domain.ReleaseRouteType) (bool, error) {
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 		select exists(
@@ -225,26 +222,20 @@ func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, e
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = $1
 				and route.environment_code = $2
-				and route.runtime_version = $5
+				and route.runtime_version = $4
 				and route.route_type = $3
-				and route.identifier = $4
 				and route.status = 'active'
 				and rr.status = 'active'
 		)
-	`, moduleID, environment, routeType, identifier, runtimeVersion).Scan(&exists); err != nil {
+	`, moduleID, environment, routeType, runtimeVersion).Scan(&exists); err != nil {
 		return false, fmt.Errorf("query active release route: %w", err)
 	}
 	return exists, nil
 }
 
 func releaseRouteTypeForInput(input domain.ReleaseCreateInput) domain.ReleaseRouteType {
-	if input.ReleaseType == domain.ReleaseTypeGray {
-		switch input.GrayStrategy {
-		case domain.ReleaseGrayStrategyTargeted:
-			return domain.ReleaseRouteTypeIdentifier
-		case domain.ReleaseGrayStrategyPercentage:
-			return domain.ReleaseRouteTypePercentage
-		}
+	if input.ReleaseType == domain.ReleaseTypeGray && input.GrayStrategy == domain.ReleaseGrayStrategyPercentage {
+		return domain.ReleaseRouteTypePercentage
 	}
 	return domain.ReleaseRouteTypeDefault
 }
@@ -319,51 +310,6 @@ func (r *ReleaseRepository) releaseRecordSummary(ctx context.Context, filters do
 	return summary, nil
 }
 
-func (r *ReleaseRepository) ExpireTargetedGrayReleases(ctx context.Context) (int64, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin expire targeted gray releases: %w", err)
-	}
-	defer rollbackMigration(ctx, tx)
-
-	expired, err := expireTargetedGrayReleases(ctx, tx)
-	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit expire targeted gray releases: %w", err)
-	}
-	return expired, nil
-}
-
-func expireTargetedGrayReleases(ctx context.Context, tx pgx.Tx) (int64, error) {
-	tag, err := tx.Exec(ctx, `
-		with expired_routes as (
-			update release_routes route
-			set status = 'inactive',
-				updated_at = now()
-			from release_records rr
-			where route.release_id = rr.id
-				and route.route_type = 'identifier'
-				and route.status = 'active'
-				and rr.status = 'active'
-				and rr.release_type = 'gray'
-				and rr.gray_strategy = 'targeted'
-				and rr.expires_at is not null
-				and rr.expires_at <= now()
-			returning route.release_id
-		)
-		update release_records rr
-		set status = 'inactive',
-			updated_at = now()
-		where rr.id in (select release_id from expired_routes)
-	`)
-	if err != nil {
-		return 0, fmt.Errorf("expire targeted gray releases: %w", err)
-	}
-	return tag.RowsAffected(), nil
-}
-
 func (r *ReleaseRepository) ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error) {
 	route, err := scanReleaseRoute(r.pool.QueryRow(ctx, releaseRouteSelectSQL()+`
 			where route.id = (
@@ -372,38 +318,26 @@ func (r *ReleaseRepository) ResolveReleaseRoute(ctx context.Context, input domai
 				join release_records rr on rr.id = candidate.release_id
 				where candidate.module_id = $1
 					and candidate.environment_code = $2
-					and ($5 = '' or candidate.runtime_version = $5)
+					and ($4 = '' or candidate.runtime_version = $4)
 					and candidate.status = 'active'
 					and rr.status = 'active'
 					and (
 						(
 							$3 <> ''
-							and candidate.route_type = 'identifier'
-							and candidate.identifier = $3
-							and rr.release_type = 'gray'
-							and rr.gray_strategy = 'targeted'
-							and rr.expires_at > now()
-						)
-						or (
-							$4 <> ''
 							and candidate.route_type = 'percentage'
 							and rr.release_type = 'gray'
 							and rr.gray_strategy = 'percentage'
 							and rr.gray_percentage > 0
-							and (('x' || substr(md5($4 || ':' || rr.id::text), 1, 7))::bit(28)::int % 100) < rr.gray_percentage
+							and (('x' || substr(md5($3 || ':' || rr.id::text), 1, 7))::bit(28)::int % 100) < rr.gray_percentage
 						)
-						or (candidate.route_type = 'default' and candidate.identifier = '')
+						or candidate.route_type = 'default'
 					)
 				order by
-					case
-						when $3 <> '' and candidate.route_type = 'identifier' and candidate.identifier = $3 then 0
-						when $4 <> '' and candidate.route_type = 'percentage' then 1
-						else 2
-					end,
+					case when candidate.route_type = 'percentage' then 0 else 1 end,
 					candidate.created_at desc
 				limit 1
 			)
-		`, input.ModuleID, input.Environment, input.Identifier, input.UserID, input.RuntimeVersion))
+		`, input.ModuleID, input.Environment, input.UserID, input.RuntimeVersion))
 	if err != nil {
 		if errors.Is(err, domain.ErrReleaseRouteNotFound) {
 			return domain.ReleaseRoute{}, r.resolveReleaseRouteMissingDependency(ctx, input)
@@ -486,81 +420,6 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 
 	if err := tx.Commit(ctx); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("commit update release gray percentage: %w", err)
-	}
-
-	record, err := r.GetRelease(ctx, input.ID)
-	if err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
-	}
-	route, err := r.GetReleaseRoute(ctx, routeID)
-	if err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
-	}
-	return record, route, nil
-}
-
-func (r *ReleaseRepository) InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("begin inactivate targeted gray release: %w", err)
-	}
-	defer rollbackMigration(ctx, tx)
-
-	var releaseType domain.ReleaseType
-	var grayStrategy domain.ReleaseGrayStrategy
-	var releaseStatus domain.ReleaseStatus
-	var routeID string
-	var routeStatus domain.ReleaseRouteStatus
-	err = tx.QueryRow(ctx, `
-		select
-			rr.release_type,
-			rr.gray_strategy,
-			rr.status,
-			route.id,
-			route.status
-		from release_records rr
-		join release_routes route on route.release_id = rr.id
-			and route.route_type = 'identifier'
-		where rr.id = $1
-		for update of rr, route
-	`, input.ID).Scan(&releaseType, &grayStrategy, &releaseStatus, &routeID, &routeStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if exists, existsErr := r.releaseExists(ctx, tx, input.ID); existsErr != nil {
-			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, existsErr
-		} else if exists {
-			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
-		}
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseNotFound
-	}
-	if err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("query targeted gray release: %w", err)
-	}
-	if releaseType != domain.ReleaseTypeGray ||
-		grayStrategy != domain.ReleaseGrayStrategyTargeted ||
-		releaseStatus != domain.ReleaseStatusActive ||
-		routeStatus != domain.ReleaseRouteStatusActive {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
-	}
-
-	if _, err := tx.Exec(ctx, `
-		update release_routes
-		set status = 'inactive',
-			updated_at = now()
-		where id = $1
-	`, routeID); err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("inactivate targeted gray route: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		update release_records
-		set status = 'inactive',
-			updated_at = now()
-		where id = $1
-	`, input.ID); err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("inactivate targeted gray release: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("commit inactivate targeted gray release: %w", err)
 	}
 
 	record, err := r.GetRelease(ctx, input.ID)
@@ -666,7 +525,6 @@ func releaseRecordSelectSQL() string {
 			e.name as environment_name,
 			rr.build_record_id,
 			route.runtime_version,
-			route.identifier,
 			rr.release_type,
 			rr.gray_strategy,
 			rr.gray_percentage,
@@ -701,7 +559,6 @@ func releaseRouteSelectSQL() string {
 			rr.build_record_id,
 			route.runtime_version,
 			route.route_type,
-			route.identifier,
 			rr.gray_strategy,
 			rr.gray_percentage,
 			route.status,
@@ -732,7 +589,6 @@ func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 		&record.EnvironmentName,
 		&record.BuildRecordID,
 		&record.RuntimeVersion,
-		&record.Identifier,
 		&record.ReleaseType,
 		&record.GrayStrategy,
 		&record.GrayPercentage,
@@ -770,7 +626,6 @@ func scanReleaseRoute(row releaseRecordRow) (domain.ReleaseRoute, error) {
 		&route.BuildRecordID,
 		&route.RuntimeVersion,
 		&route.RouteType,
-		&route.Identifier,
 		&route.GrayStrategy,
 		&route.GrayPercentage,
 		&route.Status,

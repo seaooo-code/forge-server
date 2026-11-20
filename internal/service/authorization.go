@@ -11,6 +11,7 @@ type AuthorizationRepository interface {
 	ApplicationIDByBuildID(ctx context.Context, buildID string) (string, error)
 	ApplicationIDByModuleID(ctx context.Context, moduleID string) (string, error)
 	ApplicationIDByReleaseID(ctx context.Context, releaseID string) (string, error)
+	ApplicationIDByTestPlanID(ctx context.Context, testPlanID string) (string, error)
 	ApplicationIDBySlug(ctx context.Context, slug string) (string, error)
 	GetApplicationRole(ctx context.Context, userID string, applicationID string) (domain.ApplicationMemberRole, error)
 	ListApplicationRoles(ctx context.Context, userID string) ([]domain.ApplicationMemberRole, error)
@@ -121,6 +122,9 @@ func (s *AuthorizationService) resolveApplicationID(ctx context.Context, resourc
 	if releaseID := strings.TrimSpace(resource.ReleaseID); releaseID != "" {
 		return s.repository.ApplicationIDByReleaseID(ctx, releaseID)
 	}
+	if testPlanID := strings.TrimSpace(resource.TestPlanID); testPlanID != "" {
+		return s.repository.ApplicationIDByTestPlanID(ctx, testPlanID)
+	}
 	return "", nil
 }
 
@@ -146,7 +150,8 @@ func globalActionAllowed(roles []domain.GlobalRole, action domain.AuthorizationA
 				domain.ActionEnvironmentManage,
 				domain.ActionAccessTokenManage,
 				domain.ActionBuildAdapterManage,
-				domain.ActionBuildAdapterUse:
+				domain.ActionBuildAdapterUse,
+				domain.ActionTestPlanManage:
 				return true
 			}
 		case domain.GlobalRoleReleaseAdmin:
@@ -173,11 +178,12 @@ func applicationActionAllowed(role domain.ApplicationMemberRole, action domain.A
 			domain.ActionBuildAdapterUse,
 			domain.ActionBuildCreate,
 			domain.ActionReleaseCreate,
-			domain.ActionReleaseRollback:
+			domain.ActionReleaseRollback,
+			domain.ActionTestPlanManage:
 			return true
 		}
 	case domain.ApplicationMemberRoleDeveloper, domain.ApplicationMemberRoleQA:
-		return action == domain.ActionBuildCreate
+		return action == domain.ActionBuildCreate || action == domain.ActionTestPlanManage
 	case domain.ApplicationMemberRoleRelease:
 		return action == domain.ActionReleaseCreate || action == domain.ActionReleaseRollback
 	}

@@ -24,6 +24,7 @@ type environmentDetailResponse struct {
 }
 
 type environmentRequest struct {
+	AllowTestPlans         bool   `json:"allowTestPlans"`
 	Code                   string `json:"code"`
 	Description            string `json:"description"`
 	Name                   string `json:"name"`
@@ -33,6 +34,7 @@ type environmentRequest struct {
 }
 
 type environmentResponse struct {
+	AllowTestPlans           bool   `json:"allowTestPlans"`
 	ID                       string `json:"id"`
 	Name                     string `json:"name"`
 	Status                   string `json:"status"`
@@ -138,6 +140,7 @@ func bindEnvironmentRequest(c echo.Context) (domain.EnvironmentInput, bool) {
 		Name:                   request.Name,
 		Status:                 domain.EnvironmentStatus(request.Status),
 		Tone:                   request.Tone,
+		AllowTestPlans:         request.AllowTestPlans,
 		Description:            request.Description,
 		StorageConfigurationID: request.StorageConfigurationID,
 	}, true
@@ -167,6 +170,7 @@ func newEnvironmentResponse(environment domain.Environment) environmentResponse 
 		Description:              environment.Description,
 		StorageConfigurationID:   environment.StorageConfigurationID,
 		StorageConfigurationName: environment.StorageConfigurationName,
+		AllowTestPlans:           environment.AllowTestPlans,
 		UpdatedAt:                formatTime(environment.UpdatedAt),
 	}
 }

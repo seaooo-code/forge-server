@@ -3,15 +3,12 @@ package service
 import (
 	"context"
 	"strings"
-	"time"
 
 	"forge-server/internal/domain"
 )
 
 type ReleaseRepository interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
-	ExpireTargetedGrayReleases(ctx context.Context) (int64, error)
-	InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
@@ -30,11 +27,6 @@ func (s *ReleaseService) CreateRelease(ctx context.Context, input domain.Release
 	if err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 	}
-	if normalized.ReleaseType == domain.ReleaseTypeGray && normalized.GrayStrategy == domain.ReleaseGrayStrategyTargeted {
-		if _, err := s.repository.ExpireTargetedGrayReleases(ctx); err != nil {
-			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
-		}
-	}
 	return s.repository.CreateRelease(ctx, normalized)
 }
 
@@ -51,7 +43,6 @@ func (s *ReleaseService) ResolveReleaseRoute(ctx context.Context, input domain.R
 		ModuleID:       strings.TrimSpace(input.ModuleID),
 		Environment:    strings.TrimSpace(input.Environment),
 		RuntimeVersion: strings.TrimSpace(input.RuntimeVersion),
-		Identifier:     strings.TrimSpace(input.Identifier),
 		UserID:         strings.TrimSpace(input.UserID),
 	}
 	if !domain.IsValidModuleID(normalized.ModuleID) ||
@@ -74,21 +65,6 @@ func (s *ReleaseService) UpdateReleaseGrayPercentage(ctx context.Context, input 
 	return s.repository.UpdateReleaseGrayPercentage(ctx, normalized)
 }
 
-func (s *ReleaseService) InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
-	normalized := domain.ReleaseInactivateInput{
-		ID:              strings.TrimSpace(input.ID),
-		UpdatedByUserID: strings.TrimSpace(input.UpdatedByUserID),
-	}
-	if normalized.ID == "" || normalized.UpdatedByUserID == "" {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
-	}
-	return s.repository.InactivateTargetedGrayRelease(ctx, normalized)
-}
-
-func (s *ReleaseService) ExpireTargetedGrayReleases(ctx context.Context) (int64, error) {
-	return s.repository.ExpireTargetedGrayReleases(ctx)
-}
-
 func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.ReleaseCreateInput, error) {
 	releaseType := domain.ReleaseType(strings.TrimSpace(string(input.ReleaseType)))
 	grayStrategy := domain.ReleaseGrayStrategy(strings.TrimSpace(string(input.GrayStrategy)))
@@ -97,8 +73,6 @@ func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.Release
 		ReleaseType:     releaseType,
 		GrayStrategy:    grayStrategy,
 		GrayPercentage:  input.GrayPercentage,
-		ExpiresAt:       input.ExpiresAt,
-		Identifier:      strings.TrimSpace(input.Identifier),
 		Description:     strings.TrimSpace(input.Description),
 		CreatedByUserID: strings.TrimSpace(input.CreatedByUserID),
 	}
@@ -109,28 +83,15 @@ func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.Release
 	}
 	switch normalized.ReleaseType {
 	case domain.ReleaseTypeFull:
-		if normalized.GrayStrategy != "" || normalized.Identifier != "" || normalized.GrayPercentage != 0 || normalized.ExpiresAt != nil {
+		if normalized.GrayStrategy != "" || normalized.GrayPercentage != 0 {
 			return domain.ReleaseCreateInput{}, domain.ErrInvalidReleaseInput
 		}
 	case domain.ReleaseTypeGray:
-		if !domain.IsValidReleaseGrayStrategy(normalized.GrayStrategy) {
+		// 灰度只剩比例灰度；按 identifier 定向灰度已由提测单取代。
+		if normalized.GrayStrategy != domain.ReleaseGrayStrategyPercentage ||
+			normalized.GrayPercentage < 0 ||
+			normalized.GrayPercentage > 99 {
 			return domain.ReleaseCreateInput{}, domain.ErrInvalidReleaseInput
-		}
-		switch normalized.GrayStrategy {
-		case domain.ReleaseGrayStrategyTargeted:
-			if normalized.Identifier == "" ||
-				normalized.GrayPercentage != 0 ||
-				normalized.ExpiresAt == nil ||
-				!normalized.ExpiresAt.After(time.Now()) {
-				return domain.ReleaseCreateInput{}, domain.ErrInvalidReleaseInput
-			}
-		case domain.ReleaseGrayStrategyPercentage:
-			if normalized.Identifier != "" ||
-				normalized.ExpiresAt != nil ||
-				normalized.GrayPercentage < 0 ||
-				normalized.GrayPercentage > 99 {
-				return domain.ReleaseCreateInput{}, domain.ErrInvalidReleaseInput
-			}
 		}
 	}
 	return normalized, nil

@@ -31,7 +31,7 @@ flowchart LR
 - GitHub App Manifest 创建、安装授权和仓库搜索
 - RN Bundle 构建记录、执行状态和产物树管理
 - S3 兼容对象存储配置与连通性检查
-- 全量、比例灰度和定向灰度发布
+- 全量与比例灰度发布，以及按需求组织的提测单（成员按 userId 拿到指定分支的构建）
 - 面向客户端的应用 manifest 与单文件产物下载
 - 飞书 OAuth 登录、用户搜索和 session 管理
 - OpenAPI 3.0 文档、健康检查和 OpenTelemetry 导出

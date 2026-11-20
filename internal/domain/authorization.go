@@ -39,6 +39,9 @@ const (
 	ActionBuildAdapterUse AuthorizationAction = "build_adapter:use"
 	// ActionFeishuTenantManage 表示新增、编辑、停用飞书登录租户，只授予 SuperAdmin：租户凭证决定谁能登录平台。
 	ActionFeishuTenantManage AuthorizationAction = "feishu_tenant:manage"
+	// ActionTestPlanManage 表示新建、编辑、关闭提测单，增删条目和任意成员。授予应用的 Owner、Developer、QA
+	// 和 PlatformAdmin、SuperAdmin。用自己的测试账号加入、退出提测单不需要这个权限。
+	ActionTestPlanManage AuthorizationAction = "test_plan:manage"
 )
 
 type AuthorizationResource struct {
@@ -47,6 +50,7 @@ type AuthorizationResource struct {
 	ModuleID        string
 	BuildRecordID   string
 	ReleaseID       string
+	TestPlanID      string
 }
 
 type GlobalCapabilities struct {
@@ -61,6 +65,7 @@ type GlobalCapabilities struct {
 	CanManageAccessTokens  bool `json:"canManageAccessTokens"`
 	CanManageBuildAdapters bool `json:"canManageBuildAdapters"`
 	CanManageFeishuTenants bool `json:"canManageFeishuTenants"`
+	CanManageTestPlans     bool `json:"canManageTestPlans"`
 }
 
 type ApplicationCapabilities struct {
@@ -69,6 +74,7 @@ type ApplicationCapabilities struct {
 	CanUpdateStatus    bool `json:"canUpdateStatus"`
 	CanCreateBuild     bool `json:"canCreateBuild"`
 	CanRelease         bool `json:"canRelease"`
+	CanManageTestPlans bool `json:"canManageTestPlans"`
 }
 
 func IsValidGlobalRole(role GlobalRole) bool {
@@ -97,6 +103,7 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 				CanManageAccessTokens:  true,
 				CanManageBuildAdapters: true,
 				CanManageFeishuTenants: true,
+				CanManageTestPlans:     true,
 			}
 		case GlobalRolePlatformAdmin:
 			capabilities.CanCreateApplication = true
@@ -108,6 +115,7 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 			capabilities.CanManageEnvironments = true
 			capabilities.CanManageAccessTokens = true
 			capabilities.CanManageBuildAdapters = true
+			capabilities.CanManageTestPlans = true
 		case GlobalRoleReleaseAdmin:
 			capabilities.CanCreateBuild = true
 			capabilities.CanCreateRelease = true
@@ -124,6 +132,7 @@ func ApplicationCapabilitiesFor(globalRoles []GlobalRole, appRole ApplicationMem
 		CanUpdateStatus:    global.CanManageApplications,
 		CanCreateBuild:     global.CanCreateBuild,
 		CanRelease:         global.CanCreateRelease,
+		CanManageTestPlans: global.CanManageTestPlans,
 	}
 
 	switch appRole {
@@ -133,8 +142,10 @@ func ApplicationCapabilitiesFor(globalRoles []GlobalRole, appRole ApplicationMem
 		capabilities.CanUpdateStatus = true
 		capabilities.CanCreateBuild = true
 		capabilities.CanRelease = true
+		capabilities.CanManageTestPlans = true
 	case ApplicationMemberRoleDeveloper, ApplicationMemberRoleQA:
 		capabilities.CanCreateBuild = true
+		capabilities.CanManageTestPlans = true
 	case ApplicationMemberRoleRelease:
 		capabilities.CanRelease = true
 	}

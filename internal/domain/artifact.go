@@ -36,9 +36,18 @@ type ArtifactManifestInput struct {
 	Environment     string
 	Platform        string
 	RuntimeVersion  string
-	Identifier      string
-	UserID          string
+	// UserID 是客户端上报的用户标识：用于匹配提测单成员和比例灰度分桶，为空时只按全量下发。
+	UserID string
 }
+
+// ArtifactSource 说明清单里的模块是按哪条规则命中的。
+type ArtifactSource string
+
+const (
+	ArtifactSourceTestPlan   ArtifactSource = "testPlan"
+	ArtifactSourcePercentage ArtifactSource = "percentage"
+	ArtifactSourceFull       ArtifactSource = "full"
+)
 
 type ArtifactApplication struct {
 	ID   string
@@ -65,8 +74,12 @@ type ArtifactModuleReleaseSource struct {
 	ReleaseType    ReleaseType
 	GrayStrategy   ReleaseGrayStrategy
 	GrayPercentage int
-	Identifier     string
 	BuildRecordID  string
+	// TestPlanID 非空表示模块命中了提测单，此时发布相关字段为空，BuildRecordID 是提测单条目的构建。
+	TestPlanID   string
+	TestPlanName string
+	// TestPlanMatches 是命中的提测单数量；正常情况下冲突规则保证最多 1 张，大于 1 说明并发写入留下了例外。
+	TestPlanMatches int
 	// HasRuntimeRoute 表示该运行时版本下模块存在生效路由（不论是否命中当前请求）。
 	HasRuntimeRoute bool
 }
@@ -76,7 +89,7 @@ type ArtifactApplicationManifest struct {
 	Environment    ArtifactEnvironment
 	Platform       string
 	RuntimeVersion string
-	Identifier     string
+	UserID         string
 	Modules        []ArtifactModuleManifest
 	MissingModules []ArtifactMissingModule
 }
@@ -89,7 +102,9 @@ type ArtifactModuleManifest struct {
 	ReleaseType    ReleaseType
 	GrayStrategy   ReleaseGrayStrategy
 	GrayPercentage int
-	Identifier     string
+	Source         ArtifactSource
+	TestPlanID     string
+	TestPlanName   string
 	BuildRecordID  string
 	Branch         string
 	CommitSHA      string

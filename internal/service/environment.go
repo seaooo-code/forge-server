@@ -69,6 +69,7 @@ func validateEnvironmentInput(input domain.EnvironmentInput) (domain.Environment
 		Tone:                   strings.TrimSpace(input.Tone),
 		Description:            strings.TrimSpace(input.Description),
 		StorageConfigurationID: strings.TrimSpace(input.StorageConfigurationID),
+		AllowTestPlans:         input.AllowTestPlans,
 	}
 	if normalized.Status == "" {
 		normalized.Status = domain.EnvironmentStatusHealthy

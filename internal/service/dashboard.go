@@ -538,7 +538,8 @@ func dashboardReleaseGray(record domain.ReleaseRecord) string {
 	if record.GrayStrategy == domain.ReleaseGrayStrategyPercentage {
 		return strconv.Itoa(record.GrayPercentage) + "%"
 	}
-	if record.Identifier != "" {
+	// 历史上的定向灰度（已由提测单取代）。
+	if record.GrayStrategy == "targeted" {
 		return "定向"
 	}
 	return "灰度"

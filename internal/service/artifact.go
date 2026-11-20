@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"path"
 	"slices"
@@ -110,7 +111,7 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 		Environment:    source.Environment,
 		Platform:       normalized.Platform,
 		RuntimeVersion: normalized.RuntimeVersion,
-		Identifier:     normalized.Identifier,
+		UserID:         normalized.UserID,
 		Modules:        []domain.ArtifactModuleManifest{},
 		MissingModules: []domain.ArtifactMissingModule{},
 	}
@@ -118,7 +119,7 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 		if module.BuildRecordID == "" {
 			reason := domain.ArtifactMissingReasonNoReleaseForRuntime
 			if module.HasRuntimeRoute {
-				// 该运行时版本下有路由，但都没有命中本次请求（例如只有其他 identifier 的定向灰度）。
+				// 该运行时版本下有路由，但都没有命中本次请求（例如只有未命中分桶的比例灰度）。
 				reason = domain.ArtifactMissingReasonReleaseNotFound
 			}
 			result.MissingModules = append(result.MissingModules, missingArtifactModule(module, reason))
@@ -147,6 +148,10 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			return domain.ArtifactApplicationManifest{}, err
 		}
 
+		if module.TestPlanMatches > 1 {
+			// 冲突规则保证一个 userId 在一个模块上最多命中一张提测单，出现多张说明并发写入留下了例外，已按最近更新取了一张。
+			slog.WarnContext(ctx, "artifact manifest matched multiple test plans", "module", module.ID, "environment", normalized.Environment, "userId", normalized.UserID, "matches", module.TestPlanMatches, "testPlan", module.TestPlanID)
+		}
 		result.Modules = append(result.Modules, domain.ArtifactModuleManifest{
 			ID:             module.ID,
 			Name:           module.Name,
@@ -155,7 +160,9 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			ReleaseType:    module.ReleaseType,
 			GrayStrategy:   module.GrayStrategy,
 			GrayPercentage: module.GrayPercentage,
-			Identifier:     module.Identifier,
+			Source:         artifactSource(module),
+			TestPlanID:     module.TestPlanID,
+			TestPlanName:   module.TestPlanName,
 			BuildRecordID:  record.ID,
 			Branch:         record.Branch,
 			CommitSHA:      record.CommitSHA,
@@ -200,11 +207,11 @@ func normalizeArtifactManifestInput(input domain.ArtifactManifestInput) (domain.
 		Environment:     strings.TrimSpace(input.Environment),
 		Platform:        strings.TrimSpace(input.Platform),
 		RuntimeVersion:  strings.TrimSpace(input.RuntimeVersion),
-		Identifier:      strings.TrimSpace(input.Identifier),
 		UserID:          strings.TrimSpace(input.UserID),
 	}
 	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) ||
 		normalized.Environment == "" ||
+		len(normalized.UserID) > 128 ||
 		!domain.IsValidPlatform(normalized.Platform) ||
 		!domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
 		return domain.ArtifactManifestInput{}, domain.ErrInvalidArtifactInput
@@ -294,6 +301,17 @@ func ArtifactObjectKey(record domain.BuildRecord, file domain.ArtifactManifestFi
 		return objectKey
 	}
 	return strings.TrimRight(strings.TrimSpace(record.ArtifactKey), "/") + "/" + cleanArtifactRelativePath(file.Path)
+}
+
+func artifactSource(module domain.ArtifactModuleReleaseSource) domain.ArtifactSource {
+	switch {
+	case module.TestPlanID != "":
+		return domain.ArtifactSourceTestPlan
+	case module.ReleaseType == domain.ReleaseTypeGray && module.GrayStrategy == domain.ReleaseGrayStrategyPercentage:
+		return domain.ArtifactSourcePercentage
+	default:
+		return domain.ArtifactSourceFull
+	}
 }
 
 func missingArtifactModule(module domain.ArtifactModuleReleaseSource, reason string) domain.ArtifactMissingModule {

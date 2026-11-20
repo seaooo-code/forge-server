@@ -26,25 +26,25 @@ type WebhookBuildRepository interface {
 	CreateBuildRecordUnlessActive(ctx context.Context, input domain.BuildRecordInput) (record domain.BuildRecord, created bool, err error)
 }
 
-// PreviewReleaseCreator 复用发布服务创建预览通道发布。
-type PreviewReleaseCreator interface {
-	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+// TestPlanBuildFollower 把跟随该构建分支的提测单条目换成新构建，返回被更新的提测单 ID。
+type TestPlanBuildFollower interface {
+	FollowBuild(ctx context.Context, record domain.BuildRecord) ([]string, error)
 }
 
-// BuildTriggerService 负责 push 自动构建与构建成功后的预览通道发布，与具体 provider 无关。
+// BuildTriggerService 负责 push 自动构建，以及构建成功后更新跟随分支的提测单条目，与具体 provider 无关。
 type BuildTriggerService struct {
-	builds   WebhookBuildRepository
-	logger   *slog.Logger
-	modules  AutoBuildModuleRepository
-	now      func() time.Time
-	releases PreviewReleaseCreator
+	builds    WebhookBuildRepository
+	logger    *slog.Logger
+	modules   AutoBuildModuleRepository
+	now       func() time.Time
+	testPlans TestPlanBuildFollower
 }
 
 type BuildTriggerServiceDependencies struct {
-	Builds   WebhookBuildRepository
-	Logger   *slog.Logger
-	Modules  AutoBuildModuleRepository
-	Releases PreviewReleaseCreator
+	Builds    WebhookBuildRepository
+	Logger    *slog.Logger
+	Modules   AutoBuildModuleRepository
+	TestPlans TestPlanBuildFollower
 }
 
 func NewBuildTriggerService(deps BuildTriggerServiceDependencies) *BuildTriggerService {
@@ -53,11 +53,11 @@ func NewBuildTriggerService(deps BuildTriggerServiceDependencies) *BuildTriggerS
 		logger = slog.Default()
 	}
 	return &BuildTriggerService{
-		builds:   deps.Builds,
-		logger:   logger,
-		modules:  deps.Modules,
-		now:      time.Now,
-		releases: deps.Releases,
+		builds:    deps.Builds,
+		logger:    logger,
+		modules:   deps.Modules,
+		now:       time.Now,
+		testPlans: deps.TestPlans,
 	}
 }
 
@@ -130,65 +130,22 @@ func (s *BuildTriggerService) HandlePushEvent(ctx context.Context, event domain.
 	return result, nil
 }
 
-// HandleBuildSucceeded 实现 BuildSucceededHook：webhook 构建成功且模块开启 auto_preview_release 时，
-// 以分支名为 identifier 创建定向灰度发布。失败只记录日志，不影响构建状态。
+// HandleBuildSucceeded 实现 BuildSucceededHook：构建成功后，把跟随这个分支的提测单条目换成这次构建
+// （同模块、同分支、同环境、跟随模式、提测单进行中，且构建号更新）。手动和 webhook 触发的构建都适用。
+// 失败只记录日志，不影响构建状态。
 func (s *BuildTriggerService) HandleBuildSucceeded(ctx context.Context, record domain.BuildRecord) {
-	if record.TriggerType != domain.BuildTriggerTypeWebhook || s.releases == nil {
+	if s.testPlans == nil || strings.TrimSpace(record.Branch) == "" {
 		return
 	}
 	logger := s.logger.With("build", record.ID, "module", record.ModuleID, "environment", record.Environment, "branch", record.Branch)
-
-	module, err := s.modules.GetModule(ctx, record.ModuleID)
+	planIDs, err := s.testPlans.FollowBuild(ctx, record)
 	if err != nil {
-		logger.Error("load module for preview release failed", "error", err)
+		logger.Error("follow build in test plans failed", "error", err)
 		return
 	}
-	if !module.BuildConfig.AutoPreviewRelease {
-		return
+	if len(planIDs) > 0 {
+		logger.Info("test plan items followed build", "testPlans", planIDs, "number", record.Number)
 	}
-	// 发布必须有创建人；历史构建或创建人已删除时 created_by_user_id 为空，跳过预览发布。
-	if strings.TrimSpace(record.CreatedByUserID) == "" {
-		logger.Warn("skip preview release: build has no creator")
-		return
-	}
-
-	input, err := s.previewReleaseInput(record, module)
-	if err != nil {
-		logger.Error("prepare preview release failed", "error", err)
-		return
-	}
-	release, route, err := s.releases.CreateRelease(ctx, input)
-	if err != nil {
-		logger.Error("create preview release failed", "error", err)
-		return
-	}
-	logger.Info("preview release created", "release", release.ID, "route", route.ID, "runtimeVersion", route.RuntimeVersion, "expiresAt", input.ExpiresAt)
-}
-
-func (s *BuildTriggerService) previewReleaseInput(record domain.BuildRecord, module domain.Module) (domain.ReleaseCreateInput, error) {
-	branch := strings.TrimSpace(record.Branch)
-	if branch == "" {
-		return domain.ReleaseCreateInput{}, errors.New("build branch is empty")
-	}
-
-	ttlHours := module.BuildConfig.AutoPreviewTTLHours
-	if ttlHours <= 0 {
-		ttlHours = domain.DefaultModuleAutoPreviewTTLHours
-	}
-	expiresAt := s.now().Add(time.Duration(ttlHours) * time.Hour)
-	shortSHA := record.CommitSHA
-	if len(shortSHA) > 12 {
-		shortSHA = shortSHA[:12]
-	}
-	return domain.ReleaseCreateInput{
-		BuildRecordID:   record.ID,
-		ReleaseType:     domain.ReleaseTypeGray,
-		GrayStrategy:    domain.ReleaseGrayStrategyTargeted,
-		ExpiresAt:       &expiresAt,
-		Identifier:      branch,
-		Description:     "预览通道：" + branch + "@" + shortSHA,
-		CreatedByUserID: strings.TrimSpace(record.CreatedByUserID),
-	}, nil
 }
 
 // MatchBranchPattern 按 "/" 分段匹配分支名：`*` 只匹配单段内的任意字符（语义同 path.Match），

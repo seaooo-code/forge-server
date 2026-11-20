@@ -41,6 +41,7 @@ type Dependencies struct {
 	ModuleService              ModuleService
 	ReleaseService             ReleaseService
 	StorageService             StorageService
+	TestPlanService            TestPlanService
 	Postgres                   *pgxpool.Pool
 }
 
@@ -94,10 +95,28 @@ type DashboardService interface {
 
 type ReleaseService interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
-	InactivateTargetedGrayRelease(ctx context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+}
+
+type TestPlanService interface {
+	ListTestPlans(ctx context.Context, filters domain.TestPlanFilters) ([]domain.TestPlan, int, error)
+	GetTestPlan(ctx context.Context, id string) (domain.TestPlan, error)
+	GetTestPlanDetail(ctx context.Context, id string) (domain.TestPlanDetail, error)
+	CreateTestPlan(ctx context.Context, input domain.TestPlanCreateInput) (domain.TestPlanMutationResult, error)
+	UpdateTestPlan(ctx context.Context, id string, input domain.TestPlanUpdateInput) (domain.TestPlanDetail, error)
+	CloseTestPlan(ctx context.Context, id string, actorUserID string) (domain.TestPlanDetail, error)
+	ExtendTestPlan(ctx context.Context, id string, input domain.TestPlanExtendInput) (domain.TestPlanDetail, error)
+	SetTestPlanItem(ctx context.Context, id string, item domain.TestPlanItemInput, resolveConflicts bool, actorUserID string) (domain.TestPlanMutationResult, error)
+	DeleteTestPlanItem(ctx context.Context, id string, moduleID string, actorUserID string) (domain.TestPlanDetail, error)
+	AddTestPlanMembers(ctx context.Context, id string, members []domain.TestPlanMemberInput, resolveConflicts bool, actorUserID string) (domain.TestPlanMutationResult, error)
+	RemoveTestPlanMember(ctx context.Context, id string, userID string, actorUserID string) (domain.TestPlanDetail, error)
+	JoinTestPlan(ctx context.Context, id string, ownerUserID string, userIDs []string, resolveConflicts bool) (domain.TestPlanMutationResult, error)
+	LeaveTestPlan(ctx context.Context, id string, ownerUserID string, userIDs []string) (domain.TestPlanDetail, error)
+	ListTestAccounts(ctx context.Context, ownerUserID string, environment string) ([]domain.TestAccount, error)
+	UpsertTestAccount(ctx context.Context, input domain.TestAccountInput) (domain.TestAccount, error)
+	DeleteTestAccount(ctx context.Context, ownerUserID string, environment string, userID string) error
 }
 
 type EnvironmentService interface {
@@ -221,6 +240,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
 	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
+	registerTestPlanRoutes(protectedAPI, deps.TestPlanService, deps.AuthorizationService)
 
 	return e
 }

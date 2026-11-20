@@ -24,17 +24,14 @@ import (
 )
 
 type App struct {
-	cfg            config.Config
-	logger         *slog.Logger
-	releaseService *service.ReleaseService
+	cfg    config.Config
+	logger *slog.Logger
 	// buildLogService 用于后台巡检清理过期的构建日志。
 	buildLogService *service.BuildLogService
 	server          *echo.Echo
 	postgres        *pgxpool.Pool
 	otel            otelinfra.ShutdownFunc
 }
-
-const releaseExpirationInterval = time.Minute
 
 const buildLogCleanupInterval = time.Hour
 
@@ -100,6 +97,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	artifactAccessTokenService := service.NewArtifactAccessTokenService(artifactAccessTokenRepository)
 	releaseRepository := postgres.NewReleaseRepository(postgresPool)
 	releaseService := service.NewReleaseService(releaseRepository)
+	testPlanService := service.NewTestPlanService(postgres.NewTestPlanRepository(postgresPool))
 	storageRepository := postgres.NewStorageRepository(postgresPool)
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
 	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
@@ -149,13 +147,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ModuleService:              moduleService,
 		ReleaseService:             releaseService,
 		StorageService:             storageService,
+		TestPlanService:            testPlanService,
 		Postgres:                   postgresPool,
 	})
 
 	return &App{
 		cfg:             cfg,
 		logger:          logger,
-		releaseService:  releaseService,
 		buildLogService: buildLogService,
 		server:          server,
 		postgres:        postgresPool,
@@ -182,23 +180,20 @@ func newCodeSourceService(cfg config.Config, store *postgres.CodeSourceRepositor
 	}), nil
 }
 
-// newBuildTriggerService 装配 push 自动构建与预览通道发布，API 与 worker 共用。
-// API 进程用它处理 webhook，worker 进程用它作为构建成功回调创建预览发布。
+// newBuildTriggerService 装配 push 自动构建与构建成功回调，API 与 worker 共用。
+// API 进程用它处理 webhook，worker 进程用它在构建成功后更新跟随分支的提测单条目。
 func newBuildTriggerService(pool *pgxpool.Pool, buildRepository *postgres.BuildRepository, logger *slog.Logger) *service.BuildTriggerService {
 	return service.NewBuildTriggerService(service.BuildTriggerServiceDependencies{
-		Builds:   buildRepository,
-		Logger:   logger,
-		Modules:  postgres.NewModuleRepository(pool),
-		Releases: service.NewReleaseService(postgres.NewReleaseRepository(pool)),
+		Builds:    buildRepository,
+		Logger:    logger,
+		Modules:   postgres.NewModuleRepository(pool),
+		TestPlans: postgres.NewTestPlanRepository(pool),
 	})
 }
 
 func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
-	if a.releaseService != nil {
-		go a.runReleaseExpirationLoop(ctx)
-	}
 	if a.buildLogService != nil {
 		go a.runBuildLogCleanupLoop(ctx)
 	}
@@ -216,36 +211,6 @@ func (a *App) Run(ctx context.Context) error {
 			return nil
 		}
 		return err
-	}
-}
-
-func (a *App) runReleaseExpirationLoop(ctx context.Context) {
-	a.expireTargetedGrayReleases(ctx)
-
-	ticker := time.NewTicker(releaseExpirationInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			a.expireTargetedGrayReleases(ctx)
-		}
-	}
-}
-
-func (a *App) expireTargetedGrayReleases(ctx context.Context) {
-	expireCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	expired, err := a.releaseService.ExpireTargetedGrayReleases(expireCtx)
-	if err != nil {
-		a.logger.Error("expire targeted gray releases failed", "error", err)
-		return
-	}
-	if expired > 0 {
-		a.logger.Info("targeted gray releases expired", "count", expired)
 	}
 }
 

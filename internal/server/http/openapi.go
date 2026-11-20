@@ -16,6 +16,12 @@ func registerOpenAPIRoutes(e *echo.Echo) {
 }
 
 func openAPIDocument() *openapi3.T {
+	doc := baseOpenAPIDocument()
+	addTestPlanOpenAPI(doc)
+	return doc
+}
+
+func baseOpenAPIDocument() *openapi3.T {
 	return &openapi3.T{
 		OpenAPI: "3.0.3",
 		Info: &openapi3.Info{
@@ -528,26 +534,6 @@ func openAPIDocument() *openapi3.T {
 						},
 					}
 					op.RequestBody = requestBody("Gray percentage update payload.", schemaRef("ReleaseGrayPercentageUpdateRequest"))
-					return op
-				}(),
-			}),
-			openapi3.WithPath("/api/v1/releases/{id}/inactivate", &openapi3.PathItem{
-				Patch: func() *openapi3.Operation {
-					op := operation("inactivateTargetedGrayRelease", "Inactivate targeted gray release", []string{"Releases"}, responses(
-						response(http.StatusOK, "Targeted gray release inactivated.", schemaRef("ReleaseDetailResponse")),
-						response(http.StatusBadRequest, "Release is not an active targeted gray release.", schemaRef("ErrorResponse")),
-						response(http.StatusForbidden, "Current user cannot rollback this release.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Release not found.", schemaRef("ErrorResponse")),
-						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
-					))
-					op.Parameters = openapi3.Parameters{
-						{
-							Value: openapi3.NewPathParameter("id").
-								WithDescription("Release UUID.").
-								WithRequired(true).
-								WithSchema(stringSchema("Release UUID.")),
-						},
-					}
 					return op
 				}(),
 			}),
@@ -1420,6 +1406,7 @@ func environmentSchema() *openapi3.Schema {
 		"description",
 		"storageConfigurationId",
 		"storageConfigurationName",
+		"allowTestPlans",
 		"updatedAt",
 	).
 		WithProperty("id", stringSchema("Environment id.")).
@@ -1429,6 +1416,7 @@ func environmentSchema() *openapi3.Schema {
 		WithProperty("description", stringSchema("Environment description.")).
 		WithProperty("storageConfigurationId", stringSchema("Linked storage configuration id.")).
 		WithProperty("storageConfigurationName", stringSchema("Linked storage configuration display name.")).
+		WithProperty("allowTestPlans", boolSchema("Whether test plans in this environment take effect in client manifest resolution. Defaults to false.")).
 		WithProperty("updatedAt", dateTimeSchema("Last update time."))
 }
 
@@ -1439,7 +1427,8 @@ func environmentCreateRequestSchema() *openapi3.Schema {
 		WithProperty("status", enumStringSchema("Environment status code.", "healthy", "gray")).
 		WithProperty("tone", enumStringSchema("UI tone.", "amber", "blue", "emerald", "rose", "sky")).
 		WithProperty("description", stringSchema("Environment description.")).
-		WithProperty("storageConfigurationId", stringSchema("Linked storage configuration id."))
+		WithProperty("storageConfigurationId", stringSchema("Linked storage configuration id.")).
+		WithProperty("allowTestPlans", boolSchema("Whether test plans in this environment take effect in client manifest resolution. Defaults to false."))
 }
 
 func environmentDetailSchema() *openapi3.Schema {
@@ -1585,14 +1574,9 @@ func artifactManifestParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Client runtimeVersion.")),
 		},
 		{
-			Value: openapi3.NewQueryParameter("identifier").
-				WithDescription("Optional targeting identifier. Targeted gray wins when present, percentage gray may use userId, otherwise default release is used.").
-				WithSchema(stringSchema("Targeting identifier.")),
-		},
-		{
 			Value: openapi3.NewQueryParameter("userId").
-				WithDescription("Optional user id for percentage gray bucketing.").
-				WithSchema(stringSchema("User id for percentage gray bucketing.")),
+				WithDescription("Optional client user id, for example the signed-in account id. Each module resolves in order: an active test plan this user is a member of, then percentage gray bucketed by userId, then the full release. Without userId only full releases are returned.").
+				WithSchema(stringSchema("Client user id.")),
 		},
 	}
 }
@@ -1859,11 +1843,6 @@ func releaseResolveParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Route runtimeVersion.")),
 		},
 		{
-			Value: openapi3.NewQueryParameter("identifier").
-				WithDescription("Optional targeting identifier. Falls back to the default route when no identifier route exists.").
-				WithSchema(stringSchema("Targeting identifier.")),
-		},
-		{
 			Value: openapi3.NewQueryParameter("userId").
 				WithDescription("Optional user id for percentage gray bucketing.").
 				WithSchema(stringSchema("User id for percentage gray bucketing.")),
@@ -1970,12 +1949,13 @@ func applicationMembersResponseSchema() *openapi3.Schema {
 }
 
 func applicationCapabilitiesSchema() *openapi3.Schema {
-	return objectSchema("canEditApplication", "canManageMembers", "canUpdateStatus", "canCreateBuild", "canRelease").
+	return objectSchema("canEditApplication", "canManageMembers", "canUpdateStatus", "canCreateBuild", "canRelease", "canManageTestPlans").
 		WithProperty("canEditApplication", boolSchema("Whether current user can edit this application.")).
 		WithProperty("canManageMembers", boolSchema("Whether current user can manage this application members.")).
 		WithProperty("canUpdateStatus", boolSchema("Whether current user can update this application status.")).
 		WithProperty("canCreateBuild", boolSchema("Whether current user can create builds for this application.")).
-		WithProperty("canRelease", boolSchema("Whether current user can create or rollback releases for this application."))
+		WithProperty("canRelease", boolSchema("Whether current user can create or rollback releases for this application.")).
+		WithProperty("canManageTestPlans", boolSchema("Whether current user can create and manage test plans for this application."))
 }
 
 func applicationClientIntegrationSchema() *openapi3.Schema {
@@ -2231,8 +2211,8 @@ func moduleBuildConfigSchema() *openapi3.Schema {
 		WithProperty("buildAdapterParams", stringMapSchema("Build adapter parameter values keyed by parameter key. Validated against the adapter parameter definitions: required parameters need a value and undeclared keys are rejected. Must be empty in dockerfile mode. Do not put secrets here; use build variables.")).
 		WithProperty("autoBuildBranches", stringArraySchema("Branch globs that trigger builds on push. Empty disables automatic builds.")).
 		WithProperty("autoBuildEnvironment", stringSchema("Environment code for automatic builds. Required when autoBuildBranches is not empty.")).
-		WithProperty("autoPreviewRelease", boolSchema("Create a targeted release named after the branch when an automatic build succeeds.")).
-		WithProperty("autoPreviewTtlHours", int32Schema("Preview release lifetime in hours, 1-8760, default 168.")).
+		WithProperty("autoPreviewRelease", boolSchema("Deprecated and ignored: the preview channel was replaced by test plan items that follow a branch.")).
+		WithProperty("autoPreviewTtlHours", int32Schema("Deprecated and ignored together with autoPreviewRelease.")).
 		WithProperty("buildContext", stringSchema("Docker build context relative to the repository root, default \".\".")).
 		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE. Only used in dockerfile mode.")).
 		WithProperty("ciJob", stringSchema("Name of the CI job that produces the build artifacts. Required in gitlab_ci mode and must be empty in other modes.")).
@@ -2378,12 +2358,12 @@ func buildArtifactTreeNodeSchema() *openapi3.Schema {
 }
 
 func artifactManifestResponseSchema() *openapi3.Schema {
-	return objectSchema("application", "environment", "platform", "runtimeVersion", "identifier", "modules", "missingModules").
+	return objectSchema("application", "environment", "platform", "runtimeVersion", "userId", "modules", "missingModules").
 		WithPropertyRef("application", schemaRef("ArtifactManifestApplication")).
 		WithPropertyRef("environment", schemaRef("ArtifactManifestEnvironment")).
 		WithProperty("platform", enumStringSchema("Requested platform.", domain.BuildPlatforms...)).
 		WithProperty("runtimeVersion", stringSchema("Requested runtimeVersion.")).
-		WithProperty("identifier", stringSchema("Requested targeting identifier.")).
+		WithProperty("userId", stringSchema("Requested client user id, empty when not provided.")).
 		WithPropertyRef("modules", arraySchemaRef("ArtifactManifestModule")).
 		WithPropertyRef("missingModules", arraySchemaRef("ArtifactMissingModule"))
 }
@@ -2402,15 +2382,16 @@ func artifactManifestEnvironmentSchema() *openapi3.Schema {
 }
 
 func artifactManifestModuleSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
+	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "source", "testPlan", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
-		WithProperty("releaseId", stringSchema("Matched release UUID.")).
-		WithProperty("releaseType", enumStringSchema("Matched release type.", "full", "gray")).
-		WithProperty("grayStrategy", enumStringSchema("Matched gray strategy.", "", "targeted", "percentage")).
+		WithProperty("releaseId", stringSchema("Matched release UUID. Empty when the module came from a test plan.")).
+		WithProperty("releaseType", enumStringSchema("Matched release type. Empty when the module came from a test plan.", "", "full", "gray")).
+		WithProperty("grayStrategy", enumStringSchema("Matched gray strategy.", "", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Matched percentage gray value.")).
-		WithProperty("identifier", stringSchema("Matched targeting identifier for targeted gray releases.")).
+		WithProperty("source", enumStringSchema("Which rule matched this module.", string(domain.ArtifactSourceTestPlan), string(domain.ArtifactSourcePercentage), string(domain.ArtifactSourceFull))).
+		WithProperty("testPlan", nullableSchemaRef("TestPlanRef", "Matched test plan when source is testPlan, otherwise null.")).
 		WithProperty("buildRecordId", stringSchema("Matched build record UUID.")).
 		WithProperty("branch", stringSchema("Branch of the matched build.")).
 		WithProperty("commitSha", stringSchema("Commit SHA of the matched build.")).
@@ -2449,11 +2430,9 @@ func artifactMissingModuleSchema() *openapi3.Schema {
 func releaseCreateRequestSchema() *openapi3.Schema {
 	return objectSchema("buildRecordId", "releaseType").
 		WithProperty("buildRecordId", stringSchema("Succeeded build record UUID to release.")).
-		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, gray updates a targeted or percentage gray route.", "full", "gray")).
-		WithProperty("grayStrategy", enumStringSchema("Gray strategy. Required for gray releases.", "", "targeted", "percentage")).
+		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, gray updates the percentage gray route.", "full", "gray")).
+		WithProperty("grayStrategy", enumStringSchema("Gray strategy. Required for gray releases; only percentage is supported. Targeted gray was replaced by test plans.", "", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Initial percentage for percentage gray releases. Create supports 0 to 99.")).
-		WithProperty("expiresAt", dateTimeSchema("Expiration time. Required for targeted gray releases and forbidden otherwise.")).
-		WithProperty("identifier", stringSchema("Targeting identifier. Required for targeted gray releases and forbidden otherwise.")).
 		WithProperty("description", stringSchema("Release description."))
 }
 
@@ -2514,14 +2493,13 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("environmentName", stringSchema("Environment display name.")).
 		WithProperty("id", stringSchema("Release UUID.")).
-		WithProperty("identifier", stringSchema("Targeting identifier for targeted gray releases.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseType", enumStringSchema("Release type.", "full", "gray")).
 		WithProperty("runtimeVersion", stringSchema("runtimeVersion of the release route. A release only replaces releases of the same runtimeVersion.")).
-		WithProperty("grayStrategy", enumStringSchema("Gray strategy.", "", "targeted", "percentage")).
+		WithProperty("grayStrategy", enumStringSchema("Gray strategy. Historical releases may still show targeted, which was replaced by test plans.", "", "targeted", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Percentage gray value.")).
-		WithProperty("expiresAt", stringSchema("Expiration time for targeted gray releases, or empty otherwise.")).
+		WithProperty("expiresAt", stringSchema("Expiration time of historical targeted gray releases, or empty otherwise.")).
 		WithProperty("status", enumStringSchema("Release status.", "active", "inactive")).
 		WithProperty("updatedAt", dateTimeSchema("Release update time."))
 }
@@ -2553,13 +2531,12 @@ func releaseRouteSchema() *openapi3.Schema {
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("environmentName", stringSchema("Environment display name.")).
 		WithProperty("id", stringSchema("Release route id.")).
-		WithProperty("identifier", stringSchema("Targeting identifier for identifier routes.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("releaseId", stringSchema("Release UUID.")).
-		WithProperty("routeType", enumStringSchema("Route type.", "default", "identifier", "percentage")).
+		WithProperty("routeType", enumStringSchema("Route type. Historical routes may still show identifier.", "default", "identifier", "percentage")).
 		WithProperty("runtimeVersion", stringSchema("runtimeVersion copied from the build record. Routes are isolated per runtimeVersion.")).
-		WithProperty("grayStrategy", enumStringSchema("Gray strategy.", "", "targeted", "percentage")).
+		WithProperty("grayStrategy", enumStringSchema("Gray strategy. Historical releases may still show targeted.", "", "targeted", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Percentage gray value.")).
 		WithProperty("status", enumStringSchema("Release route status.", "active", "inactive")).
 		WithProperty("updatedAt", dateTimeSchema("Route update time."))
@@ -2825,6 +2802,7 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		"canManageAccessTokens",
 		"canManageBuildAdapters",
 		"canManageFeishuTenants",
+		"canManageTestPlans",
 	).
 		WithProperty("canCreateApplication", boolSchema("Whether current user can create applications.")).
 		WithProperty("canManageApplications", boolSchema("Whether current user can manage applications globally.")).
@@ -2836,7 +2814,8 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		WithProperty("canManageEnvironments", boolSchema("Whether current user can manage environments.")).
 		WithProperty("canManageAccessTokens", boolSchema("Whether current user can manage artifact access tokens.")).
 		WithProperty("canManageBuildAdapters", boolSchema("Whether current user can create, edit, disable and enable build adapters.")).
-		WithProperty("canManageFeishuTenants", boolSchema("Whether current user can manage Feishu login tenants (SuperAdmin only)."))
+		WithProperty("canManageFeishuTenants", boolSchema("Whether current user can manage Feishu login tenants (SuperAdmin only).")).
+		WithProperty("canManageTestPlans", boolSchema("Whether current user can manage test plans of every application."))
 }
 
 func feishuLoginTenantSchema() *openapi3.Schema {

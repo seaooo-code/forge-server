@@ -15,7 +15,7 @@ import (
 func TestCreateRelease(t *testing.T) {
 	service := &fakeReleaseService{
 		record: testHTTPReleaseRecord(domain.ReleaseTypeFull),
-		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault, ""),
+		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault),
 	}
 	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
@@ -54,60 +54,10 @@ func TestCreateRelease(t *testing.T) {
 	}
 }
 
-func TestCreateTargetedGrayRelease(t *testing.T) {
-	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC().Truncate(time.Second)
-	service := &fakeReleaseService{
-		record: testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyTargeted, 0, &expiresAt),
-		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1"),
-	}
-	e := newAuthorizedTestServer(Dependencies{
-		FeishuAuthService: testReleaseAuthService(),
-		ReleaseService:    service,
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/releases", jsonBody(releaseCreateRequest{
-		BuildRecordID: "build-1",
-		ReleaseType:   "gray",
-		GrayStrategy:  "targeted",
-		ExpiresAt:     expiresAt.Format(time.RFC3339),
-		Identifier:    "staff-1",
-	}))
-	req.Header.Set("Content-Type", "application/json")
-	addTestReleaseSession(req)
-	rec := httptest.NewRecorder()
-
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
-	}
-
-	var response releaseDetailResponse
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if response.Route.RouteType != "identifier" || response.Route.Identifier != "staff-1" {
-		t.Fatalf("unexpected targeted route response: %#v", response.Route)
-	}
-	if response.Release.ReleaseType != "gray" ||
-		response.Release.GrayStrategy != "targeted" ||
-		response.Release.ExpiresAt == "" ||
-		response.Release.Identifier != "staff-1" {
-		t.Fatalf("unexpected targeted release response: %#v", response.Release)
-	}
-	if service.lastCreateInput.Identifier != "staff-1" ||
-		service.lastCreateInput.ReleaseType != domain.ReleaseTypeGray ||
-		service.lastCreateInput.GrayStrategy != domain.ReleaseGrayStrategyTargeted ||
-		service.lastCreateInput.ExpiresAt == nil ||
-		!service.lastCreateInput.ExpiresAt.Equal(expiresAt) {
-		t.Fatalf("unexpected service input: %+v", service.lastCreateInput)
-	}
-}
-
 func TestCreatePercentageGrayRelease(t *testing.T) {
 	service := &fakeReleaseService{
 		record: testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyPercentage, 25, nil),
-		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypePercentage, ""),
+		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypePercentage),
 	}
 	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
@@ -145,9 +95,8 @@ func TestCreatePercentageGrayRelease(t *testing.T) {
 }
 
 func TestListReleases(t *testing.T) {
-	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC().Truncate(time.Second)
 	service := &fakeReleaseService{
-		records: []domain.ReleaseRecord{testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyTargeted, 0, &expiresAt)},
+		records: []domain.ReleaseRecord{testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyPercentage, 30, nil)},
 		summary: domain.ReleaseRecordSummary{Active: 7, Inactive: 3, Total: 10},
 	}
 	e := newAuthorizedTestServer(Dependencies{
@@ -171,8 +120,7 @@ func TestListReleases(t *testing.T) {
 	}
 	if len(response.Releases) != 1 ||
 		response.Releases[0].ID != "rel-1" ||
-		response.Releases[0].Identifier != "staff-1" ||
-		response.Releases[0].ExpiresAt == "" {
+		response.Releases[0].GrayPercentage != 30 {
 		t.Fatalf("unexpected releases response: %#v", response.Releases)
 	}
 	if response.Pagination.Page != 2 || response.Pagination.PageSize != 50 || response.Pagination.Total != 10 || response.Summary.Active != 7 {
@@ -190,14 +138,14 @@ func TestListReleases(t *testing.T) {
 
 func TestResolveReleaseRoute(t *testing.T) {
 	service := &fakeReleaseService{
-		route: testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1"),
+		route: testHTTPReleaseRoute(domain.ReleaseRouteTypePercentage),
 	}
 	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
 		ReleaseService:    service,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases/resolve?moduleId=module-profile&environment=qa&identifier=staff-1&userId=user-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/releases/resolve?moduleId=module-profile&environment=qa&userId=user-1", nil)
 	addTestReleaseSession(req)
 	rec := httptest.NewRecorder()
 
@@ -216,7 +164,6 @@ func TestResolveReleaseRoute(t *testing.T) {
 	}
 	if service.lastResolveInput.ModuleID != "module-profile" ||
 		service.lastResolveInput.Environment != "qa" ||
-		service.lastResolveInput.Identifier != "staff-1" ||
 		service.lastResolveInput.UserID != "user-1" {
 		t.Fatalf("unexpected resolve input: %+v", service.lastResolveInput)
 	}
@@ -225,7 +172,7 @@ func TestResolveReleaseRoute(t *testing.T) {
 func TestUpdateReleaseGrayPercentage(t *testing.T) {
 	service := &fakeReleaseService{
 		record: testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyPercentage, 100, nil),
-		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault, ""),
+		route:  testHTTPReleaseRoute(domain.ReleaseRouteTypeDefault),
 	}
 	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
@@ -251,66 +198,6 @@ func TestUpdateReleaseGrayPercentage(t *testing.T) {
 	}
 }
 
-func TestInactivateTargetedGrayRelease(t *testing.T) {
-	record := testHTTPGrayReleaseRecord(domain.ReleaseGrayStrategyTargeted, 0, nil)
-	record.Status = domain.ReleaseStatusInactive
-	route := testHTTPReleaseRoute(domain.ReleaseRouteTypeIdentifier, "staff-1")
-	route.Status = domain.ReleaseRouteStatusInactive
-	service := &fakeReleaseService{
-		record: record,
-		route:  route,
-	}
-	e := newAuthorizedTestServer(Dependencies{
-		FeishuAuthService: testReleaseAuthService(),
-		ReleaseService:    service,
-	})
-
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/releases/rel-1/inactivate", nil)
-	addTestReleaseSession(req)
-	rec := httptest.NewRecorder()
-
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
-	}
-	var response releaseDetailResponse
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if response.Release.Status != "inactive" || response.Route.Status != "inactive" {
-		t.Fatalf("unexpected inactivate response: %#v route=%#v", response.Release, response.Route)
-	}
-	if service.lastInactivateInput.ID != "rel-1" ||
-		service.lastInactivateInput.UpdatedByUserID != "ou-user-1" {
-		t.Fatalf("unexpected inactivate input: %+v", service.lastInactivateInput)
-	}
-}
-
-func TestCreateReleaseRejectsInvalidExpiresAt(t *testing.T) {
-	e := newAuthorizedTestServer(Dependencies{
-		FeishuAuthService: testReleaseAuthService(),
-		ReleaseService:    &fakeReleaseService{},
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/releases", jsonBody(releaseCreateRequest{
-		BuildRecordID: "build-1",
-		ReleaseType:   "gray",
-		GrayStrategy:  "targeted",
-		ExpiresAt:     "not-a-time",
-		Identifier:    "staff-1",
-	}))
-	req.Header.Set("Content-Type", "application/json")
-	addTestReleaseSession(req)
-	rec := httptest.NewRecorder()
-
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
-	}
-}
-
 func TestCreateReleaseRejectsInvalidRequest(t *testing.T) {
 	e := newAuthorizedTestServer(Dependencies{
 		FeishuAuthService: testReleaseAuthService(),
@@ -322,7 +209,7 @@ func TestCreateReleaseRejectsInvalidRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/releases", jsonBody(releaseCreateRequest{
 		BuildRecordID: "build-1",
 		ReleaseType:   "full",
-		Identifier:    "staff-1",
+		GrayStrategy:  "percentage",
 	}))
 	req.Header.Set("Content-Type", "application/json")
 	addTestReleaseSession(req)
@@ -379,16 +266,15 @@ func addTestReleaseSession(req *http.Request) {
 }
 
 type fakeReleaseService struct {
-	record              domain.ReleaseRecord
-	route               domain.ReleaseRoute
-	records             []domain.ReleaseRecord
-	summary             domain.ReleaseRecordSummary
-	err                 error
-	lastCreateInput     domain.ReleaseCreateInput
-	lastListFilters     domain.ReleaseRecordFilters
-	lastInactivateInput domain.ReleaseInactivateInput
-	lastResolveInput    domain.ReleaseResolveInput
-	lastUpdateInput     domain.ReleaseGrayPercentageUpdateInput
+	record           domain.ReleaseRecord
+	route            domain.ReleaseRoute
+	records          []domain.ReleaseRecord
+	summary          domain.ReleaseRecordSummary
+	err              error
+	lastCreateInput  domain.ReleaseCreateInput
+	lastListFilters  domain.ReleaseRecordFilters
+	lastResolveInput domain.ReleaseResolveInput
+	lastUpdateInput  domain.ReleaseGrayPercentageUpdateInput
 }
 
 func (s *fakeReleaseService) CreateRelease(_ context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
@@ -426,14 +312,6 @@ func (s *fakeReleaseService) UpdateReleaseGrayPercentage(_ context.Context, inpu
 	return s.record, s.route, nil
 }
 
-func (s *fakeReleaseService) InactivateTargetedGrayRelease(_ context.Context, input domain.ReleaseInactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
-	s.lastInactivateInput = input
-	if s.err != nil {
-		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, s.err
-	}
-	return s.record, s.route, nil
-}
-
 func testHTTPReleaseRecord(releaseType domain.ReleaseType) domain.ReleaseRecord {
 	return domain.ReleaseRecord{
 		ID:              "rel-1",
@@ -460,18 +338,12 @@ func testHTTPGrayReleaseRecord(strategy domain.ReleaseGrayStrategy, percentage i
 	record.GrayStrategy = strategy
 	record.GrayPercentage = percentage
 	record.ExpiresAt = expiresAt
-	if strategy == domain.ReleaseGrayStrategyTargeted {
-		record.Identifier = "staff-1"
-	}
 	return record
 }
 
-func testHTTPReleaseRoute(routeType domain.ReleaseRouteType, identifier string) domain.ReleaseRoute {
+func testHTTPReleaseRoute(routeType domain.ReleaseRouteType) domain.ReleaseRoute {
 	grayStrategy := domain.ReleaseGrayStrategy("")
 	grayPercentage := 0
-	if routeType == domain.ReleaseRouteTypeIdentifier {
-		grayStrategy = domain.ReleaseGrayStrategyTargeted
-	}
 	if routeType == domain.ReleaseRouteTypePercentage {
 		grayStrategy = domain.ReleaseGrayStrategyPercentage
 		grayPercentage = 25
@@ -486,7 +358,6 @@ func testHTTPReleaseRoute(routeType domain.ReleaseRouteType, identifier string) 
 		ReleaseID:       "rel-1",
 		BuildRecordID:   "build-1",
 		RouteType:       routeType,
-		Identifier:      identifier,
 		GrayStrategy:    grayStrategy,
 		GrayPercentage:  grayPercentage,
 		Status:          domain.ReleaseRouteStatusActive,

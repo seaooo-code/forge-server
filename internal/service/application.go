@@ -378,7 +378,7 @@ func withApplicationDerivedDetail(detail domain.ApplicationDetail) domain.Applic
 
 func clientIntegrationInfo(applicationSlug string) domain.ClientIntegrationInfo {
 	path := "/api/v1/artifacts/applications/" + applicationSlug + "/environments/{environment}/manifest"
-	exampleURL := "/api/v1/artifacts/applications/" + applicationSlug + "/environments/product/manifest?identifier=user-123"
+	exampleURL := "/api/v1/artifacts/applications/" + applicationSlug + "/environments/product/manifest?platform=android&runtimeVersion=725-n1-m24&userId=1001"
 
 	return domain.ClientIntegrationInfo{
 		Endpoint: domain.ClientIntegrationEndpoint{
@@ -388,14 +388,15 @@ func clientIntegrationInfo(applicationSlug string) domain.ClientIntegrationInfo 
 			ExampleURL:  exampleURL,
 			RequestFields: []domain.ClientIntegrationField{
 				{Name: "environment", Description: "客户端所属环境编码，来自路径参数", Required: true, Type: "string", Example: "product"},
-				{Name: "identifier", Description: "定向灰度标识；传入后优先命中 identifier 路由", Required: false, Type: "string", Example: "user-123"},
-				{Name: "userId", Description: "用户标识；用于百分比灰度路由计算", Required: false, Type: "string", Example: "user-123"},
+				{Name: "platform", Description: "客户端平台，只返回该平台目录下的文件", Required: true, Type: "string", Example: "android"},
+				{Name: "runtimeVersion", Description: "客户端运行时版本，只匹配同一运行时版本的构建", Required: true, Type: "string", Example: "725-n1-m24"},
+				{Name: "userId", Description: "用户标识（例如登录账号 ID）；用于匹配提测单成员和比例灰度分桶，未登录时不传", Required: false, Type: "string", Example: "1001"},
 			},
 			ResponseFields: []domain.ClientIntegrationField{
 				{Name: "application", Description: "应用信息，包含 slug 和名称", Required: true, Type: "object", Example: `{"slug":"` + applicationSlug + `","name":"小米汽车"}`},
 				{Name: "environment", Description: "环境信息，包含环境编码", Required: true, Type: "object", Example: `{"code":"product"}`},
-				{Name: "identifier", Description: "请求使用的定向灰度标识，未传时为空", Required: false, Type: "string", Example: "user-123"},
-				{Name: "modules", Description: "客户端需要加载的模块 manifest 列表", Required: true, Type: "array", Example: `[{"id":"profile","files":[]}]`},
+				{Name: "userId", Description: "请求使用的用户标识，未传时为空", Required: false, Type: "string", Example: "1001"},
+				{Name: "modules", Description: "客户端需要加载的模块 manifest 列表；每项的 source 说明命中规则（testPlan、percentage、full），命中提测单时 testPlan 为 {id, name}", Required: true, Type: "array", Example: `[{"id":"profile","source":"full","files":[]}]`},
 				{Name: "missingModules", Description: "未能解析到发布路由或 manifest 的模块列表", Required: true, Type: "array", Example: "[]"},
 			},
 		},
