@@ -158,7 +158,7 @@ func TestGetApplicationDetail(t *testing.T) {
 	if response.Detail.ClientIntegration.Endpoint.Path != "/api/v1/artifacts/applications/mi-car/environments/{environment}/manifest" {
 		t.Fatalf("expected client manifest path, got %#v", response.Detail.ClientIntegration.Endpoint)
 	}
-	if len(response.Detail.ClientIntegration.Endpoint.RequestFields) != 1 || response.Detail.ClientIntegration.Endpoint.RequestFields[0].Name != "identifier" {
+	if len(response.Detail.ClientIntegration.Endpoint.RequestFields) != 1 || response.Detail.ClientIntegration.Endpoint.RequestFields[0].Name != "userId" {
 		t.Fatalf("expected client request field descriptions, got %#v", response.Detail.ClientIntegration.Endpoint.RequestFields)
 	}
 	if len(response.Detail.ClientIntegration.Endpoint.ResponseFields) != 1 || response.Detail.ClientIntegration.Endpoint.ResponseFields[0].Name != "modules" {
@@ -678,9 +678,9 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 				Path:        "/api/v1/artifacts/applications/mi-car/environments/{environment}/manifest",
 				Method:      http.MethodGet,
 				Description: "客户端获取指定应用环境下模块 manifest 的接口",
-				ExampleURL:  "https://forge.example.com/api/v1/artifacts/applications/mi-car/environments/product/manifest?identifier=user-1",
+				ExampleURL:  "https://forge.example.com/api/v1/artifacts/applications/mi-car/environments/product/manifest?userId=user-1",
 				RequestFields: []domain.ClientIntegrationField{
-					{Name: "identifier", Description: "定向灰度标识", Required: false, Type: "string", Example: "user-1"},
+					{Name: "userId", Description: "客户端用户 ID", Required: false, Type: "string", Example: "user-1"},
 				},
 				ResponseFields: []domain.ClientIntegrationField{
 					{Name: "modules", Description: "模块 manifest 列表", Required: true, Type: "array", Example: "[]"},

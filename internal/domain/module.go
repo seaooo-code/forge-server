@@ -25,10 +25,9 @@ const (
 )
 
 const (
-	DefaultModuleDockerfilePath      = "Dockerfile"
-	DefaultModuleBuildContext        = "."
-	DefaultModuleCIArtifactPath      = "dist"
-	DefaultModuleAutoPreviewTTLHours = 168
+	DefaultModuleDockerfilePath = "Dockerfile"
+	DefaultModuleBuildContext   = "."
+	DefaultModuleCIArtifactPath = "dist"
 )
 
 // ModuleBuildConfig 是模块的构建与自动触发配置。
@@ -46,8 +45,6 @@ type ModuleBuildConfig struct {
 	CIArtifactPath       string
 	AutoBuildBranches    []string
 	AutoBuildEnvironment string
-	AutoPreviewRelease   bool
-	AutoPreviewTTLHours  int
 }
 
 type Module struct {

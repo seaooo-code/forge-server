@@ -155,7 +155,6 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			release_id,
 			runtime_version,
 			route_type,
-			identifier,
 			status,
 			created_by_user_id
 		) values (
@@ -165,7 +164,6 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			$4,
 			$7,
 			$5,
-			'',
 			'active',
 			$6
 		)
@@ -478,7 +476,6 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 	if _, err := tx.Exec(ctx, `
 		update release_routes
 		set route_type = 'default',
-			identifier = '',
 			status = 'active',
 			updated_at = now()
 		where id = $1

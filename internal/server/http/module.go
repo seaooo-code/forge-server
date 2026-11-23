@@ -59,8 +59,6 @@ type moduleBuildConfigResponse struct {
 	BuildAdapterParams   map[string]string `json:"buildAdapterParams"`
 	AutoBuildBranches    []string          `json:"autoBuildBranches"`
 	AutoBuildEnvironment string            `json:"autoBuildEnvironment"`
-	AutoPreviewRelease   bool              `json:"autoPreviewRelease"`
-	AutoPreviewTTLHours  int               `json:"autoPreviewTtlHours"`
 	BuildContext         string            `json:"buildContext"`
 	DockerfilePath       string            `json:"dockerfilePath"`
 	CIArtifactPath       string            `json:"ciArtifactPath"`
@@ -107,8 +105,6 @@ type moduleBuildConfigRequest struct {
 	BuildAdapterParams   map[string]string `json:"buildAdapterParams"`
 	AutoBuildBranches    []string          `json:"autoBuildBranches"`
 	AutoBuildEnvironment string            `json:"autoBuildEnvironment"`
-	AutoPreviewRelease   bool              `json:"autoPreviewRelease"`
-	AutoPreviewTTLHours  int               `json:"autoPreviewTtlHours"`
 	BuildContext         string            `json:"buildContext"`
 	DockerfilePath       string            `json:"dockerfilePath"`
 	CIArtifactPath       string            `json:"ciArtifactPath"`
@@ -272,8 +268,6 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 			BuildAdapterParams:   request.BuildConfig.BuildAdapterParams,
 			AutoBuildBranches:    request.BuildConfig.AutoBuildBranches,
 			AutoBuildEnvironment: request.BuildConfig.AutoBuildEnvironment,
-			AutoPreviewRelease:   request.BuildConfig.AutoPreviewRelease,
-			AutoPreviewTTLHours:  request.BuildConfig.AutoPreviewTTLHours,
 			BuildContext:         request.BuildConfig.BuildContext,
 			DockerfilePath:       request.BuildConfig.DockerfilePath,
 			CIArtifactPath:       request.BuildConfig.CIArtifactPath,
@@ -339,8 +333,6 @@ func newModuleResponse(module domain.Module) moduleResponse {
 			BuildAdapterParams:   nonNilStringMap(module.BuildConfig.BuildAdapterParams),
 			AutoBuildBranches:    nonNilStrings(module.BuildConfig.AutoBuildBranches),
 			AutoBuildEnvironment: module.BuildConfig.AutoBuildEnvironment,
-			AutoPreviewRelease:   module.BuildConfig.AutoPreviewRelease,
-			AutoPreviewTTLHours:  module.BuildConfig.AutoPreviewTTLHours,
 			BuildContext:         module.BuildConfig.BuildContext,
 			DockerfilePath:       module.BuildConfig.DockerfilePath,
 			CIArtifactPath:       module.BuildConfig.CIArtifactPath,

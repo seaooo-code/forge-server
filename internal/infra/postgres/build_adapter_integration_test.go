@@ -206,7 +206,6 @@ func TestIntegrationModuleRepositoryUniqueOnlyForDockerfileMode(t *testing.T) {
 	featureInput := func(id string, config domain.ModuleBuildConfig) domain.ModuleInput {
 		config.DockerfilePath = domain.DefaultModuleDockerfilePath
 		config.BuildContext = domain.DefaultModuleBuildContext
-		config.AutoPreviewTTLHours = domain.DefaultModuleAutoPreviewTTLHours
 		return domain.ModuleInput{
 			ApplicationID:  applicationID,
 			CommonModuleID: commonModuleID,

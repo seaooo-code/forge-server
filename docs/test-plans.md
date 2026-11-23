@@ -1,6 +1,6 @@
 # 提测单方案
 
-本文描述「提测单」这项能力，以及它如何替换原来的「按 identifier 定向灰度」和「预览通道」。第一期已实现，第 9 节第二步和第 11 节第二期尚未实现。
+本文描述「提测单」这项能力，以及它如何替换原来的「按 identifier 定向灰度」和「预览通道」。第一期已实现。第 9 节第二步中，代码已不再读写待删除的列，删除列和收紧约束的迁移还没做；第 11 节第二期尚未实现。
 
 ## 1. 背景
 
@@ -192,7 +192,7 @@ create index if not exists idx_test_plans_open
 - 构建成功的回调（`BuildTriggerService`，手动和 webhook 构建都会触发）里，原来创建预览定向发布的逻辑改为：查找同应用、同环境、进行中且未过期的提测单里，模块相同、`branch` 等于构建分支、`mode = 'follow'` 的条目，把条目的构建换成这次构建，并记一条 `item_updated` 操作记录（操作人为空）。
 - 按第 3.2 节，同一模块的同一分支最多属于一张进行中的提测单，所以一次构建最多更新一个条目。
 - 只替换比当前条目更新的构建（按构建号判断），避免旧构建延迟回调时覆盖新构建。
-- 模块配置里的「预览通道」开关（`auto_preview_release`、`auto_preview_ttl_hours`）停止使用，第二期删除这两列。
+- 模块配置里的「预览通道」开关（`auto_preview_release`、`auto_preview_ttl_hours`）已从接口和代码中删除，数据库列在第 9 节第二步删除。
 
 ## 8. 接口
 
@@ -231,6 +231,8 @@ create index if not exists idx_test_plans_open
 - OpenAPI 快照同步更新。
 
 **第二步（下一次发布）**
+
+代码已经不再读写 `release_routes.identifier`、`modules.auto_preview_release`、`modules.auto_preview_ttl_hours`（写入依赖列的默认值）。这一版部署后，再新增迁移完成下面两项：
 
 - 收紧 `release_records`、`release_routes` 的检查约束，不再允许 `targeted` 和 `identifier`；删除 `idx_release_routes_identifier_active`、`idx_release_records_targeted_expiry`、`release_routes.identifier`。
 - 删除 `modules.auto_preview_release`、`modules.auto_preview_ttl_hours`。

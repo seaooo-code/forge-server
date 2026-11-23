@@ -135,8 +135,6 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 			build_context,
 			auto_build_branches,
 			auto_build_environment_code,
-			auto_preview_release,
-			auto_preview_ttl_hours,
 			build_mode,
 			build_adapter_id,
 			build_adapter_params,
@@ -144,7 +142,7 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 			ci_artifact_path,
 			sort_order
 		) values (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21,
 			coalesce((select max(sort_order) + 10 from modules), 10)
 		)
 	`, moduleWriteArgs(input.ID, input)...); err != nil {
@@ -223,13 +221,11 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 			build_context = $14,
 			auto_build_branches = $15,
 			auto_build_environment_code = $16,
-			auto_preview_release = $17,
-			auto_preview_ttl_hours = $18,
-			build_mode = $19,
-			build_adapter_id = $20,
-			build_adapter_params = $21::jsonb,
-			ci_job = $22,
-			ci_artifact_path = $23,
+			build_mode = $17,
+			build_adapter_id = $18,
+			build_adapter_params = $19::jsonb,
+			ci_job = $20,
+			ci_artifact_path = $21,
 			updated_at = now()
 		where id = $1
 	`, moduleWriteArgs(id, input)...); err != nil {
@@ -337,8 +333,6 @@ func moduleSelectSQL() string {
 			m.build_context,
 			m.auto_build_branches,
 			coalesce(m.auto_build_environment_code, '') as auto_build_environment_code,
-			m.auto_preview_release,
-			m.auto_preview_ttl_hours,
 			m.build_mode,
 			coalesce(m.build_adapter_id, ''),
 			coalesce(ba.name, ''),
@@ -386,8 +380,6 @@ func scanModule(row moduleRow) (domain.Module, error) {
 		&module.BuildConfig.BuildContext,
 		&module.BuildConfig.AutoBuildBranches,
 		&module.BuildConfig.AutoBuildEnvironment,
-		&module.BuildConfig.AutoPreviewRelease,
-		&module.BuildConfig.AutoPreviewTTLHours,
 		&module.BuildConfig.BuildMode,
 		&module.BuildConfig.BuildAdapterID,
 		&module.BuildConfig.BuildAdapterName,
@@ -469,8 +461,6 @@ func moduleWriteArgs(id string, input domain.ModuleInput) []any {
 		input.BuildConfig.BuildContext,
 		autoBuildBranches,
 		autoBuildEnvironment,
-		input.BuildConfig.AutoPreviewRelease,
-		input.BuildConfig.AutoPreviewTTLHours,
 		string(buildMode),
 		buildAdapterID,
 		string(buildAdapterParamsJSON),

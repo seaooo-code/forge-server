@@ -195,7 +195,6 @@ func testAutoBuildModule(id string, branches []string, environment string) domai
 		BuildConfig: domain.ModuleBuildConfig{
 			AutoBuildBranches:    branches,
 			AutoBuildEnvironment: environment,
-			AutoPreviewTTLHours:  domain.DefaultModuleAutoPreviewTTLHours,
 		},
 	}
 }

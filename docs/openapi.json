@@ -3782,15 +3782,6 @@
             "description": "Environment code for automatic builds. Required when autoBuildBranches is not empty.",
             "type": "string"
           },
-          "autoPreviewRelease": {
-            "description": "Deprecated and ignored: the preview channel was replaced by test plan items that follow a branch.",
-            "type": "boolean"
-          },
-          "autoPreviewTtlHours": {
-            "description": "Deprecated and ignored together with autoPreviewRelease.",
-            "format": "int32",
-            "type": "integer"
-          },
           "buildAdapterId": {
             "description": "Build adapter id. Required in adapter mode and must be empty in dockerfile mode. A newly selected adapter must be active.",
             "type": "string"

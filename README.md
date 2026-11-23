@@ -1,6 +1,6 @@
 # Forge Server
 
-Forge Server 是 RN Bundle 交付平台的后端服务，负责应用与模块管理、GitHub 代码源授权、构建任务编排、S3 产物存储、灰度发布路由和客户端 manifest 分发。
+Forge Server 是 RN Bundle 交付平台的后端服务，负责应用与模块管理、GitHub / GitLab 代码源接入、构建任务编排、S3 产物存储、发布路由与提测单，以及客户端 manifest 分发。
 
 ## 系统组成
 
@@ -9,10 +9,12 @@ flowchart LR
   Console["Forge Console"] -->|"Feishu session / REST"| API["forge-server"]
   Client["RN Client"] -->|"Bearer token / manifest"| API
   API --> PostgreSQL[(PostgreSQL)]
-  API --> GitHub["GitHub App API"]
+  API --> Feishu["飞书开放平台"]
+  API --> Git["GitHub / GitLab API"]
+  Git -->|"webhook"| API
   Worker["forge-worker"] --> PostgreSQL
-  Worker --> GitHub
-  Worker --> Docker["Git + Docker"]
+  Worker --> Git
+  Worker --> Docker["Git + Docker 或 GitLab CI"]
   Worker --> S3["S3-compatible storage"]
   API --> S3
 ```
@@ -28,7 +30,7 @@ flowchart LR
 ## 核心能力
 
 - 应用、成员、环境、模块管理，以及基于全局角色和应用成员的权限校验
-- GitHub App Manifest 创建、安装授权和仓库搜索
+- GitHub App 创建与安装授权、GitLab 连接、仓库搜索和 push webhook 自动构建
 - RN Bundle 构建记录、执行状态和产物树管理
 - S3 兼容对象存储配置与连通性检查
 - 全量与比例灰度发布，以及按需求组织的提测单（成员按 userId 拿到指定分支的构建）
@@ -136,11 +138,11 @@ http://127.0.0.1:8080/api/v1/code-sources/github/install/callback
 
 ## 构建与发布链路
 
-1. `POST /api/v1/builds` 创建 `pending` 构建记录。
-2. worker 使用模块绑定的 GitHub installation ID 申请临时 token，并按指定分支浅克隆仓库。
+1. 控制台调用 `POST /api/v1/builds`，或代码托管的 push webhook 命中模块的自动构建分支，创建 `pending` 构建记录。
+2. worker 通过模块绑定的代码源连接申请临时凭证（GitHub installation token 或 GitLab 令牌），按 commit 检出仓库。
 3. worker 在仓库根目录执行 Dockerfile。默认从最终镜像的 `/app/dist` 导出产物；最终镜像为 `scratch` 且把 `/app/dist` 复制到根目录时，改用 `docker build --output` 导出。
 4. worker 生成文件 manifest，将产物上传到环境绑定的 S3 存储，并回写构建状态和产物摘要。
-5. 控制台基于成功构建创建全量或灰度发布；客户端携带访问令牌请求应用 manifest，服务端按环境、标识和灰度比例解析当前版本。
+5. 控制台基于成功构建创建全量或比例灰度发布，也可以把构建加入提测单；客户端携带访问令牌请求应用 manifest，服务端按「提测单 > 比例灰度 > 全量」解析每个模块的构建，规则见 [提测单](docs/test-plans.md)。
 
 默认对象路径：
 
@@ -150,7 +152,7 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 
 模块的构建方式为 `gitlab_ci` 时，worker 不检出代码也不执行 docker，而是在代码源（GitLab）上触发 pipeline，等待 `ciJob` 对应的 job 完成后取回它的 artifacts，再走同样的校验、清单和上传。契约和部署见 [转交 GitLab CI 构建](docs/gitlab-ci-build.md)。
 
-构建失败时优先查看构建详情中的 `workerId` 和 `errorMessage`。GitHub clone 认证由 worker 动态申请 installation token，与平台“访问令牌”不是同一套凭证。
+构建失败时优先查看构建详情中的 `workerId` 和 `errorMessage`。clone 凭证由 worker 通过代码源连接动态申请，与平台“访问令牌”不是同一套凭证。
 
 ## 鉴权边界
 
@@ -159,7 +161,7 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 | Forge Console 管理接口 | 飞书登录 session cookie，并叠加全局角色或应用成员权限 |
 | 客户端应用 manifest | `Authorization: Bearer <artifact-access-token>` |
 | 单文件产物下载 | 控制台 session 或 artifact access token |
-| Worker 拉取 GitHub 仓库 | GitHub App installation access token |
+| Worker 拉取仓库 | GitHub App installation access token 或 GitLab 连接令牌 |
 
 系统中首位完成飞书登录的用户会被初始化为 `SuperAdmin`。后续权限由全局角色和应用成员角色共同决定。
 

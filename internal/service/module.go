@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	maxModuleAutoBuildBranches  = 20
-	maxModuleAutoPreviewTTLHour = 24 * 365
-	maxModuleBuildPathLength    = 255
-	maxModuleCIJobLength        = 255
+	maxModuleAutoBuildBranches = 20
+	maxModuleBuildPathLength   = 255
+	maxModuleCIJobLength       = 255
 )
 
 type ModuleRepository interface {
@@ -285,8 +284,6 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 		CIArtifactPath:       strings.TrimSpace(config.CIArtifactPath),
 		AutoBuildBranches:    []string{},
 		AutoBuildEnvironment: strings.TrimSpace(config.AutoBuildEnvironment),
-		AutoPreviewRelease:   config.AutoPreviewRelease,
-		AutoPreviewTTLHours:  config.AutoPreviewTTLHours,
 	}
 	if normalized.BuildMode == "" {
 		normalized.BuildMode = domain.BuildModeDockerfile
@@ -319,10 +316,6 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 	if normalized.BuildContext == "" {
 		normalized.BuildContext = domain.DefaultModuleBuildContext
 	}
-	if normalized.AutoPreviewTTLHours == 0 {
-		normalized.AutoPreviewTTLHours = domain.DefaultModuleAutoPreviewTTLHours
-	}
-
 	// 构建路径必须是仓库内的相对路径。
 	pathValues := []string{normalized.DockerfilePath, normalized.BuildContext}
 	if normalized.BuildMode == domain.BuildModeGitLabCI {
@@ -355,8 +348,7 @@ func normalizeModuleBuildConfig(config domain.ModuleBuildConfig, defaultDockerfi
 		normalized.AutoBuildBranches = append(normalized.AutoBuildBranches, branch)
 	}
 	if len(normalized.AutoBuildBranches) > maxModuleAutoBuildBranches ||
-		(len(normalized.AutoBuildBranches) > 0 && normalized.AutoBuildEnvironment == "") ||
-		normalized.AutoPreviewTTLHours < 1 || normalized.AutoPreviewTTLHours > maxModuleAutoPreviewTTLHour {
+		(len(normalized.AutoBuildBranches) > 0 && normalized.AutoBuildEnvironment == "") {
 		return domain.ModuleBuildConfig{}, false
 	}
 	return normalized, true

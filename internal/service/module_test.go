@@ -92,8 +92,6 @@ func TestModuleServiceValidatesBuildConfig(t *testing.T) {
 		"dockerfile is directory":    {DockerfilePath: "."},
 		"invalid branch glob":        {AutoBuildBranches: []string{"release/["}, AutoBuildEnvironment: "qa"},
 		"branches without env":       {AutoBuildBranches: []string{"main"}},
-		"negative preview ttl":       {AutoPreviewTTLHours: -1},
-		"preview ttl over one year":  {AutoPreviewTTLHours: 24*365 + 1},
 		"windows separator in paths": {DockerfilePath: "apps\\Dockerfile"},
 	}
 	for name, config := range tests {

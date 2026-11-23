@@ -2228,8 +2228,6 @@ func moduleBuildConfigSchema() *openapi3.Schema {
 		WithProperty("buildAdapterParams", stringMapSchema("Build adapter parameter values keyed by parameter key. Validated against the adapter parameter definitions: required parameters need a value and undeclared keys are rejected. Must be empty in dockerfile mode. Do not put secrets here; use build variables.")).
 		WithProperty("autoBuildBranches", stringArraySchema("Branch globs that trigger builds on push. Empty disables automatic builds.")).
 		WithProperty("autoBuildEnvironment", stringSchema("Environment code for automatic builds. Required when autoBuildBranches is not empty.")).
-		WithProperty("autoPreviewRelease", boolSchema("Deprecated and ignored: the preview channel was replaced by test plan items that follow a branch.")).
-		WithProperty("autoPreviewTtlHours", int32Schema("Deprecated and ignored together with autoPreviewRelease.")).
 		WithProperty("buildContext", stringSchema("Docker build context relative to the repository root, default \".\".")).
 		WithProperty("dockerfilePath", stringSchema("Dockerfile path relative to the repository root. Defaults to FORGE_WORKER_DOCKERFILE. Only used in dockerfile mode.")).
 		WithProperty("ciJob", stringSchema("Name of the CI job that produces the build artifacts. Required in gitlab_ci mode and must be empty in other modes.")).

@@ -45,8 +45,8 @@ sequenceDiagram
   W->>W: docker build（注入变量与密钥），实时写日志
   W->>W: 校验 forge.json 与平台目录
   W->>S3: 上传文件与 manifest.json
-  W->>API: 构建成功，按规则创建预览通道发布
-  App->>API: GET manifest?platform=&runtimeVersion=&identifier=
+  W->>API: 构建成功，跟随该分支的提测单条目换成这次构建
+  App->>API: GET manifest?platform=&runtimeVersion=&userId=
   API-->>App: 命中的模块与文件（url + sha256）
 ```
 
@@ -82,9 +82,7 @@ dist/
 dockerfile_path text not null default 'Dockerfile',
 build_context text not null default '.',
 auto_build_branches text[] not null default '{}',       -- glob，空数组表示不自动构建
-auto_build_environment_code text references environments(code) on delete set null,
-auto_preview_release boolean not null default false,     -- 自动构建成功后，用分支名创建定向发布
-auto_preview_ttl_hours integer not null default 168
+auto_build_environment_code text references environments(code) on delete set null
 ```
 
 - 允许同一个仓库按不同的 Dockerfile 绑定成多个模块，用来支持 monorepo，相当于 Vercel 的 Root Directory。唯一约束见 3.2。
@@ -128,7 +126,7 @@ create table module_build_variables (
   git checkout --detach FETCH_HEAD
   ```
   如果托管方不允许按 SHA fetch，就退回到 `clone --depth 1 --branch`，然后校验 `HEAD` 是否等于 `commit_sha`。不相等时构建失败，并提示"分支已更新，请重新触发"。这条回退逻辑放在核心里，所有 provider 共用。
-- **预览通道**：模块开启 `auto_preview_release` 后，构建成功会自动创建一条定向发布，`identifier` 取分支名（保留 `/`），有效期为 `auto_preview_ttl_hours`。
+- **跟随分支**：构建成功后，跟随该分支的提测单条目会换成这次构建，见 [提测单](test-plans.md) 第 7 节。
 
 ### 2.4 构建日志
 
@@ -284,11 +282,11 @@ unique (code_source_connection_id, external_repository_id, dockerfile_path)
 ```sql
 -- release_routes
 runtime_version text not null,
--- 三个 active 唯一索引都加上 runtime_version
+-- 两个 active 唯一索引都加上 runtime_version
 create unique index idx_release_routes_default_active
     on release_routes(module_id, environment_code, runtime_version)
     where route_type = 'default' and status = 'active';
--- identifier、percentage 两个索引同理
+-- percentage 索引同理
 ```
 
 新发布只替换同一 `runtime_version` 下的路由。这样给新 App 版本发包，不会把旧 App 版本正在用的默认包顶掉。`runtime_version` 在创建发布时从构建记录复制过来，发布接口不需要新增参数。
@@ -297,10 +295,10 @@ create unique index idx_release_routes_default_active
 
 ```
 GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/manifest
-    ?platform=android&runtimeVersion=<string>&identifier=<optional>
+    ?platform=android&runtimeVersion=<string>&userId=<optional>
 ```
 
-- `platform` 和 `runtimeVersion` 必填，缺少时返回 400。路由优先级保持不变：定向 > 百分比 > 默认。
+- `platform` 和 `runtimeVersion` 必填，缺少时返回 400。每个模块按「提测单 > 比例灰度 > 全量」取第一个命中的构建，规则见 [提测单](test-plans.md) 第 4 节。
 - 如果命中的构建不包含请求的平台，该模块放进 `missingModules`，`reason = "platform_unavailable"`。如果这个运行时版本下没有任何路由，`reason = "no_release_for_runtime"`。
 - `files` 只返回 `{platform}/` 目录下的文件，并去掉路径里的平台前缀。
 - 响应会回显 `runtimeVersion` 和 `platform`，每个模块额外返回 `branch` 和 `commitSha`。
@@ -322,7 +320,7 @@ GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/
 - **代码源**：页面改为"连接列表"，统一展示 GitHub 和 GitLab 两类连接。GitHub 保留现有的创建 App、安装流程；GitLab 支持新建、校验、停用连接，令牌到期前 14 天在页面上提示。
 - **模块**：
   - 选仓库：先选连接，再搜索仓库。
-  - 构建配置：Dockerfile 路径、构建上下文、自动构建分支、自动构建环境、预览通道。
+  - 构建配置：Dockerfile 路径、构建上下文、自动构建分支、自动构建环境。
   - 详情页展示 webhook 配置说明：GitLab 显示 URL 和 secret；GitHub 显示"已由 App 统一接收"。
   - 新增"构建变量"页签：密钥只写不读，支持按环境覆盖。
 - **构建**：展示触发方式、commit（可跳转到代码托管页面）、运行时版本和平台；详情页新增实时日志面板。
@@ -338,15 +336,15 @@ GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/
 2. **secretbox**：实现密钥加解密。
 3. **代码源抽象**：定义 provider 接口和注册表；把 GitHub 现有能力迁移到连接模型上；新增 GitLab 适配器；webhook 路由统一解析为 PushEvent。
 4. **worker 改造**：通过 provider 获取凭证；按 commit 检出；注入构建变量与密钥；流式写日志；校验 `forge.json`。
-5. **触发服务**：匹配自动构建规则，保证幂等，生成预览通道发布。
+5. **触发服务**：匹配自动构建规则，保证幂等。
 6. **发布路由与拉包**：路由按 `runtime_version` 隔离，按平台过滤产物，返回缺失原因。
 7. **前端**：完成第 5、6 节的改动。
-8. **联调**：GitHub 与 GitLab 各接一个测试仓库，验证 push 后自动构建、预览通道和拉包全流程；再按小米接入指南完成一次真实接入。
+8. **联调**：GitHub 与 GitLab 各接一个测试仓库，验证 push 后自动构建、发布和拉包全流程；再按小米接入指南完成一次真实接入。
 
 ### 验收标准
 
 - 通用性：
-  - GitHub 和 GitLab 两个 provider 都完整走通"连接 → 选仓库 → push 自动构建 → 预览通道拉包"。
+  - GitHub 和 GitLab 两个 provider 都完整走通"连接 → 选仓库 → push 自动构建 → 发布后拉包"。
   - 核心代码（`internal/service`、`internal/domain`）里没有任何 provider 分支判断。
   - 前后端代码里不出现公司名、公司域名和公司专属的环境 code。可以用 `grep -riE "xiaomi|micar|mioffice"` 检查，测试数据除外。
 - 正确性：
@@ -373,14 +371,12 @@ GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/
 ## 8. P0 之后
 
 - **构建适配器**（下一步，设计见 [build-adapters.md](build-adapters.md)）：兼容现有打包工具链的构建配方作为数据在界面维护，业务仓库无需新增 Dockerfile。
-- **构建详情二维码**：生成带环境与通道的二维码，供测试包扫码切换包源（客户端需求 R1）。
 
 - **身份源抽象**：登录改为标准的 OIDC/OAuth，飞书作为其中一种身份源适配器。负责人搜索改为可选的"目录服务"适配器，未配置时退化为输入用户 ID。
 - **存量明文密钥迁移**：S3 的 `secret_access_key` 和 GitHub App 的 `private_key` 改用 secretbox 加密。
 - **代码源体验**：
   - 支持 GitLab OAuth 授权，按个人权限选择仓库。
   - 自动注册 webhook。
-  - 支持 MR / PR 预览通道。
 - **构建**：
   - 支持取消、重试、并发上限。
   - 新增 CI 推送产物接口，给必须在自己 CI 里打包的接入方使用。

@@ -48,7 +48,7 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 
 	buildRepository := postgres.NewBuildRepository(postgresPool)
 	codeSourceRepository := postgres.NewCodeSourceRepository(postgresPool)
-	// 构建成功回调：按模块配置创建预览通道发布，失败只记日志。
+	// 构建成功回调：把跟随该分支的提测单条目换成这次构建，失败只记日志。
 	buildService := service.NewBuildService(buildRepository).
 		WithSucceededHook(newBuildTriggerService(postgresPool, buildRepository, logger))
 	// worker 与 API 共用同一套 provider 获取 clone 凭证；worker 不接收 webhook，因此不需要 PushEventHandler。

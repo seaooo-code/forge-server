@@ -120,7 +120,7 @@ func TestGetModule(t *testing.T) {
 		t.Fatalf("unexpected module detail: %#v", response.Module)
 	}
 	if response.Module.BuildConfig.DockerfilePath != "Dockerfile" || response.Module.BuildConfig.AutoBuildEnvironment != "qa" ||
-		len(response.Module.BuildConfig.AutoBuildBranches) != 1 || response.Module.BuildConfig.AutoPreviewTTLHours != 168 {
+		len(response.Module.BuildConfig.AutoBuildBranches) != 1 {
 		t.Fatalf("unexpected module detail: %#v", response.Module)
 	}
 }
@@ -154,7 +154,7 @@ func TestCreateModule(t *testing.T) {
 	}
 	if lastInput.Repository.ConnectionID != "code-source-1" || lastInput.Repository.ExternalRepositoryID != "1001" ||
 		lastInput.BuildConfig.DockerfilePath != "apps/home/Dockerfile" || lastInput.BuildConfig.AutoBuildEnvironment != "qa" ||
-		!lastInput.BuildConfig.AutoPreviewRelease || len(lastInput.BuildConfig.AutoBuildBranches) != 2 {
+		len(lastInput.BuildConfig.AutoBuildBranches) != 2 {
 		t.Fatalf("unexpected module input: %#v", lastInput)
 	}
 }
@@ -384,7 +384,6 @@ func testHTTPModule(id string, kind domain.ModuleKind) domain.Module {
 		BuildConfig: domain.ModuleBuildConfig{
 			AutoBuildBranches:    []string{"main"},
 			AutoBuildEnvironment: "qa",
-			AutoPreviewTTLHours:  168,
 			BuildContext:         ".",
 			DockerfilePath:       "Dockerfile",
 		},
@@ -429,7 +428,6 @@ func testModuleRequest(id string) moduleRequest {
 		BuildConfig: moduleBuildConfigRequest{
 			AutoBuildBranches:    []string{"main", "release/*"},
 			AutoBuildEnvironment: "qa",
-			AutoPreviewRelease:   true,
 			DockerfilePath:       "apps/home/Dockerfile",
 		},
 	}
