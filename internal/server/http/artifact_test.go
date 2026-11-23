@@ -362,3 +362,55 @@ func TestDownloadArtifactFileStopsWhenTokenAndSessionAreInvalid(t *testing.T) {
 		t.Fatalf("expected unauthorized without download, got %d (input=%+v): %s", rec.Code, service.lastDownloadInput, rec.Body.String())
 	}
 }
+
+func TestGetArtifactManifestConditionalRequest(t *testing.T) {
+	service := &fakeArtifactService{
+		manifest: domain.ArtifactApplicationManifest{
+			Application:    domain.ArtifactApplication{ID: "app-seaooo", Name: "seaooo", Slug: "seaooo"},
+			Environment:    domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
+			Platform:       domain.PlatformAndroid,
+			RuntimeVersion: "1.0.0",
+			Modules: []domain.ArtifactModuleManifest{
+				{ID: "module-profile", Kind: domain.ModuleKindFeature, BuildRecordID: "build-1"},
+			},
+		},
+	}
+	e := New(config.Config{}, testArtifactDependencies(service))
+	request := func(ifNoneMatch string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?platform=android&runtimeVersion=1.0.0", nil)
+		addTestArtifactBearer(req)
+		if ifNoneMatch != "" {
+			req.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := request("")
+	etag := first.Header().Get("ETag")
+	if first.Code != http.StatusOK || etag == "" || first.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("expected 200 with ETag and no-cache, got %d etag=%q cache=%q", first.Code, etag, first.Header().Get("Cache-Control"))
+	}
+	var response artifactManifestResponse
+	if err := json.NewDecoder(first.Body).Decode(&response); err != nil || len(response.Modules) != 1 {
+		t.Fatalf("expected manifest body, got %v %#v", err, response)
+	}
+
+	for _, ifNoneMatch := range []string{etag, "W/" + etag, `"stale", ` + etag, "*"} {
+		rec := request(ifNoneMatch)
+		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("ETag") != etag {
+			t.Fatalf("If-None-Match %q: expected empty 304 with same ETag, got %d etag=%q body=%q", ifNoneMatch, rec.Code, rec.Header().Get("ETag"), rec.Body.String())
+		}
+	}
+
+	if rec := request(`"stale"`); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+		t.Fatalf("expected 200 for stale ETag, got %d", rec.Code)
+	}
+
+	service.manifest.Modules[0].BuildRecordID = "build-2"
+	changed := request(etag)
+	if changed.Code != http.StatusOK || changed.Header().Get("ETag") == etag {
+		t.Fatalf("expected 200 with new ETag after manifest changed, got %d etag=%q", changed.Code, changed.Header().Get("ETag"))
+	}
+}

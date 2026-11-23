@@ -122,5 +122,6 @@ Authorization: Bearer {访问令牌}
 - 访问令牌在 Forge 的「访问令牌」页面生成，只写进测试包。
 - 每个文件带 `path`、`url`、`sha256`、`sizeBytes`。客户端下载后先校验 sha256，再交给加载器。
 - `missingModules` 列出当前没有可用包的模块及原因：`no_release_for_runtime`、`platform_unavailable`、`release not found`。
+- 响应带 `ETag`。下次请求时带上 `If-None-Match: {上次的 ETag}`，清单没变时返回 304 且没有响应体。
 
-客户端需要实现的功能和改动见 [客户端需求](xiaomi-rn-client-requirements.md)。
+客户端需要实现的功能和改动见 [客户端需求](xiaomi-rn-client-requirements.md)，端侧组件的改造方式和 Forge 侧待办见 [客户端对接方案](xiaomi-rn-client-integration-plan.md)。

@@ -1,10 +1,14 @@
 package httpserver
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"forge-server/internal/domain"
 
@@ -134,7 +138,32 @@ func (h artifactHandler) manifest(c echo.Context) error {
 	if err != nil {
 		return artifactErrorResponse(c, err)
 	}
-	return c.JSON(http.StatusOK, newArtifactManifestResponse(manifest))
+
+	body, err := json.Marshal(newArtifactManifestResponse(manifest))
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	}
+	// 客户端冷启动和回到前台都会拉清单，内容没变时用 304 省掉响应体。
+	// ETag 取响应体哈希，platform、runtimeVersion、userId 都在响应体里，不同请求的 ETag 自然不同。
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	c.Response().Header().Set("ETag", etag)
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	if etagMatches(c.Request().Header.Get("If-None-Match"), etag) {
+		return c.NoContent(http.StatusNotModified)
+	}
+	return c.JSONBlob(http.StatusOK, body)
+}
+
+// etagMatches 按 RFC 9110 的 If-None-Match 规则做弱比较：支持 *、逗号分隔的多个值和 W/ 前缀。
+func etagMatches(ifNoneMatch string, etag string) bool {
+	for _, candidate := range strings.Split(ifNoneMatch, ",") {
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+		if candidate == "*" || candidate == etag {
+			return true
+		}
+	}
+	return false
 }
 
 func artifactErrorResponse(c echo.Context, err error) error {

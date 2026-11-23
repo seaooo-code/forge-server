@@ -482,7 +482,19 @@ func baseOpenAPIDocument() *openapi3.T {
 			openapi3.WithPath("/api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/manifest", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("getApplicationArtifactManifest", "Get application module artifact manifest", []string{"Artifacts"}, responses(
-						response(http.StatusOK, "Application module artifact manifest.", schemaRef("ArtifactManifestResponse")),
+						openapi3.WithStatus(http.StatusOK, &openapi3.ResponseRef{Value: func() *openapi3.Response {
+							value := openapi3.NewResponse().
+								WithDescription("Application module artifact manifest. The ETag header is a hash of the response body; send it back in If-None-Match on the next request.").
+								WithJSONSchemaRef(schemaRef("ArtifactManifestResponse"))
+							value.Headers = openapi3.Headers{
+								"ETag": {Value: &openapi3.Header{Parameter: openapi3.Parameter{
+									Description: "Manifest version tag, a hash of the response body.",
+									Schema:      schemaValue(stringSchema("Manifest ETag.")),
+								}}},
+							}
+							return value
+						}()}),
+						responseNoBody(http.StatusNotModified, "Manifest unchanged since the ETag sent in If-None-Match. The response has no body."),
 						response(http.StatusBadRequest, "Invalid artifact manifest request, including missing or invalid platform or runtimeVersion.", schemaRef("ErrorResponse")),
 						response(http.StatusUnauthorized, "Artifact token is required.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Application environment manifest not found.", schemaRef("ErrorResponse")),
@@ -1577,6 +1589,11 @@ func artifactManifestParameters() openapi3.Parameters {
 			Value: openapi3.NewQueryParameter("userId").
 				WithDescription("Optional client user id, for example the signed-in account id. Each module resolves in order: an active test plan this user is a member of, then percentage gray bucketed by userId, then the full release. Without userId only full releases are returned.").
 				WithSchema(stringSchema("Client user id.")),
+		},
+		{
+			Value: openapi3.NewHeaderParameter("If-None-Match").
+				WithDescription("Optional ETag from the previous manifest response. When it still matches, the server returns 304 with no body.").
+				WithSchema(stringSchema("Previous manifest ETag.")),
 		},
 	}
 }

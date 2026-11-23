@@ -6919,6 +6919,15 @@
               "description": "Client user id.",
               "type": "string"
             }
+          },
+          {
+            "description": "Optional ETag from the previous manifest response. When it still matches, the server returns 304 with no body.",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "description": "Previous manifest ETag.",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6930,7 +6939,19 @@
                 }
               }
             },
-            "description": "Application module artifact manifest."
+            "description": "Application module artifact manifest. The ETag header is a hash of the response body; send it back in If-None-Match on the next request.",
+            "headers": {
+              "ETag": {
+                "description": "Manifest version tag, a hash of the response body.",
+                "schema": {
+                  "description": "Manifest ETag.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Manifest unchanged since the ETag sent in If-None-Match. The response has no body."
           },
           "400": {
             "content": {
