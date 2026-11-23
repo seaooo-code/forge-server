@@ -18,6 +18,7 @@ func registerOpenAPIRoutes(e *echo.Echo) {
 func openAPIDocument() *openapi3.T {
 	doc := baseOpenAPIDocument()
 	addTestPlanOpenAPI(doc)
+	addReleaseOperationsOpenAPI(doc)
 	return doc
 }
 
@@ -517,10 +518,10 @@ func baseOpenAPIDocument() *openapi3.T {
 				}(),
 				Post: func() *openapi3.Operation {
 					op := operation("createRelease", "Create RN JS bundle release", []string{"Releases"}, responses(
-						response(http.StatusCreated, "Release created and route activated.", schemaRef("ReleaseDetailResponse")),
+						response(http.StatusCreated, "Release created and route activated. Within the same module, environment and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
 						response(http.StatusForbidden, "Current user cannot create releases for this build.", schemaRef("ErrorResponse")),
-						response(http.StatusConflict, "Release target is already active for the same build.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "Conflict. error is \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible.", schemaRef("ReleaseConflictErrorResponse")),
 						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -2280,6 +2281,8 @@ func buildRecordSchema() *openapi3.Schema {
 		"codeSourceConnectionId",
 		"commitSha",
 		"runtimeVersion",
+		"providedCapabilities",
+		"requiredCapabilities",
 		"platforms",
 		"storageConfigurationId",
 		"storageConfigurationName",
@@ -2323,6 +2326,8 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("repositoryProvider", enumStringSchema("Repository provider.", "github", "gitlab")).
 		WithProperty("repositoryWebUrl", stringSchema("Repository web URL.")).
 		WithProperty("runtimeVersion", stringSchema("runtimeVersion from forge.json. Empty until the build succeeds.")).
+		WithProperty("providedCapabilities", capabilitiesSchema("Capability levels this build provides (forge.json provides). Empty when not declared.")).
+		WithProperty("requiredCapabilities", capabilitiesSchema("Minimum capability levels this build requires from its Common module (forge.json requires). Empty when not declared.")).
 		WithProperty("startedAt", dateTimeSchema("Build start time.")).
 		WithProperty("status", enumStringSchema("Build status.", "pending", "running", "succeeded", "failed")).
 		WithProperty("storageConfigurationId", stringSchema("Storage configuration id bound to the environment at queue time.")).
@@ -2433,12 +2438,13 @@ func artifactMissingModuleSchema() *openapi3.Schema {
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
 		WithProperty("reason", enumStringSchema(
-			"Why this module is absent from the manifest modules list. no_release_for_runtime: no active route under the requested runtimeVersion; release not found: routes exist under the runtimeVersion but none matched; platform_unavailable: the matched build does not contain the requested platform.",
+			"Why this module is absent from the manifest modules list. no_release_for_runtime: no active route under the requested runtimeVersion; release not found: routes exist under the runtimeVersion but none matched; platform_unavailable: the matched build does not contain the requested platform; common_incompatible: the Feature build requires higher capability levels than the Common build served in this response (fall back to the bundled package).",
 			domain.ArtifactMissingReasonNoReleaseForRuntime,
 			domain.ArtifactMissingReasonReleaseNotFound,
 			domain.ArtifactMissingReasonPlatformUnavailable,
 			domain.ArtifactMissingReasonBuildNotFound,
 			domain.ArtifactMissingReasonArtifactUnavailable,
+			domain.ArtifactMissingReasonCommonIncompatible,
 		))
 }
 
@@ -3198,4 +3204,11 @@ func buildAdapterDraftRenderPreviewRequestSchema() *openapi3.Schema {
 		WithPropertyRef("parameters", arraySchemaRef("BuildAdapterParameter")).
 		WithProperty("moduleId", stringSchema("Module used for the render context. Omit to use a sample context.")).
 		WithProperty("params", stringMapSchema("Parameter values, validated strictly against the draft parameters. Omit to use the parameters saved on the module; keys not declared in the draft are ignored."))
+}
+
+// capabilitiesSchema 是 forge.json 能力声明的 schema：键为能力名，值为非负整数等级。
+func capabilitiesSchema(description string) *openapi3.Schema {
+	schema := openapi3.NewObjectSchema().WithAdditionalProperties(openapi3.NewInt64Schema().WithMin(0))
+	schema.Description = description
+	return schema
 }

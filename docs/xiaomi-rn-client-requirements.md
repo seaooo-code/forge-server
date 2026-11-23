@@ -46,10 +46,11 @@ Forge 是 RN Bundle 构建与交付平台，部署在公司内网，第一阶段
 
 ### R5 缺包处理（必做）
 
-- 响应里的 `missingModules` 会列出没有可用包的模块，原因有三种：
+- 响应里的 `missingModules` 会列出没有可用包的模块，原因有四种：
   - `no_release_for_runtime`：这个 runtimeVersion 没有发布；
   - `platform_unavailable`：构建产物里没有这个平台；
-  - `release not found`：这个 runtimeVersion 下有发布，但都没有命中本次请求（例如只有未分到的比例灰度）。
+  - `release not found`：这个 runtimeVersion 下有发布，但都没有命中本次请求（例如只有未分到的比例灰度）；
+  - `common_incompatible`：业务包要求的 common API 版本高于这次返回的 common 包（常见于提测单里只换了其中一方）。
 - 处理规则：
   - common 包缺失：整组回退到内置包，并提示"Forge 上没有与当前 App 兼容的 common 包"。
   - 只有业务包缺失：这些模块回退到内置包，其余模块照常使用 Forge 包。

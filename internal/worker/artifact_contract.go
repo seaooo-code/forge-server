@@ -90,8 +90,8 @@ func readForgeManifest(path string) (domain.ForgeManifest, error) {
 		return domain.ForgeManifest{}, fmt.Errorf("%s 在 JSON 对象之后还有多余内容", domain.ForgeManifestFileName)
 	}
 	for key := range fields {
-		if key != "runtimeVersion" {
-			return domain.ForgeManifest{}, fmt.Errorf("%s 包含未知字段 %q，只允许 runtimeVersion", domain.ForgeManifestFileName, key)
+		if key != "runtimeVersion" && key != "provides" && key != "requires" {
+			return domain.ForgeManifest{}, fmt.Errorf("%s 包含未知字段 %q，只允许 runtimeVersion、provides、requires", domain.ForgeManifestFileName, key)
 		}
 	}
 	raw, ok := fields["runtimeVersion"]
@@ -105,7 +105,24 @@ func readForgeManifest(path string) (domain.ForgeManifest, error) {
 	if !domain.IsValidRuntimeVersion(runtimeVersion) {
 		return domain.ForgeManifest{}, fmt.Errorf("%s 的 runtimeVersion %q 不合法：长度 1-64，只允许字母、数字和 . _ -", domain.ForgeManifestFileName, runtimeVersion)
 	}
-	return domain.ForgeManifest{RuntimeVersion: runtimeVersion}, nil
+	manifest := domain.ForgeManifest{RuntimeVersion: runtimeVersion, Provides: domain.Capabilities{}, Requires: domain.Capabilities{}}
+	for key, target := range map[string]*domain.Capabilities{"provides": &manifest.Provides, "requires": &manifest.Requires} {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var capabilities domain.Capabilities
+		// 能力等级必须是整数，json 解码到 int64 会拒绝小数和超出范围的值。
+		if err := json.Unmarshal(raw, &capabilities); err != nil || capabilities == nil {
+			return domain.ForgeManifest{}, fmt.Errorf("%s 的 %s 必须是对象，值为非负整数，例如 {\"commonApi\": 3}", domain.ForgeManifestFileName, key)
+		}
+		if !domain.IsValidCapabilities(capabilities) {
+			return domain.ForgeManifest{}, fmt.Errorf("%s 的 %s 不合法：最多 %d 项，能力名以字母开头、长度不超过 64、只允许字母、数字和 . _ -，等级为 0 到 %d 的整数",
+				domain.ForgeManifestFileName, key, domain.MaxCapabilities, domain.MaxCapabilityLevel)
+		}
+		*target = capabilities
+	}
+	return manifest, nil
 }
 
 func directoryHasRegularFile(dir string) (bool, error) {

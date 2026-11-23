@@ -147,6 +147,17 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, worke
 	if normalized.RuntimeVersion != "" && !domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
 		return domain.BuildRecord{}, domain.ErrInvalidBuildInput
 	}
+	normalized.ProvidedCapabilities = completion.ProvidedCapabilities
+	normalized.RequiredCapabilities = completion.RequiredCapabilities
+	if normalized.ProvidedCapabilities == nil {
+		normalized.ProvidedCapabilities = domain.Capabilities{}
+	}
+	if normalized.RequiredCapabilities == nil {
+		normalized.RequiredCapabilities = domain.Capabilities{}
+	}
+	if !domain.IsValidCapabilities(normalized.ProvidedCapabilities) || !domain.IsValidCapabilities(normalized.RequiredCapabilities) {
+		return domain.BuildRecord{}, domain.ErrInvalidBuildInput
+	}
 	for _, platform := range completion.Platforms {
 		if !domain.IsValidPlatform(platform) {
 			return domain.BuildRecord{}, domain.ErrInvalidBuildInput

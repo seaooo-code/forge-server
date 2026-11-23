@@ -10,6 +10,10 @@ var (
 	ErrReleaseAlreadyActive = errors.New("release already active")
 	ErrReleaseNotFound      = errors.New("release not found")
 	ErrReleaseRouteNotFound = errors.New("release route not found")
+	// ErrReleaseNotActive 表示要停用或回滚的发布已经失效。
+	ErrReleaseNotActive = errors.New("release not active")
+	// ErrReleaseRollbackUnavailable 表示回滚的发布不是全量，或者同一模块、环境、运行时版本下没有更早的全量可以回滚。
+	ErrReleaseRollbackUnavailable = errors.New("release rollback unavailable")
 )
 
 type ReleaseType string
@@ -95,6 +99,50 @@ type ReleaseCreateInput struct {
 	GrayPercentage  int
 	Description     string
 	CreatedByUserID string
+	// RollbackFromReleaseID 非空表示这次发布是从该全量发布回滚，只记录在操作记录里。
+	RollbackFromReleaseID string
+}
+
+// ReleaseDeactivateInput 停用一条生效中的发布。停用全量后，该运行时版本下没有命中灰度的客户端拿不到包，会回退到内置包。
+type ReleaseDeactivateInput struct {
+	ID          string
+	Reason      string
+	ActorUserID string
+}
+
+// ReleaseRollbackInput 把一条生效中的全量发布回滚到同一模块、环境、运行时版本下上一次全量发布的构建。
+type ReleaseRollbackInput struct {
+	ID          string
+	Description string
+	ActorUserID string
+}
+
+type ReleaseEventKind string
+
+// 发布操作记录的类型。
+const (
+	ReleaseEventCreated               ReleaseEventKind = "created"
+	ReleaseEventGrayPercentageUpdated ReleaseEventKind = "gray_percentage_updated"
+	ReleaseEventPromotedToFull        ReleaseEventKind = "promoted_to_full"
+	// ReleaseEventReplaced：被同一运行时版本下的新发布替换而失效，detail.byReleaseId 是新发布。
+	ReleaseEventReplaced    ReleaseEventKind = "replaced"
+	ReleaseEventDeactivated ReleaseEventKind = "deactivated"
+)
+
+// MaxReleaseEvents 是一次返回的发布操作记录上限。
+const MaxReleaseEvents = 100
+
+// MaxReleaseReasonLength 是停用原因、回滚说明的最大长度（按字符计）。
+const MaxReleaseReasonLength = 200
+
+type ReleaseEvent struct {
+	ID          int64
+	ReleaseID   string
+	Kind        ReleaseEventKind
+	Detail      map[string]any
+	ActorUserID string
+	ActorName   string
+	CreatedAt   time.Time
 }
 
 type ReleaseRecordFilters struct {
@@ -136,4 +184,34 @@ func IsValidReleaseStatus(status ReleaseStatus) bool {
 
 func IsValidReleaseGrayStrategy(strategy ReleaseGrayStrategy) bool {
 	return strategy == ReleaseGrayStrategyPercentage
+}
+
+// 发布能力冲突的原因。
+const (
+	// ReleaseCapabilityUnmet：Common 构建提供的能力等级低于 Feature 构建的要求。
+	ReleaseCapabilityUnmet = "unmet"
+	// ReleaseCapabilityCommonMissing：Feature 构建声明了要求，但所属 Common 模块在该环境、运行时版本下没有生效中的发布。
+	ReleaseCapabilityCommonMissing = "common_missing"
+)
+
+// ReleaseCapabilityConflict 是一条和本次发布不兼容的发布。Common 发布时列出不满足的 Feature 构建，
+// Feature 发布时列出不满足要求的 Common 构建；Reason 为 common_missing 时 BuildRecordID 为空。
+type ReleaseCapabilityConflict struct {
+	ModuleID      string
+	ModuleName    string
+	ReleaseID     string
+	ReleaseType   ReleaseType
+	BuildRecordID string
+	BuildNumber   int64
+	Reason        string
+	Shortfalls    []CapabilityShortfall
+}
+
+// ReleaseCapabilityConflictError 表示发布后会出现 Common 与 Feature 构建能力不兼容的组合，发布被拒绝。
+type ReleaseCapabilityConflictError struct {
+	Conflicts []ReleaseCapabilityConflict
+}
+
+func (e *ReleaseCapabilityConflictError) Error() string {
+	return "release capability conflict"
 }

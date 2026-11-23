@@ -4,7 +4,7 @@
 # Common 依赖由 forge-fetch-deps.js 按 FORGE_DEPS 下载。
 #
 # 产出符合 Forge 构建契约的 dist/：
-#   dist/forge.json                 {"runtimeVersion": "{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}"}
+#   dist/forge.json                 {"runtimeVersion": "{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}", "provides" 或 "requires": {"commonApi": N}}
 #   dist/{platform}/...             与晴空塔包 tar 解开后的内容一致（hbc/bundle、*.config.json、res、drawable-mdpi 或 assets）
 #   dist/{platform}/commonMap.{platform}.json   仅 common 包，供业务包构建时通过依赖注入读取
 #
@@ -146,5 +146,16 @@ for platform in "${platforms[@]}"; do
   log "$platform 输出：$(find "$DIST_DIR/$platform" -type f | wc -l) 个文件"
 done
 
-printf '{"runtimeVersion":"%s"}\n' "$runtime" > "$DIST_DIR/forge.json"
+# 写 forge.json。能力声明：common 包用 provides 声明自己的 common API 等级（commonApiLevel），
+# 业务包用 requires 声明需要的最低等级（maxCommonApiLevel），Forge 在发布和拉包时据此拦住不兼容的组合。
+# 配置里没有对应字段时不声明，Forge 不做这项校验。
+node -e '
+const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const [runtimeVersion, kind] = process.argv.slice(2);
+const out = { runtimeVersion };
+const level = kind === "common" ? c.commonApiLevel : c.maxCommonApiLevel;
+if (Number.isInteger(level) && level >= 0) out[kind === "common" ? "provides" : "requires"] = { commonApi: level };
+else process.stderr.write("[yrn-adapter] 配置里没有 " + (kind === "common" ? "commonApiLevel" : "maxCommonApiLevel") + "，不声明 commonApi 能力\n");
+process.stdout.write(JSON.stringify(out) + "\n");
+' "$YRN_CONFIG_FILE" "$runtime" "$YRN_KIND" > "$DIST_DIR/forge.json"
 log "完成：$(cat "$DIST_DIR/forge.json")"

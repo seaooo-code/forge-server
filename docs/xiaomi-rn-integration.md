@@ -64,7 +64,7 @@ YRN 包和客户端是否兼容，由 `SDKVersion`（RN 引擎版本）、`maxNa
 - **客户端**：按相同规则拼接后上报，具体要求见客户端需求。
 - common 包和业务包使用同一个 `runtimeVersion`，因此 Forge 一次请求就能返回整组兼容的包。common 包的模块 ID 表变化时，必须升级 `moduleIdMapVersion`，新旧两组包会自动隔离。
 - Forge 只做精确匹配。在测试环境里，旧 App 拿不到新包时只会显示"无可用包"，不会因为拿错包而白屏。
-- 已知缺口：`maxCommonApiLevel`（业务包依赖的 common 包 API 版本）不在 runtimeVersion 中。同一条 `moduleIdMapVersion` 线上，如果业务包依赖了更高版本的 common API，Forge 目前无法拦截。后续计划在平台层提供通用的"模块能力版本约束"，在发布时校验。
+- common API 版本不在 runtimeVersion 中，用平台的能力约束来管（见[发布运维与模块能力约束](release-operations.md)）。YRN 适配器把它声明为能力 `commonApi`：common 包写 `"provides": {"commonApi": <com.config.json 的 commonApiLevel>}`，业务包写 `"requires": {"commonApi": <buz config 的 maxCommonApiLevel>}`。Forge 在发布时拒绝不兼容的组合，拉包时再按客户端实际拿到的 common 构建兜底。配置里没有对应字段时不声明，Forge 不做这项校验。
 
 ## 5. YRN 构建适配器
 
@@ -121,7 +121,7 @@ Authorization: Bearer {访问令牌}
 
 - 访问令牌在 Forge 的「访问令牌」页面生成，只写进测试包。
 - 每个文件带 `path`、`url`、`sha256`、`sizeBytes`。客户端下载后先校验 sha256，再交给加载器。
-- `missingModules` 列出当前没有可用包的模块及原因：`no_release_for_runtime`、`platform_unavailable`、`release not found`。
+- `missingModules` 列出当前没有可用包的模块及原因：`no_release_for_runtime`、`platform_unavailable`、`release not found`、`common_incompatible`。
 - 响应带 `ETag`。下次请求时带上 `If-None-Match: {上次的 ETag}`，清单没变时返回 304 且没有响应体。
 
 客户端需要实现的功能和改动见 [客户端需求](xiaomi-rn-client-requirements.md)，端侧组件的改造方式和 Forge 侧待办见 [客户端对接方案](xiaomi-rn-client-integration-plan.md)。

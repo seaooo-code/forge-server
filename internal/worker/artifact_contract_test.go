@@ -46,6 +46,25 @@ func TestValidateArtifactContractAcceptsPlatforms(t *testing.T) {
 	}
 }
 
+func TestValidateArtifactContractReadsCapabilities(t *testing.T) {
+	root := writeArtifactFiles(t, map[string]string{
+		"forge.json": `{"runtimeVersion":"725-n1-m24","provides":{"commonApi":3},"requires":{"bridge":1}}`,
+		"ios/a":      "x",
+	})
+	manifest, _, err := validateArtifactContract(root)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if manifest.Provides["commonApi"] != 3 || len(manifest.Provides) != 1 || manifest.Requires["bridge"] != 1 || len(manifest.Requires) != 1 {
+		t.Fatalf("unexpected capabilities: %+v", manifest)
+	}
+
+	root = writeArtifactFiles(t, map[string]string{"forge.json": `{"runtimeVersion":"1"}`, "ios/a": "x"})
+	if manifest, _, err = validateArtifactContract(root); err != nil || manifest.Provides == nil || len(manifest.Provides) != 0 || len(manifest.Requires) != 0 {
+		t.Fatalf("expected empty capabilities without declarations, got %+v %v", manifest, err)
+	}
+}
+
 func TestValidateArtifactContractRejectsInvalidArtifacts(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -69,6 +88,12 @@ func TestValidateArtifactContractRejectsInvalidArtifacts(t *testing.T) {
 		{name: "empty runtimeVersion", files: map[string]string{"forge.json": `{"runtimeVersion":""}`, "ios/a": "x"}, want: "不合法"},
 		{name: "invalid runtimeVersion chars", files: map[string]string{"forge.json": `{"runtimeVersion":"1.0/725"}`, "ios/a": "x"}, want: "不合法"},
 		{name: "too long runtimeVersion", files: map[string]string{"forge.json": `{"runtimeVersion":"` + strings.Repeat("a", 65) + `"}`, "ios/a": "x"}, want: "不合法"},
+		{name: "provides not object", files: map[string]string{"forge.json": `{"runtimeVersion":"1","provides":[1]}`, "ios/a": "x"}, want: "provides 必须是对象"},
+		{name: "requires null", files: map[string]string{"forge.json": `{"runtimeVersion":"1","requires":null}`, "ios/a": "x"}, want: "requires 必须是对象"},
+		{name: "fractional level", files: map[string]string{"forge.json": `{"runtimeVersion":"1","requires":{"commonApi":1.5}}`, "ios/a": "x"}, want: "requires 必须是对象"},
+		{name: "string level", files: map[string]string{"forge.json": `{"runtimeVersion":"1","provides":{"commonApi":"3"}}`, "ios/a": "x"}, want: "provides 必须是对象"},
+		{name: "negative level", files: map[string]string{"forge.json": `{"runtimeVersion":"1","provides":{"commonApi":-1}}`, "ios/a": "x"}, want: "provides 不合法"},
+		{name: "invalid capability name", files: map[string]string{"forge.json": `{"runtimeVersion":"1","requires":{"common api":1}}`, "ios/a": "x"}, want: "requires 不合法"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

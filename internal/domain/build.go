@@ -60,11 +60,14 @@ type BuildRecord struct {
 	BuildAdapterVersion      *int
 	RenderedDockerfileSHA256 string
 	// DependencyBuilds 是 worker 注入到构建上下文的依赖构建，没有注入时为空。
-	DependencyBuilds         []BuildDependency
-	Branch                   string
-	CommitSHA                string
-	RuntimeVersion           string
-	Platforms                []string
+	DependencyBuilds []BuildDependency
+	Branch           string
+	CommitSHA        string
+	RuntimeVersion   string
+	Platforms        []string
+	// ProvidedCapabilities、RequiredCapabilities 来自产物的 forge.json，没有声明时为空。
+	ProvidedCapabilities     Capabilities
+	RequiredCapabilities     Capabilities
 	DefaultBranch            string
 	StorageConfigurationID   string
 	StorageConfigurationName string
@@ -159,15 +162,17 @@ type BuildQueueStats struct {
 }
 
 type BuildRecordCompletion struct {
-	CommitSHA      string
-	RuntimeVersion string
-	Platforms      []string
-	ArtifactKey    string
-	ArtifactURL    string
-	ManifestKey    string
-	FileCount      int
-	TotalSizeBytes int64
-	ErrorMessage   string
+	CommitSHA            string
+	RuntimeVersion       string
+	Platforms            []string
+	ProvidedCapabilities Capabilities
+	RequiredCapabilities Capabilities
+	ArtifactKey          string
+	ArtifactURL          string
+	ManifestKey          string
+	FileCount            int
+	TotalSizeBytes       int64
+	ErrorMessage         string
 }
 
 type ArtifactManifest struct {

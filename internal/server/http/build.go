@@ -66,6 +66,8 @@ type buildRecordResponse struct {
 	RepositoryProvider       string                    `json:"repositoryProvider"`
 	RepositoryWebURL         string                    `json:"repositoryWebUrl"`
 	RuntimeVersion           string                    `json:"runtimeVersion"`
+	ProvidedCapabilities     map[string]int64          `json:"providedCapabilities"`
+	RequiredCapabilities     map[string]int64          `json:"requiredCapabilities"`
 	StartedAt                string                    `json:"startedAt"`
 	Status                   string                    `json:"status"`
 	StorageConfigurationID   string                    `json:"storageConfigurationId"`
@@ -266,6 +268,8 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		RepositoryProvider:       string(record.CodeSourceProvider),
 		RepositoryWebURL:         record.Repository.WebURL,
 		RuntimeVersion:           record.RuntimeVersion,
+		ProvidedCapabilities:     nonNilCapabilities(record.ProvidedCapabilities),
+		RequiredCapabilities:     nonNilCapabilities(record.RequiredCapabilities),
 		StartedAt:                formatOptionalTime(record.StartedAt),
 		Status:                   string(record.Status),
 		StorageConfigurationID:   record.StorageConfigurationID,
@@ -340,4 +344,12 @@ func nonNilStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// nonNilCapabilities 让没有能力声明的构建在响应里返回空对象而不是 null。
+func nonNilCapabilities(capabilities domain.Capabilities) map[string]int64 {
+	if capabilities == nil {
+		return map[string]int64{}
+	}
+	return capabilities
 }

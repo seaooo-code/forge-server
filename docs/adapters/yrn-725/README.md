@@ -10,7 +10,9 @@
 | `gitlab-ci/` | 同一套构建在 GitLab CI 里的版本（`gitlab_ci` 构建方式）：`yrn-build-ci.sh`、业务仓库 `.gitlab-ci.yml` 的改动示例，见 [转交 GitLab CI 构建](../../gitlab-ci-build.md) |
 | `adapter.json` | 由上面三个文件和参数定义组合而成，可以直接 `POST /api/v1/build-adapters` 导入 |
 
-**产物结构**：每个平台目录下的内容与晴空塔包 tar 解开后一致，包括 hbc/bundle、`*.config.json`、`res`、`drawable-mdpi` 或 `assets`。如果是 common 包，还会额外放入 `commonMap.{platform}.json`。runtimeVersion 的格式为 `{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}`。
+**产物结构**：每个平台目录下的内容与晴空塔包 tar 解开后一致，包括 hbc/bundle、`*.config.json`、`res`、`drawable-mdpi` 或 `assets`。如果是 common 包，还会额外放入 `commonMap.{platform}.json`。runtimeVersion 的格式为 `{SDKVersion}-n{maxNativeApiLevel}-m{moduleIdMapVersion}`。`forge.json` 同时声明能力 `commonApi`：common 包写 `provides`，取 `com.config.json` 的 `commonApiLevel`；业务包写 `requires`，取 buz config 的 `maxCommonApiLevel`（见[发布运维与模块能力约束](../../release-operations.md)）。
+
+**升级适配器**：控制台里的适配器数据和业务仓库里的 `scripts/forge/yrn-build-ci.sh` 都是副本，不会随本目录自动更新。docker 构建要在「平台 → 构建适配器」里更新 `yrn-build.sh`；`gitlab_ci` 构建要把 `gitlab-ci/yrn-build-ci.sh` 同步到业务仓库。更新之前产出的构建没有能力声明，不参与校验。
 
 **与晴空塔的差异**：
 - `buildnum` 使用 Forge 模块内的构建号，`maketime` 使用 Forge 的构建开始时间。

@@ -1275,13 +1275,14 @@
             "type": "string"
           },
           "reason": {
-            "description": "Why this module is absent from the manifest modules list. no_release_for_runtime: no active route under the requested runtimeVersion; release not found: routes exist under the runtimeVersion but none matched; platform_unavailable: the matched build does not contain the requested platform.",
+            "description": "Why this module is absent from the manifest modules list. no_release_for_runtime: no active route under the requested runtimeVersion; release not found: routes exist under the runtimeVersion but none matched; platform_unavailable: the matched build does not contain the requested platform; common_incompatible: the Feature build requires higher capability levels than the Common build served in this response (fall back to the bundled package).",
             "enum": [
               "no_release_for_runtime",
               "release not found",
               "platform_unavailable",
               "build not found",
-              "build artifact not available"
+              "build artifact not available",
+              "common_incompatible"
             ],
             "type": "string"
           }
@@ -1291,6 +1292,89 @@
           "name",
           "kind",
           "reason"
+        ],
+        "type": "object"
+      },
+      "ArtifactPullStat": {
+        "properties": {
+          "buildNumber": {
+            "description": "Build number; 0 for missing outcomes or deleted builds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "buildRecordId": {
+            "description": "Build served; empty for missing outcomes.",
+            "type": "string"
+          },
+          "day": {
+            "description": "Date (YYYY-MM-DD) in the server's local time zone.",
+            "type": "string"
+          },
+          "environment": {
+            "description": "Environment code.",
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Module id.",
+            "type": "string"
+          },
+          "moduleName": {
+            "description": "Module name; empty when the module was deleted.",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "testPlan, percentage or full when the module got a build; missing:{reason} when it did not, for example missing:no_release_for_runtime.",
+            "type": "string"
+          },
+          "platform": {
+            "description": "Client platform.",
+            "type": "string"
+          },
+          "requests": {
+            "description": "Manifest requests (including 304) that resolved this way on that day.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "runtimeVersion": {
+            "description": "Client runtimeVersion.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "environment",
+          "moduleId",
+          "moduleName",
+          "runtimeVersion",
+          "platform",
+          "outcome",
+          "buildRecordId",
+          "buildNumber",
+          "requests"
+        ],
+        "type": "object"
+      },
+      "ArtifactPullStatsResponse": {
+        "properties": {
+          "from": {
+            "description": "First day included (YYYY-MM-DD).",
+            "type": "string"
+          },
+          "stats": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactPullStat"
+            },
+            "type": "array"
+          },
+          "to": {
+            "description": "Last day included (YYYY-MM-DD), today.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "stats"
         ],
         "type": "object"
       },
@@ -1930,6 +2014,15 @@
             },
             "type": "array"
           },
+          "providedCapabilities": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": "Capability levels this build provides (forge.json provides). Empty when not declared.",
+            "type": "object"
+          },
           "queuedAt": {
             "description": "Build queue time.",
             "format": "date-time",
@@ -1958,6 +2051,15 @@
           "repositoryWebUrl": {
             "description": "Repository web URL.",
             "type": "string"
+          },
+          "requiredCapabilities": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": "Minimum capability levels this build requires from its Common module (forge.json requires). Empty when not declared.",
+            "type": "object"
           },
           "runtimeVersion": {
             "description": "runtimeVersion from forge.json. Empty until the build succeeds.",
@@ -2030,6 +2132,8 @@
           "codeSourceConnectionId",
           "commitSha",
           "runtimeVersion",
+          "providedCapabilities",
+          "requiredCapabilities",
           "platforms",
           "storageConfigurationId",
           "storageConfigurationName",
@@ -2222,6 +2326,31 @@
         },
         "required": [
           "variables"
+        ],
+        "type": "object"
+      },
+      "CapabilityShortfall": {
+        "properties": {
+          "name": {
+            "description": "Capability name.",
+            "type": "string"
+          },
+          "provided": {
+            "description": "Level provided by the Common build; null when the Common build does not declare this capability.",
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "required": {
+            "description": "Level required by the Feature build.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "required",
+          "provided"
         ],
         "type": "object"
       },
@@ -4119,6 +4248,82 @@
         ],
         "type": "object"
       },
+      "ReleaseCapabilityConflict": {
+        "properties": {
+          "buildNumber": {
+            "description": "Build number of the conflicting release.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "buildRecordId": {
+            "description": "Build of the conflicting release; empty when reason is common_missing.",
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Module of the conflicting release. When releasing a Common build these are Feature modules; when releasing a Feature build this is its Common module.",
+            "type": "string"
+          },
+          "moduleName": {
+            "description": "Module name.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "unmet: the Common build provides lower levels than the Feature build requires. common_missing: the Feature build declares requires but its Common module has no active release for this environment and runtimeVersion.",
+            "enum": [
+              "unmet",
+              "common_missing"
+            ],
+            "type": "string"
+          },
+          "releaseId": {
+            "description": "Conflicting active release; empty when reason is common_missing.",
+            "type": "string"
+          },
+          "releaseType": {
+            "description": "Release type of the conflicting release (full or gray); empty when reason is common_missing.",
+            "type": "string"
+          },
+          "shortfalls": {
+            "items": {
+              "$ref": "#/components/schemas/CapabilityShortfall"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "moduleId",
+          "moduleName",
+          "releaseId",
+          "releaseType",
+          "buildRecordId",
+          "buildNumber",
+          "reason",
+          "shortfalls"
+        ],
+        "type": "object"
+      },
+      "ReleaseConflictErrorResponse": {
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseCapabilityConflict"
+            },
+            "type": "array"
+          },
+          "error": {
+            "description": "Conflict kind.",
+            "enum": [
+              "release already active",
+              "release capability conflict"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "ReleaseCreateRequest": {
         "properties": {
           "buildRecordId": {
@@ -4157,6 +4362,15 @@
         ],
         "type": "object"
       },
+      "ReleaseDeactivateRequest": {
+        "properties": {
+          "reason": {
+            "description": "Optional reason, at most 200 characters. Recorded in the release events.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "ReleaseDetailResponse": {
         "properties": {
           "release": {
@@ -4169,6 +4383,66 @@
         "required": [
           "release",
           "route"
+        ],
+        "type": "object"
+      },
+      "ReleaseEvent": {
+        "properties": {
+          "actor": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              }
+            ],
+            "description": "Who did it; null for system actions or deleted users.",
+            "nullable": true
+          },
+          "createdAt": {
+            "description": "RFC3339 time.",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "description": "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, grayPercentage (gray), rollbackFromReleaseId (rollback). gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason.",
+            "type": "object"
+          },
+          "id": {
+            "description": "Event id.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "Event kind.",
+            "enum": [
+              "created",
+              "gray_percentage_updated",
+              "promoted_to_full",
+              "replaced",
+              "deactivated"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "detail",
+          "actor",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReleaseEventsResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseEvent"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
         ],
         "type": "object"
       },
@@ -4335,6 +4609,15 @@
         "required": [
           "route"
         ],
+        "type": "object"
+      },
+      "ReleaseRollbackRequest": {
+        "properties": {
+          "description": {
+            "description": "Optional description of the new full release, at most 200 characters.",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ReleaseRoute": {
@@ -5634,6 +5917,23 @@
         ],
         "type": "object"
       },
+      "UserRef": {
+        "properties": {
+          "id": {
+            "description": "Console user id.",
+            "type": "string"
+          },
+          "name": {
+            "description": "User name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
       "UserSummary": {
         "properties": {
           "avatarUrl": {
@@ -6850,6 +7150,105 @@
         "summary": "Update artifact access token",
         "tags": [
           "AccessTokens"
+        ]
+      }
+    },
+    "/api/v1/artifact-pull-stats": {
+      "get": {
+        "operationId": "listArtifactPullStats",
+        "parameters": [
+          {
+            "description": "Filter by application id. At least one of applicationId, moduleId and buildRecordId is required.",
+            "in": "query",
+            "name": "applicationId",
+            "schema": {
+              "description": "Application id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by environment code.",
+            "in": "query",
+            "name": "environment",
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by module id.",
+            "in": "query",
+            "name": "moduleId",
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by build UUID.",
+            "in": "query",
+            "name": "buildRecordId",
+            "schema": {
+              "description": "Build UUID.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Days including today, 1-90, default 7. Data older than 90 days is deleted.",
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "description": "Days.",
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactPullStatsResponse"
+                }
+              }
+            },
+            "description": "Daily counts of manifest requests per module outcome, latest day first, at most 5000 rows. Counts are flushed every 30 seconds."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid filters."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List daily client pull statistics",
+        "tags": [
+          "Artifacts"
         ]
       }
     },
@@ -11242,7 +11641,7 @@
                 }
               }
             },
-            "description": "Release created and route activated."
+            "description": "Release created and route activated. Within the same module, environment and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one."
           },
           "400": {
             "content": {
@@ -11278,11 +11677,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ReleaseConflictErrorResponse"
                 }
               }
             },
-            "description": "Release target is already active for the same build."
+            "description": "Conflict. error is \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible."
           },
           "500": {
             "content": {
@@ -11392,6 +11791,182 @@
         ]
       }
     },
+    "/api/v1/releases/{id}/deactivate": {
+      "post": {
+        "operationId": "deactivateRelease",
+        "parameters": [
+          {
+            "description": "Release UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Release UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseDeactivateRequest"
+              }
+            }
+          },
+          "description": "Deactivate release payload."
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDetailResponse"
+                }
+              }
+            },
+            "description": "Release and its route deactivated. Nothing else is activated: after deactivating a full release, clients of that runtimeVersion that miss the gray bucket get no build and fall back to the bundled package."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid release request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot roll back or deactivate releases of this application (release:rollback)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Release not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseConflictErrorResponse"
+                }
+              }
+            },
+            "description": "error is \"release not active\"."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Deactivate release",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/{id}/events": {
+      "get": {
+        "operationId": "listReleaseEvents",
+        "parameters": [
+          {
+            "description": "Release UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Release UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseEventsResponse"
+                }
+              }
+            },
+            "description": "Latest events first, at most 100."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Release id is not a UUID."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Release not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List release events",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
     "/api/v1/releases/{id}/gray-percentage": {
       "patch": {
         "operationId": "updateReleaseGrayPercentage",
@@ -11471,6 +12046,109 @@
           }
         },
         "summary": "Update percentage gray release",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/{id}/rollback": {
+      "post": {
+        "operationId": "rollbackRelease",
+        "parameters": [
+          {
+            "description": "Release UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Release UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRollbackRequest"
+              }
+            }
+          },
+          "description": "Roll back full release payload."
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDetailResponse"
+                }
+              }
+            },
+            "description": "New full release of the build of the previous full release (same module, environment and runtimeVersion, different build). It ends the active percentage gray release and passes the same capability checks as createRelease."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid release request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot roll back or deactivate releases of this application (release:rollback)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Release not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseConflictErrorResponse"
+                }
+              }
+            },
+            "description": "error is \"release not active\", \"release rollback unavailable\" (not a full release, or no earlier full release), or \"release capability conflict\" with conflicts."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Roll back full release",
         "tags": [
           "Releases"
         ]

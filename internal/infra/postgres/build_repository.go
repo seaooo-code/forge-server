@@ -481,6 +481,8 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, wo
 				commit_sha = coalesce(nullif($8, ''), br.commit_sha),
 				runtime_version = $9,
 				platforms = $10,
+				provided_capabilities = $12::jsonb,
+				required_capabilities = $13::jsonb,
 				finished_at = now(),
 				updated_at = now()
 			where id = $1 and worker_id = $11 and status = 'running'
@@ -492,7 +494,8 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, wo
 		join code_source_connections csc on csc.id = m.code_source_connection_id
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
-	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms), workerID))
+	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms), workerID,
+		capabilitiesJSON(completion.ProvidedCapabilities), capabilitiesJSON(completion.RequiredCapabilities)))
 	if errors.Is(err, domain.ErrBuildRecordNotFound) {
 		return domain.BuildRecord{}, domain.ErrBuildLeaseLost
 	}
@@ -643,6 +646,8 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			br.commit_sha,
 			br.runtime_version,
 			br.platforms,
+			br.provided_capabilities,
+			br.required_capabilities,
 			m.default_branch,
 			br.storage_configuration_id,
 			s.name as storage_configuration_name,
@@ -683,6 +688,7 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	var createdByName, createdByAvatarURL string
 	var moduleAdapterParams []byte
 	var dependencyBuilds []byte
+	var providedCapabilities, requiredCapabilities []byte
 	if err := row.Scan(
 		&record.ID,
 		&record.Number,
@@ -717,6 +723,8 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.CommitSHA,
 		&record.RuntimeVersion,
 		&record.Platforms,
+		&providedCapabilities,
+		&requiredCapabilities,
 		&record.DefaultBranch,
 		&record.StorageConfigurationID,
 		&record.StorageConfigurationName,
@@ -752,6 +760,12 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		return domain.BuildRecord{}, fmt.Errorf("scan build record: %w", err)
 	}
 	record.Repository.DefaultBranch = record.DefaultBranch
+	if err := json.Unmarshal(providedCapabilities, &record.ProvidedCapabilities); err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("decode provided capabilities: %w", err)
+	}
+	if err := json.Unmarshal(requiredCapabilities, &record.RequiredCapabilities); err != nil {
+		return domain.BuildRecord{}, fmt.Errorf("decode required capabilities: %w", err)
+	}
 	record.ModuleBuildAdapterParams = map[string]string{}
 	if err := json.Unmarshal(moduleAdapterParams, &record.ModuleBuildAdapterParams); err != nil {
 		return domain.BuildRecord{}, fmt.Errorf("decode module build adapter params: %w", err)
@@ -795,4 +809,13 @@ func intervalString(duration time.Duration) string {
 
 func newBuildRecordID() string {
 	return uuid.NewString()
+}
+
+// capabilitiesJSON 把能力声明编码成 jsonb 参数，nil 写成空对象，和列默认值一致。
+func capabilitiesJSON(capabilities domain.Capabilities) []byte {
+	if capabilities == nil {
+		return []byte("{}")
+	}
+	encoded, _ := json.Marshal(capabilities)
+	return encoded
 }

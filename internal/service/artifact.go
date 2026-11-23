@@ -27,11 +27,23 @@ type ArtifactObjectReader interface {
 	GetArtifactObject(ctx context.Context, record domain.BuildRecord, objectKey string) (domain.ArtifactObject, error)
 }
 
+// ArtifactPullRecorder 记录每次 manifest 请求的解析结果，由 ArtifactPullStatsService 实现。
+type ArtifactPullRecorder interface {
+	RecordManifest(manifest domain.ArtifactApplicationManifest)
+}
+
 type ArtifactService struct {
 	buildRepository ArtifactBuildRepository
 	manifestReader  ArtifactManifestReader
 	objectReader    ArtifactObjectReader
 	repository      ArtifactRepository
+	pullRecorder    ArtifactPullRecorder
+}
+
+// WithPullRecorder 开启拉包统计。
+func (s *ArtifactService) WithPullRecorder(recorder ArtifactPullRecorder) *ArtifactService {
+	s.pullRecorder = recorder
+	return s
 }
 
 func NewArtifactService(repository ArtifactRepository, buildRepository ArtifactBuildRepository, manifestReader ArtifactManifestReader, objectReader ArtifactObjectReader) *ArtifactService {
@@ -115,6 +127,8 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 		Modules:        []domain.ArtifactModuleManifest{},
 		MissingModules: []domain.ArtifactMissingModule{},
 	}
+	// resolvedBuilds 记录已解析出构建的模块，用来在最后检查 Feature 与所属 Common 构建的能力是否兼容。
+	resolvedBuilds := map[string]domain.BuildRecord{}
 	for _, module := range source.Modules {
 		if module.BuildRecordID == "" {
 			reason := domain.ArtifactMissingReasonNoReleaseForRuntime
@@ -152,6 +166,7 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			// 冲突规则保证一个 userId 在一个模块上最多命中一张提测单，出现多张说明并发写入留下了例外，已按最近更新取了一张。
 			slog.WarnContext(ctx, "artifact manifest matched multiple test plans", "module", module.ID, "environment", normalized.Environment, "userId", normalized.UserID, "matches", module.TestPlanMatches, "testPlan", module.TestPlanID)
 		}
+		resolvedBuilds[module.ID] = record
 		result.Modules = append(result.Modules, domain.ArtifactModuleManifest{
 			ID:             module.ID,
 			Name:           module.Name,
@@ -170,6 +185,29 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			ManifestKey:    record.ManifestKey,
 			Files:          resolvedArtifactManifestFiles(normalized, record, manifest),
 		})
+	}
+
+	// 发布时已保证生效中的全量和灰度两两兼容；提测单只换其中一方时仍可能不兼容，这里按本次请求实际拿到的构建兜底。
+	// 不兼容的 Feature 模块移到 missingModules，客户端回退到内置包。Common 没有可用构建时客户端整组回退，不需要再处理。
+	commonModuleIDs := map[string]string{}
+	for _, module := range source.Modules {
+		commonModuleIDs[module.ID] = module.CommonModuleID
+	}
+	compatible := result.Modules[:0]
+	for _, module := range result.Modules {
+		common, ok := resolvedBuilds[commonModuleIDs[module.ID]]
+		if module.Kind == domain.ModuleKindFeature && ok &&
+			len(domain.UnmetCapabilities(resolvedBuilds[module.ID].RequiredCapabilities, common.ProvidedCapabilities)) > 0 {
+			result.MissingModules = append(result.MissingModules, domain.ArtifactMissingModule{
+				ID: module.ID, Name: module.Name, Kind: module.Kind, Reason: domain.ArtifactMissingReasonCommonIncompatible,
+			})
+			continue
+		}
+		compatible = append(compatible, module)
+	}
+	result.Modules = compatible
+	if s.pullRecorder != nil {
+		s.pullRecorder.RecordManifest(result)
 	}
 	return result, nil
 }

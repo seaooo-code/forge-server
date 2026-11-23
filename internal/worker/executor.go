@@ -254,6 +254,12 @@ func (e *Executor) publishArtifact(ctx context.Context, record domain.BuildRecor
 		return domain.BuildRecordCompletion{}, err
 	}
 	logs.Linef("产物校验通过：runtimeVersion %s，平台 %s", forgeManifest.RuntimeVersion, strings.Join(platforms, ","))
+	if len(forgeManifest.Provides) > 0 || len(forgeManifest.Requires) > 0 {
+		// json.Marshal 按键名排序输出 map，日志顺序稳定。
+		provides, _ := json.Marshal(forgeManifest.Provides)
+		requires, _ := json.Marshal(forgeManifest.Requires)
+		logs.Linef("能力声明：provides %s，requires %s", provides, requires)
+	}
 
 	manifest, err := generateArtifactManifest(artifactRoot, e.artifactKey(record), e.cfg.ArtifactDigests)
 	if err != nil {
@@ -268,6 +274,8 @@ func (e *Executor) publishArtifact(ctx context.Context, record domain.BuildRecor
 	completion.CommitSHA = commitSHA
 	completion.RuntimeVersion = forgeManifest.RuntimeVersion
 	completion.Platforms = platforms
+	completion.ProvidedCapabilities = forgeManifest.Provides
+	completion.RequiredCapabilities = forgeManifest.Requires
 	return completion, nil
 }
 

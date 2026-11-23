@@ -25,6 +25,7 @@ type Dependencies struct {
 	ApplicationService         ApplicationService
 	ArtifactService            ArtifactService
 	ArtifactAccessTokenService ArtifactAccessTokenService
+	ArtifactPullStatsService   ArtifactPullStatsService
 	BuildService               BuildService
 	BuildQueueService          BuildQueueService
 	BuildAdapterService        BuildAdapterService
@@ -93,11 +94,18 @@ type DashboardService interface {
 	GetDashboardSnapshot(ctx context.Context, ownerUnionID string) (domain.DashboardSnapshot, error)
 }
 
+type ArtifactPullStatsService interface {
+	ListArtifactPullStats(ctx context.Context, filters domain.ArtifactPullStatsFilters) ([]domain.ArtifactPullStatsRow, time.Time, time.Time, error)
+}
+
 type ReleaseService interface {
 	CreateRelease(ctx context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
 	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	DeactivateRelease(ctx context.Context, input domain.ReleaseDeactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	RollbackRelease(ctx context.Context, input domain.ReleaseRollbackInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	ListReleaseEvents(ctx context.Context, releaseID string) ([]domain.ReleaseEvent, error)
 }
 
 type TestPlanService interface {
@@ -239,6 +247,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerModuleRoutes(protectedAPI, deps.ModuleService, deps.AuthorizationService)
 	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
+	registerArtifactPullStatsRoutes(protectedAPI, deps.ArtifactPullStatsService)
 	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
 	registerTestPlanRoutes(protectedAPI, deps.TestPlanService, deps.AuthorizationService)
 

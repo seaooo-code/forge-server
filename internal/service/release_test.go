@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"forge-server/internal/domain"
@@ -252,6 +253,33 @@ type fakeReleaseRepository struct {
 	lastResolveInput domain.ReleaseResolveInput
 	lastUpdateInput  domain.ReleaseGrayPercentageUpdateInput
 	records          []domain.ReleaseRecord
+	// 停用、回滚相关
+	current         domain.ReleaseRecord
+	previous        domain.ReleaseRecord
+	previousErr     error
+	lastDeactivate  domain.ReleaseDeactivateInput
+	deactivateCalls int
+}
+
+func (r *fakeReleaseRepository) GetRelease(_ context.Context, id string) (domain.ReleaseRecord, error) {
+	if r.current.ID != id {
+		return domain.ReleaseRecord{}, domain.ErrReleaseNotFound
+	}
+	return r.current, nil
+}
+
+func (r *fakeReleaseRepository) DeactivateRelease(_ context.Context, input domain.ReleaseDeactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
+	r.deactivateCalls++
+	r.lastDeactivate = input
+	return domain.ReleaseRecord{ID: input.ID, Status: domain.ReleaseStatusInactive}, domain.ReleaseRoute{}, nil
+}
+
+func (r *fakeReleaseRepository) PreviousFullRelease(_ context.Context, _ string) (domain.ReleaseRecord, error) {
+	return r.previous, r.previousErr
+}
+
+func (r *fakeReleaseRepository) ListReleaseEvents(_ context.Context, _ string) ([]domain.ReleaseEvent, error) {
+	return []domain.ReleaseEvent{}, nil
 }
 
 func (r *fakeReleaseRepository) CreateRelease(_ context.Context, input domain.ReleaseCreateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
@@ -321,4 +349,55 @@ func (r *fakeReleaseRepository) UpdateReleaseGrayPercentage(_ context.Context, i
 		GrayPercentage: input.GrayPercentage,
 		ArtifactKey:    "rn-bundles/app/profile/qa/build-1",
 	}, nil
+}
+
+const testReleaseUUID = "018f4d7a-0a6c-789b-9c12-36a4dfd9d001"
+
+func TestReleaseServiceDeactivateValidatesInput(t *testing.T) {
+	repository := fakeReleaseRepository{}
+	service := NewReleaseService(&repository)
+	for name, input := range map[string]domain.ReleaseDeactivateInput{
+		"not uuid":        {ID: "rel-1", ActorUserID: "ou-1"},
+		"no actor":        {ID: testReleaseUUID},
+		"reason too long": {ID: testReleaseUUID, ActorUserID: "ou-1", Reason: strings.Repeat("长", domain.MaxReleaseReasonLength+1)},
+	} {
+		if _, _, err := service.DeactivateRelease(context.Background(), input); !errors.Is(err, domain.ErrInvalidReleaseInput) {
+			t.Fatalf("%s: expected invalid input, got %v", name, err)
+		}
+	}
+	if _, _, err := service.DeactivateRelease(context.Background(), domain.ReleaseDeactivateInput{ID: " " + testReleaseUUID + " ", ActorUserID: "ou-1", Reason: " 线上白屏 "}); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if repository.lastDeactivate.ID != testReleaseUUID || repository.lastDeactivate.Reason != "线上白屏" {
+		t.Fatalf("expected trimmed input, got %+v", repository.lastDeactivate)
+	}
+}
+
+func TestReleaseServiceRollbackCreatesFullReleaseOfPreviousBuild(t *testing.T) {
+	repository := fakeReleaseRepository{
+		current:  domain.ReleaseRecord{ID: testReleaseUUID, ReleaseType: domain.ReleaseTypeFull, Status: domain.ReleaseStatusActive, BuildRecordID: "build-new"},
+		previous: domain.ReleaseRecord{ID: "release-old", ReleaseType: domain.ReleaseTypeFull, BuildRecordID: "build-old"},
+	}
+	service := NewReleaseService(&repository)
+	if _, _, err := service.RollbackRelease(context.Background(), domain.ReleaseRollbackInput{ID: testReleaseUUID, ActorUserID: "ou-1", Description: "回滚白屏"}); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	input := repository.lastCreateInput
+	if input.BuildRecordID != "build-old" || input.ReleaseType != domain.ReleaseTypeFull || input.RollbackFromReleaseID != testReleaseUUID ||
+		input.CreatedByUserID != "ou-1" || input.Description != "回滚白屏" {
+		t.Fatalf("unexpected rollback release input: %+v", input)
+	}
+
+	repository.current.ReleaseType = domain.ReleaseTypeGray
+	if _, _, err := service.RollbackRelease(context.Background(), domain.ReleaseRollbackInput{ID: testReleaseUUID, ActorUserID: "ou-1"}); !errors.Is(err, domain.ErrReleaseRollbackUnavailable) {
+		t.Fatalf("expected gray release rollback to be unavailable, got %v", err)
+	}
+	repository.current.ReleaseType, repository.current.Status = domain.ReleaseTypeFull, domain.ReleaseStatusInactive
+	if _, _, err := service.RollbackRelease(context.Background(), domain.ReleaseRollbackInput{ID: testReleaseUUID, ActorUserID: "ou-1"}); !errors.Is(err, domain.ErrReleaseNotActive) {
+		t.Fatalf("expected inactive release rollback to fail, got %v", err)
+	}
+	repository.current.Status, repository.previousErr = domain.ReleaseStatusActive, domain.ErrReleaseRollbackUnavailable
+	if _, _, err := service.RollbackRelease(context.Background(), domain.ReleaseRollbackInput{ID: testReleaseUUID, ActorUserID: "ou-1"}); !errors.Is(err, domain.ErrReleaseRollbackUnavailable) {
+		t.Fatalf("expected missing previous full to be unavailable, got %v", err)
+	}
 }

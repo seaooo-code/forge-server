@@ -33,6 +33,9 @@ var (
 // ForgeManifest 对应产物根目录下的 forge.json，只包含平台需要的字段。
 type ForgeManifest struct {
 	RuntimeVersion string `json:"runtimeVersion"`
+	// Provides、Requires 可选，见 Capabilities。
+	Provides Capabilities `json:"provides"`
+	Requires Capabilities `json:"requires"`
 }
 
 func IsValidPlatform(platform string) bool {

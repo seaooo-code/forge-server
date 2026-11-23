@@ -98,6 +98,9 @@ func registerReleaseRoutes(group *echo.Group, service ReleaseService, authServic
 	group.GET("/releases", handler.list)
 	group.POST("/releases", handler.create)
 	group.PATCH("/releases/:id/gray-percentage", handler.updateGrayPercentage)
+	group.POST("/releases/:id/deactivate", handler.deactivate)
+	group.POST("/releases/:id/rollback", handler.rollback)
+	group.GET("/releases/:id/events", handler.events)
 	group.GET("/releases/resolve", handler.resolve)
 }
 
@@ -209,6 +212,107 @@ func (h releaseHandler) updateGrayPercentage(c echo.Context) error {
 	})
 }
 
+type releaseDeactivateRequest struct {
+	Reason string `json:"reason"`
+}
+
+type releaseRollbackRequest struct {
+	Description string `json:"description"`
+}
+
+type releaseEventsResponse struct {
+	Events []releaseEventResponse `json:"events"`
+}
+
+type releaseEventResponse struct {
+	ID        int64          `json:"id"`
+	Kind      string         `json:"kind"`
+	Detail    map[string]any `json:"detail"`
+	Actor     *userRefJSON   `json:"actor"`
+	CreatedAt string         `json:"createdAt"`
+}
+
+type userRefJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// releaseActor 校验当前用户对发布有回滚权限（停用和回滚共用 release:rollback），返回操作人。
+func (h releaseHandler) releaseActor(c echo.Context) (string, error) {
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionReleaseRollback, domain.AuthorizationResource{ReleaseID: c.Param("id")}); err != nil {
+		return "", err
+	}
+	session, ok := consoleSession(c)
+	if !ok {
+		return "", c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	actor := domain.ConsoleUserIDFromFeishu(session.User)
+	if actor == "" {
+		return "", c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	return actor, nil
+}
+
+func (h releaseHandler) deactivate(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
+	}
+	var request releaseDeactivateRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
+	}
+	actor, err := h.releaseActor(c)
+	if err != nil {
+		return err
+	}
+	record, route, err := h.service.DeactivateRelease(c.Request().Context(), domain.ReleaseDeactivateInput{ID: c.Param("id"), Reason: request.Reason, ActorUserID: actor})
+	if err != nil {
+		return releaseErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, releaseDetailResponse{Release: newReleaseRecordResponse(record), Route: newReleaseRouteResponse(route)})
+}
+
+func (h releaseHandler) rollback(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
+	}
+	var request releaseRollbackRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
+	}
+	actor, err := h.releaseActor(c)
+	if err != nil {
+		return err
+	}
+	record, route, err := h.service.RollbackRelease(c.Request().Context(), domain.ReleaseRollbackInput{ID: c.Param("id"), Description: request.Description, ActorUserID: actor})
+	if err != nil {
+		return releaseErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusCreated, releaseDetailResponse{Release: newReleaseRecordResponse(record), Route: newReleaseRouteResponse(route)})
+}
+
+func (h releaseHandler) events(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
+	}
+	events, err := h.service.ListReleaseEvents(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return releaseErrorResponse(c, err)
+	}
+	response := releaseEventsResponse{Events: make([]releaseEventResponse, 0, len(events))}
+	for _, event := range events {
+		item := releaseEventResponse{ID: event.ID, Kind: string(event.Kind), Detail: event.Detail, CreatedAt: formatTime(event.CreatedAt)}
+		if item.Detail == nil {
+			item.Detail = map[string]any{}
+		}
+		if event.ActorUserID != "" {
+			item.Actor = &userRefJSON{ID: event.ActorUserID, Name: event.ActorName}
+		}
+		response.Events = append(response.Events, item)
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
 func (h releaseHandler) resolve(c echo.Context) error {
 	if h.service == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "release service unavailable"})
@@ -227,10 +331,57 @@ func (h releaseHandler) resolve(c echo.Context) error {
 	return c.JSON(http.StatusOK, releaseResolveResponse{Route: newReleaseRouteResponse(route)})
 }
 
+type releaseCapabilityConflictErrorResponse struct {
+	Error     string                              `json:"error"`
+	Conflicts []releaseCapabilityConflictResponse `json:"conflicts"`
+}
+
+type releaseCapabilityConflictResponse struct {
+	ModuleID      string                        `json:"moduleId"`
+	ModuleName    string                        `json:"moduleName"`
+	ReleaseID     string                        `json:"releaseId"`
+	ReleaseType   string                        `json:"releaseType"`
+	BuildRecordID string                        `json:"buildRecordId"`
+	BuildNumber   int64                         `json:"buildNumber"`
+	Reason        string                        `json:"reason"`
+	Shortfalls    []capabilityShortfallResponse `json:"shortfalls"`
+}
+
+type capabilityShortfallResponse struct {
+	Name     string `json:"name"`
+	Required int64  `json:"required"`
+	Provided *int64 `json:"provided"`
+}
+
 func releaseErrorResponse(c echo.Context, err error) error {
+	var capabilityConflict *domain.ReleaseCapabilityConflictError
+	if errors.As(err, &capabilityConflict) {
+		conflicts := make([]releaseCapabilityConflictResponse, 0, len(capabilityConflict.Conflicts))
+		for _, conflict := range capabilityConflict.Conflicts {
+			shortfalls := make([]capabilityShortfallResponse, 0, len(conflict.Shortfalls))
+			for _, shortfall := range conflict.Shortfalls {
+				shortfalls = append(shortfalls, capabilityShortfallResponse{Name: shortfall.Name, Required: shortfall.Required, Provided: shortfall.Provided})
+			}
+			conflicts = append(conflicts, releaseCapabilityConflictResponse{
+				ModuleID:      conflict.ModuleID,
+				ModuleName:    conflict.ModuleName,
+				ReleaseID:     conflict.ReleaseID,
+				ReleaseType:   string(conflict.ReleaseType),
+				BuildRecordID: conflict.BuildRecordID,
+				BuildNumber:   conflict.BuildNumber,
+				Reason:        conflict.Reason,
+				Shortfalls:    shortfalls,
+			})
+		}
+		return c.JSON(http.StatusConflict, releaseCapabilityConflictErrorResponse{Error: "release capability conflict", Conflicts: conflicts})
+	}
 	switch {
 	case errors.Is(err, domain.ErrReleaseAlreadyActive):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "release already active"})
+	case errors.Is(err, domain.ErrReleaseNotActive):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "release not active"})
+	case errors.Is(err, domain.ErrReleaseRollbackUnavailable):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "release rollback unavailable"})
 	case errors.Is(err, domain.ErrInvalidReleaseInput):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid release request"})
 	case errors.Is(err, domain.ErrBuildRecordNotFound):

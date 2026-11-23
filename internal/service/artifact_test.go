@@ -348,3 +348,67 @@ func testArtifactBuildRecord(id string, moduleID string) domain.BuildRecord {
 		UpdatedAt:                time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC),
 	}
 }
+
+// Feature 构建要求的能力高于本次请求拿到的 Common 构建时，Feature 模块移到 missingModules；兼容的模块照常返回。
+func TestArtifactServiceManifestDropsFeatureIncompatibleWithCommon(t *testing.T) {
+	common := testArtifactBuildRecord("018f4d7a-0a6c-789b-9c12-36a4dfd9c101", "module-common")
+	common.ProvidedCapabilities = domain.Capabilities{"commonApi": 2}
+	compatible := testArtifactBuildRecord("018f4d7a-0a6c-789b-9c12-36a4dfd9c102", "module-home")
+	compatible.RequiredCapabilities = domain.Capabilities{"commonApi": 2}
+	tooNew := testArtifactBuildRecord("018f4d7a-0a6c-789b-9c12-36a4dfd9c103", "module-profile")
+	tooNew.RequiredCapabilities = domain.Capabilities{"commonApi": 3}
+	otherCommonFeature := testArtifactBuildRecord("018f4d7a-0a6c-789b-9c12-36a4dfd9c104", "module-other")
+	otherCommonFeature.RequiredCapabilities = domain.Capabilities{"commonApi": 9}
+
+	records := map[string]domain.BuildRecord{}
+	manifests := map[string]domain.ArtifactManifest{}
+	sources := []domain.ArtifactModuleReleaseSource{}
+	for _, item := range []struct {
+		record domain.BuildRecord
+		kind   domain.ModuleKind
+		common string
+	}{
+		{common, domain.ModuleKindCommon, ""},
+		{compatible, domain.ModuleKindFeature, "module-common"},
+		{tooNew, domain.ModuleKindFeature, "module-common"},
+		// 所属 Common 模块没有解析出构建（不在本次清单里）时不处理，客户端会整组回退。
+		{otherCommonFeature, domain.ModuleKindFeature, "module-missing-common"},
+	} {
+		records[item.record.ID] = item.record
+		manifests[item.record.ID] = domain.ArtifactManifest{Files: []domain.ArtifactManifestFile{
+			{Path: "android/index.bundle", ObjectKey: item.record.ArtifactKey + "/android/index.bundle", SizeBytes: 1, SHA256: "hash"},
+		}}
+		sources = append(sources, domain.ArtifactModuleReleaseSource{
+			ID: item.record.ModuleID, Name: item.record.ModuleName, Kind: item.kind, CommonModuleID: item.common,
+			ReleaseID: "release-" + item.record.ModuleID, ReleaseType: domain.ReleaseTypeFull, BuildRecordID: item.record.ID, HasRuntimeRoute: true,
+		})
+	}
+	service := NewArtifactService(
+		&fakeArtifactRepository{manifestSource: domain.ArtifactManifestSource{
+			Application: domain.ArtifactApplication{ID: "app-seaooo", Name: "seaooo", Slug: "seaooo"},
+			Environment: domain.ArtifactEnvironment{ID: "qa", Name: "QA"},
+			Modules:     sources,
+		}},
+		&fakeArtifactBuildRepository{records: records},
+		&fakeServiceArtifactManifestReader{manifests: manifests},
+		&fakeArtifactObjectReader{},
+	)
+
+	manifest, err := service.GetApplicationManifest(context.Background(), domain.ArtifactManifestInput{
+		ApplicationSlug: "seaooo", Environment: "qa", Platform: domain.PlatformAndroid, RuntimeVersion: "1.0.0",
+	})
+	if err != nil {
+		t.Fatalf("get application manifest: %v", err)
+	}
+	got := []string{}
+	for _, module := range manifest.Modules {
+		got = append(got, module.ID)
+	}
+	if strings.Join(got, ",") != "module-common,module-home,module-other" {
+		t.Fatalf("unexpected modules: %v", got)
+	}
+	if len(manifest.MissingModules) != 1 || manifest.MissingModules[0].ID != "module-profile" ||
+		manifest.MissingModules[0].Reason != domain.ArtifactMissingReasonCommonIncompatible {
+		t.Fatalf("expected profile to be dropped as common_incompatible, got %+v", manifest.MissingModules)
+	}
+}

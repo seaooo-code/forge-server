@@ -28,9 +28,11 @@ type App struct {
 	logger *slog.Logger
 	// buildLogService 用于后台巡检清理过期的构建日志。
 	buildLogService *service.BuildLogService
-	server          *echo.Echo
-	postgres        *pgxpool.Pool
-	otel            otelinfra.ShutdownFunc
+	// pullStats 在后台定期写入拉包统计，关闭时在断开数据库前写入最后一批。
+	pullStats *service.ArtifactPullStatsService
+	server    *echo.Echo
+	postgres  *pgxpool.Pool
+	otel      otelinfra.ShutdownFunc
 }
 
 const buildLogCleanupInterval = time.Hour
@@ -92,7 +94,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	artifactObjectReader := s3infra.NewObjectReader()
 	buildService := service.NewBuildServiceWithManifestReader(buildRepository, artifactManifestReader).WithSucceededHook(buildTriggerService)
 	artifactRepository := postgres.NewArtifactRepository(postgresPool)
-	artifactService := service.NewArtifactService(artifactRepository, buildRepository, artifactManifestReader, artifactObjectReader)
+	pullStatsService := service.NewArtifactPullStatsService(postgres.NewArtifactPullStatsRepository(postgresPool), logger)
+	artifactService := service.NewArtifactService(artifactRepository, buildRepository, artifactManifestReader, artifactObjectReader).
+		WithPullRecorder(pullStatsService)
 	artifactAccessTokenRepository := postgres.NewArtifactAccessTokenRepository(postgresPool)
 	artifactAccessTokenService := service.NewArtifactAccessTokenService(artifactAccessTokenRepository)
 	releaseRepository := postgres.NewReleaseRepository(postgresPool)
@@ -146,6 +150,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		FeishuTenantService:        feishuTenantService,
 		ModuleService:              moduleService,
 		ReleaseService:             releaseService,
+		ArtifactPullStatsService:   pullStatsService,
 		StorageService:             storageService,
 		TestPlanService:            testPlanService,
 		Postgres:                   postgresPool,
@@ -155,6 +160,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		cfg:             cfg,
 		logger:          logger,
 		buildLogService: buildLogService,
+		pullStats:       pullStatsService,
 		server:          server,
 		postgres:        postgresPool,
 		otel:            otelShutdown,
@@ -196,6 +202,9 @@ func (a *App) Run(ctx context.Context) error {
 
 	if a.buildLogService != nil {
 		go a.runBuildLogCleanupLoop(ctx)
+	}
+	if a.pullStats != nil {
+		go a.pullStats.Run(ctx)
 	}
 
 	go func() {
@@ -254,6 +263,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.server != nil {
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
 			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("shutdown http server: %w", err))
+		}
+	}
+
+	if a.pullStats != nil {
+		if err := a.pullStats.Flush(shutdownCtx); err != nil {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("flush artifact pull stats: %w", err))
 		}
 	}
 

@@ -111,6 +111,7 @@ Forge 包源下沿用现有错误码，不新增号段：
 | 401（令牌无效或过期） | 106 Net error | 调试菜单里单独提示"Forge 令牌无效"，方便排查 |
 | 400（参数不合法） | 106 Net error | 一般是 `runtimeVersion` 拼错或平台取值不对，调试菜单里显示请求参数 |
 | 模块出现在 `missingModules` 里 | 100 File not exist | 按 R5 回退到内置包，同时展示原因 |
+| 原因是 `common_incompatible` | 100 File not exist | 业务包要求的 common API 版本高于这次拿到的 common 包，按 R5 回退该业务包 |
 | 103 File unzip error | 不会出现 | Forge 包源不需要解压 |
 
 ## 4. Forge 侧待办

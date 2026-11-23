@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"forge-server/internal/domain"
+
+	"github.com/google/uuid"
 )
 
 type ReleaseRepository interface {
@@ -12,6 +15,10 @@ type ReleaseRepository interface {
 	ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error)
 	ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error)
 	UpdateReleaseGrayPercentage(ctx context.Context, input domain.ReleaseGrayPercentageUpdateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	GetRelease(ctx context.Context, id string) (domain.ReleaseRecord, error)
+	DeactivateRelease(ctx context.Context, input domain.ReleaseDeactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error)
+	PreviousFullRelease(ctx context.Context, releaseID string) (domain.ReleaseRecord, error)
+	ListReleaseEvents(ctx context.Context, releaseID string) ([]domain.ReleaseEvent, error)
 }
 
 type ReleaseService struct {
@@ -116,4 +123,59 @@ func normalizeReleaseRecordFilters(filters domain.ReleaseRecordFilters) (domain.
 		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
 	}
 	return normalized, nil
+}
+
+// DeactivateRelease 停用一条生效中的发布。原因可选，最多 MaxReleaseReasonLength 个字符。
+func (s *ReleaseService) DeactivateRelease(ctx context.Context, input domain.ReleaseDeactivateInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
+	normalized := domain.ReleaseDeactivateInput{
+		ID:          strings.TrimSpace(input.ID),
+		Reason:      strings.TrimSpace(input.Reason),
+		ActorUserID: strings.TrimSpace(input.ActorUserID),
+	}
+	if uuid.Validate(normalized.ID) != nil || normalized.ActorUserID == "" || utf8.RuneCountInString(normalized.Reason) > domain.MaxReleaseReasonLength {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
+	}
+	return s.repository.DeactivateRelease(ctx, normalized)
+}
+
+// RollbackRelease 把生效中的全量发布回滚到同一模块、环境、运行时版本下上一次全量发布的构建。
+// 回滚是一次新的全量发布，同样经过能力约束校验，并结束进行中的比例灰度。
+func (s *ReleaseService) RollbackRelease(ctx context.Context, input domain.ReleaseRollbackInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
+	normalized := domain.ReleaseRollbackInput{
+		ID:          strings.TrimSpace(input.ID),
+		Description: strings.TrimSpace(input.Description),
+		ActorUserID: strings.TrimSpace(input.ActorUserID),
+	}
+	if uuid.Validate(normalized.ID) != nil || normalized.ActorUserID == "" || utf8.RuneCountInString(normalized.Description) > domain.MaxReleaseReasonLength {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
+	}
+	current, err := s.repository.GetRelease(ctx, normalized.ID)
+	if err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
+	if current.Status != domain.ReleaseStatusActive {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseNotActive
+	}
+	if current.ReleaseType != domain.ReleaseTypeFull {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseRollbackUnavailable
+	}
+	previous, err := s.repository.PreviousFullRelease(ctx, normalized.ID)
+	if err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
+	return s.repository.CreateRelease(ctx, domain.ReleaseCreateInput{
+		BuildRecordID:         previous.BuildRecordID,
+		ReleaseType:           domain.ReleaseTypeFull,
+		Description:           normalized.Description,
+		CreatedByUserID:       normalized.ActorUserID,
+		RollbackFromReleaseID: normalized.ID,
+	})
+}
+
+func (s *ReleaseService) ListReleaseEvents(ctx context.Context, releaseID string) ([]domain.ReleaseEvent, error) {
+	releaseID = strings.TrimSpace(releaseID)
+	if uuid.Validate(releaseID) != nil {
+		return nil, domain.ErrInvalidReleaseInput
+	}
+	return s.repository.ListReleaseEvents(ctx, releaseID)
 }

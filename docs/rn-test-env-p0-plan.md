@@ -58,14 +58,14 @@ sequenceDiagram
 
 ```text
 dist/
-  forge.json         # {"runtimeVersion": "<string>"}
+  forge.json         # {"runtimeVersion": "<string>"}，可选 provides / requires 能力声明
   <platform>/...     # 每个平台一个目录，至少一个
 ```
 
 - **平台**：一级目录名就是平台名，取值为 `android`、`ios`、`harmonyos`。这份列表定义在 domain 层，新增平台只需要改常量，不涉及表结构。一次构建可以包含多个平台，发布时一起生效，相当于 EAS 的 update group。
 - **runtimeVersion**：一个不透明字符串，长度 1-64，字符集 `[A-Za-z0-9._-]`。平台不解释它的含义，只在拉包时做精确匹配。它的作用是保证"包与客户端原生版本兼容"，具体怎么生成由接入方自己约定（参见各接入指南）。
 - worker 在上传之前做校验：如果 `forge.json` 缺失或不合法，或者平台目录不符合约定，构建直接失败，失败原因写入日志。
-- `forge.json` 只放平台需要的字段，以后需要扩展时（例如声明产物入口文件）再加，不允许接入方塞自定义字段。
+- `forge.json` 只放平台需要的字段，以后需要扩展时（例如声明产物入口文件）再加，不允许接入方塞自定义字段。目前在 `runtimeVersion` 之外只加了可选的 `provides` / `requires`，用来约束 Common 与 Feature 模块的兼容性，见[发布运维与模块能力约束](release-operations.md)。
 
 ### 1.2 产物格式
 
@@ -289,7 +289,7 @@ create unique index idx_release_routes_default_active
 -- percentage 索引同理
 ```
 
-新发布只替换同一 `runtime_version` 下的路由。这样给新 App 版本发包，不会把旧 App 版本正在用的默认包顶掉。`runtime_version` 在创建发布时从构建记录复制过来，发布接口不需要新增参数。
+新发布只替换同一 `runtime_version` 下的路由。这样给新 App 版本发包，不会把旧 App 版本正在用的默认包顶掉。在同一个 `runtime_version` 下，全量发布会替换当前全量，并结束进行中的比例灰度，避免分到灰度桶的用户一直停在旧的灰度构建上。`runtime_version` 在创建发布时从构建记录复制过来，发布接口不需要新增参数。
 
 ### 4.2 拉包接口
 
@@ -324,7 +324,7 @@ GET /api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/
   - 详情页展示 webhook 配置说明：GitLab 显示 URL 和 secret；GitHub 显示"已由 App 统一接收"。
   - 新增"构建变量"页签：密钥只写不读，支持按环境覆盖。
 - **构建**：展示触发方式、commit（可跳转到代码托管页面）、运行时版本和平台；详情页新增实时日志面板。
-- **发布弹窗**：展示运行时版本，并提示"只替换该运行时版本下的同类发布"。
+- **发布弹窗**：展示运行时版本，并提示"只影响该运行时版本下的发布"，全量会结束进行中的比例灰度。
 - **第 5 节的环境与占位符清理**。
 - 前端类型通过 `bun run gen:api` 从 OpenAPI 快照生成。
 

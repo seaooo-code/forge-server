@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"forge-server/internal/domain"
 
@@ -39,12 +38,16 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	var artifactURL string
 	var runtimeVersion string
 	var buildStatus domain.BuildStatus
+	var build releaseCapabilityBuild
 	if err := tx.QueryRow(ctx, `
-		select module_id, environment_code, artifact_key, artifact_url, runtime_version, status
-		from build_records
-		where id = $1
-		for update
-	`, input.BuildRecordID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &runtimeVersion, &buildStatus); err != nil {
+		select br.module_id, br.environment_code, br.artifact_key, br.artifact_url, br.runtime_version, br.status,
+			m.kind, coalesce(m.common_module_id, ''), br.provided_capabilities, br.required_capabilities
+		from build_records br
+		join modules m on m.id = br.module_id
+		where br.id = $1
+		for update of br
+	`, input.BuildRecordID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &runtimeVersion, &buildStatus,
+		&build.moduleKind, &build.commonModuleID, &build.provides, &build.requires); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrBuildRecordNotFound
 		}
@@ -65,6 +68,10 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	}
 
 	routeType := releaseRouteTypeForInput(input)
+	build.id, build.moduleID, build.environment, build.runtimeVersion = input.BuildRecordID, moduleID, environment, runtimeVersion
+	if err := checkReleaseCapabilities(ctx, tx, build); err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
 
 	found, err := activeReleaseExistsForBuild(
 		ctx,
@@ -126,15 +133,16 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("insert release record: %w", err)
 	}
 
-	// 新发布只替换同一 runtime_version 下的同类路由，其他运行时版本的客户端不受影响。
-	if _, err := tx.Exec(ctx, `
+	// 新发布只替换同一 runtime_version 下的路由，其他运行时版本的客户端不受影响。
+	// 比例灰度替换旧的比例灰度；全量同时结束进行中的比例灰度，否则分到灰度桶的用户会一直拿旧的灰度构建。
+	replacedReleaseIDs, err := queryReleaseIDs(ctx, tx, `
 		with deactivated_routes as (
 			update release_routes
 			set status = 'inactive', updated_at = now()
 			where module_id = $1
 				and environment_code = $2
 				and runtime_version = $4
-				and route_type = $3
+				and (route_type = $3 or ($3 = 'default' and route_type = 'percentage'))
 				and status = 'active'
 			returning release_id
 		)
@@ -142,7 +150,9 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		set status = 'inactive', updated_at = now()
 		from deactivated_routes
 		where rr.id = deactivated_routes.release_id
-	`, moduleID, environment, routeType, runtimeVersion); err != nil {
+		returning rr.id::text
+	`, moduleID, environment, routeType, runtimeVersion)
+	if err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("deactivate previous release route: %w", err)
 	}
 
@@ -172,6 +182,22 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
 		}
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("insert release route: %w", err)
+	}
+
+	createdDetail := map[string]any{"releaseType": input.ReleaseType, "buildRecordId": input.BuildRecordID, "runtimeVersion": runtimeVersion}
+	if input.ReleaseType == domain.ReleaseTypeGray {
+		createdDetail["grayPercentage"] = input.GrayPercentage
+	}
+	if input.RollbackFromReleaseID != "" {
+		createdDetail["rollbackFromReleaseId"] = input.RollbackFromReleaseID
+	}
+	if err := insertReleaseEvent(ctx, tx, releaseID, domain.ReleaseEventCreated, createdDetail, input.CreatedByUserID); err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
+	for _, replacedID := range replacedReleaseIDs {
+		if err := insertReleaseEvent(ctx, tx, replacedID, domain.ReleaseEventReplaced, map[string]any{"byReleaseId": releaseID}, input.CreatedByUserID); err != nil {
+			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -360,12 +386,14 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 	var routeID string
 	var routeStatus domain.ReleaseRouteStatus
 	var runtimeVersion string
+	var previousPercentage int
 	err = tx.QueryRow(ctx, `
 		select
 			rr.module_id,
 			rr.environment_code,
 			rr.release_type,
 			rr.gray_strategy,
+			rr.gray_percentage,
 			rr.status,
 			route.id,
 			route.status,
@@ -375,7 +403,7 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 			and route.route_type = 'percentage'
 		where rr.id = $1
 		for update of rr, route
-	`, input.ID).Scan(&moduleID, &environment, &releaseType, &grayStrategy, &releaseStatus, &routeID, &routeStatus, &runtimeVersion)
+	`, input.ID).Scan(&moduleID, &environment, &releaseType, &grayStrategy, &previousPercentage, &releaseStatus, &routeID, &routeStatus, &runtimeVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if exists, existsErr := r.releaseExists(ctx, tx, input.ID); existsErr != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, existsErr
@@ -395,8 +423,17 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 	}
 
 	if input.GrayPercentage == 100 {
-		if err := r.promotePercentageReleaseToFull(ctx, tx, input.ID, routeID, moduleID, environment, runtimeVersion); err != nil {
+		replacedReleaseIDs, err := r.promotePercentageReleaseToFull(ctx, tx, input.ID, routeID, moduleID, environment, runtimeVersion)
+		if err != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+		}
+		if err := insertReleaseEvent(ctx, tx, input.ID, domain.ReleaseEventPromotedToFull, map[string]any{"fromPercentage": previousPercentage}, input.UpdatedByUserID); err != nil {
+			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+		}
+		for _, replacedID := range replacedReleaseIDs {
+			if err := insertReleaseEvent(ctx, tx, replacedID, domain.ReleaseEventReplaced, map[string]any{"byReleaseId": input.ID}, input.UpdatedByUserID); err != nil {
+				return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+			}
 		}
 	} else {
 		if _, err := tx.Exec(ctx, `
@@ -413,6 +450,10 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 			where id = $1
 		`, routeID); err != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("touch release percentage route: %w", err)
+		}
+		if err := insertReleaseEvent(ctx, tx, input.ID, domain.ReleaseEventGrayPercentageUpdated,
+			map[string]any{"from": previousPercentage, "to": input.GrayPercentage}, input.UpdatedByUserID); err != nil {
+			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 		}
 	}
 
@@ -442,8 +483,8 @@ func (r *ReleaseRepository) releaseExists(ctx context.Context, tx pgx.Tx, id str
 }
 
 // promotePercentageReleaseToFull 把百分比灰度转为全量，只顶掉同一 runtime_version 下的默认路由。
-func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, tx pgx.Tx, releaseID string, routeID string, moduleID string, environment string, runtimeVersion string) error {
-	if _, err := tx.Exec(ctx, `
+func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, tx pgx.Tx, releaseID string, routeID string, moduleID string, environment string, runtimeVersion string) ([]string, error) {
+	replacedReleaseIDs, err := queryReleaseIDs(ctx, tx, `
 		with deactivated_routes as (
 			update release_routes
 			set status = 'inactive', updated_at = now()
@@ -459,8 +500,10 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 		from deactivated_routes
 		where rr.id = deactivated_routes.release_id
 			and rr.id <> $3
-	`, moduleID, environment, releaseID, runtimeVersion); err != nil {
-		return fmt.Errorf("deactivate previous full release route: %w", err)
+		returning rr.id::text
+	`, moduleID, environment, releaseID, runtimeVersion)
+	if err != nil {
+		return nil, fmt.Errorf("deactivate previous full release route: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update release_records
@@ -471,7 +514,7 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 			updated_at = now()
 		where id = $1
 	`, releaseID); err != nil {
-		return fmt.Errorf("promote release record to full: %w", err)
+		return nil, fmt.Errorf("promote release record to full: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update release_routes
@@ -481,11 +524,11 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 		where id = $1
 	`, routeID); err != nil {
 		if isCheckViolation(err) || isUniqueViolation(err) {
-			return domain.ErrInvalidReleaseInput
+			return nil, domain.ErrInvalidReleaseInput
 		}
-		return fmt.Errorf("promote release route to default: %w", err)
+		return nil, fmt.Errorf("promote release route to default: %w", err)
 	}
-	return nil
+	return replacedReleaseIDs, nil
 }
 
 func (r *ReleaseRepository) resolveReleaseRouteMissingDependency(ctx context.Context, input domain.ReleaseResolveInput) error {
@@ -646,5 +689,5 @@ func newReleaseID() string {
 }
 
 func newReleaseRouteID() string {
-	return "route-" + time.Now().Format("20060102150405-000000000")
+	return uuid.NewString()
 }

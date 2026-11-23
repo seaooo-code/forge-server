@@ -19,6 +19,8 @@ const (
 	ArtifactMissingReasonNoReleaseForRuntime = "no_release_for_runtime"
 	// 命中的构建不包含请求的平台。
 	ArtifactMissingReasonPlatformUnavailable = "platform_unavailable"
+	// Feature 构建要求的能力等级高于本次请求拿到的 Common 构建，常见于提测单里只换了其中一方。
+	ArtifactMissingReasonCommonIncompatible = "common_incompatible"
 )
 
 type ArtifactDownloadInput struct {
@@ -67,9 +69,11 @@ type ArtifactManifestSource struct {
 }
 
 type ArtifactModuleReleaseSource struct {
-	ID             string
-	Name           string
-	Kind           ModuleKind
+	ID   string
+	Name string
+	Kind ModuleKind
+	// CommonModuleID 是 Feature 模块所属的 Common 模块，Common 模块为空。
+	CommonModuleID string
 	ReleaseID      string
 	ReleaseType    ReleaseType
 	GrayStrategy   ReleaseGrayStrategy
