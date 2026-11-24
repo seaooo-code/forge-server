@@ -69,6 +69,7 @@ type releaseRecordResponse struct {
 	GrayPercentage  int    `json:"grayPercentage"`
 	ExpiresAt       string `json:"expiresAt"`
 	Status          string `json:"status"`
+	HealthStatus    string `json:"healthStatus"`
 	UpdatedAt       string `json:"updatedAt"`
 }
 
@@ -446,6 +447,7 @@ func newReleaseRecordResponse(record domain.ReleaseRecord) releaseRecordResponse
 		GrayPercentage:  record.GrayPercentage,
 		ExpiresAt:       formatOptionalTime(record.ExpiresAt),
 		Status:          string(record.Status),
+		HealthStatus:    string(record.HealthStatus),
 		UpdatedAt:       formatTime(record.UpdatedAt),
 	}
 }

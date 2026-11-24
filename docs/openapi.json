@@ -3849,6 +3849,96 @@
         ],
         "type": "object"
       },
+      "LaunchReportEvent": {
+        "properties": {
+          "buildRecordId": {
+            "description": "buildRecordId of the module in the manifest.",
+            "type": "string"
+          },
+          "moduleId": {
+            "description": "Module id from the manifest.",
+            "type": "string"
+          },
+          "occurredAt": {
+            "description": "RFC3339 time. Events older than 24 hours or more than 5 minutes in the future are dropped. Defaults to the server time.",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "launched: reached the module's ready point. launch_failed: crashed before the ready point and the client rolled back. verify_failed: sha256 or signature check failed. download_failed: download failed. Only launched and launch_failed count toward the failure rate, and they must be reported together.",
+            "enum": [
+              "launched",
+              "launch_failed",
+              "verify_failed",
+              "download_failed"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "description": "Optional short reason code defined by the client, at most 64 bytes, for example js_exception. Do not send stack traces.",
+            "type": "string"
+          },
+          "releaseId": {
+            "description": "releaseId of the module in the manifest; empty when the module came from a test plan. Health is judged per release, so events without it only count for statistics.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "moduleId",
+          "buildRecordId",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "LaunchReportRequest": {
+        "properties": {
+          "channel": {
+            "description": "Release channel the client reported when pulling the manifest; empty for the default channel.",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/LaunchReportEvent"
+            },
+            "type": "array"
+          },
+          "platform": {
+            "description": "Client platform.",
+            "enum": [
+              "android",
+              "ios",
+              "harmonyos"
+            ],
+            "type": "string"
+          },
+          "runtimeVersion": {
+            "description": "Client runtimeVersion.",
+            "type": "string"
+          },
+          "userId": {
+            "description": "Client user id. Users are deduplicated per 5-minute bucket; events without userId are counted but do not take part in health judgment.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "runtimeVersion",
+          "events"
+        ],
+        "type": "object"
+      },
+      "LaunchReportResponse": {
+        "properties": {
+          "accepted": {
+            "description": "Events counted. Malformed or expired events are skipped without failing the batch.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "type": "object"
+      },
       "Module": {
         "properties": {
           "applicationId": {
@@ -4590,7 +4680,7 @@
           },
           "detail": {
             "additionalProperties": true,
-            "description": "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, channel, grayPercentage (gray), rollbackFromReleaseId (rollback). gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason.",
+            "description": "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, channel, grayPercentage (gray), rollbackFromReleaseId (rollback). gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason, plus auto, failureRate, launchedUsers, failedUsers, maxFailureRate, minDelta, windowMinutes and baselineFailureRate when stopped by health judgment. health_unhealthy: failureRate, launchedUsers, failedUsers, maxFailureRate, minDelta, windowMinutes, baselineFailureRate.",
             "type": "object"
           },
           "id": {
@@ -4605,7 +4695,8 @@
               "gray_percentage_updated",
               "promoted_to_full",
               "replaced",
-              "deactivated"
+              "deactivated",
+              "health_unhealthy"
             ],
             "type": "string"
           }
@@ -4643,6 +4734,190 @@
         },
         "required": [
           "grayPercentage"
+        ],
+        "type": "object"
+      },
+      "ReleaseHealthPoliciesResponse": {
+        "properties": {
+          "policies": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseHealthPolicy"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "policies"
+        ],
+        "type": "object"
+      },
+      "ReleaseHealthPolicy": {
+        "properties": {
+          "autoStopGray": {
+            "description": "Deactivate a percentage gray release when it becomes unhealthy. Full releases are only flagged.",
+            "type": "boolean"
+          },
+          "configured": {
+            "description": "False when the policy was never saved and the values are defaults.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Judge active releases of this application and environment every minute.",
+            "type": "boolean"
+          },
+          "environment": {
+            "description": "Environment code.",
+            "type": "string"
+          },
+          "environmentName": {
+            "description": "Environment display name.",
+            "type": "string"
+          },
+          "maxFailureRate": {
+            "description": "Failure rate threshold, greater than 0 and at most 1.",
+            "type": "number"
+          },
+          "minDelta": {
+            "description": "For percentage gray releases with a baseline full release, the failure rate must also exceed the baseline by this much, 0-1.",
+            "type": "number"
+          },
+          "minUsers": {
+            "description": "Minimum launched plus launch_failed users in the window before judging.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "description": "Last update time; empty when never saved.",
+            "type": "string"
+          },
+          "windowMinutes": {
+            "description": "Judgment window, 5-1440 minutes, starting no earlier than the release.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environment",
+          "environmentName",
+          "configured",
+          "enabled",
+          "windowMinutes",
+          "minUsers",
+          "maxFailureRate",
+          "minDelta",
+          "autoStopGray",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "ReleaseHealthPolicyRequest": {
+        "properties": {
+          "autoStopGray": {
+            "description": "Deactivate unhealthy percentage gray releases.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Enable judgment.",
+            "type": "boolean"
+          },
+          "maxFailureRate": {
+            "description": "Greater than 0 and at most 1.",
+            "type": "number"
+          },
+          "minDelta": {
+            "description": "0-1.",
+            "type": "number"
+          },
+          "minUsers": {
+            "description": "1-1000000.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "windowMinutes": {
+            "description": "5-1440.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "windowMinutes",
+          "minUsers",
+          "maxFailureRate",
+          "minDelta",
+          "autoStopGray"
+        ],
+        "type": "object"
+      },
+      "ReleaseHealthResponse": {
+        "properties": {
+          "baselineFailureRate": {
+            "description": "Failure rate of the active full release used as baseline; null without a usable baseline.",
+            "nullable": true,
+            "type": "number"
+          },
+          "downloadFailedUsers": {
+            "description": "download_failed users in the window.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "evaluatedAt": {
+            "description": "Computation time.",
+            "type": "string"
+          },
+          "failedUsers": {
+            "description": "launch_failed users in the window.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "failureRate": {
+            "description": "failedUsers / (launchedUsers + failedUsers); 0 without samples.",
+            "type": "number"
+          },
+          "launchedUsers": {
+            "description": "launched users in the window.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ReleaseHealthPolicy"
+          },
+          "policyEnabled": {
+            "description": "False when the policy is off; the status is then computed with the policy's current values for reference only and no action is taken.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "no_reports: no launched or launch_failed report since the release was created, so the release is not protected. insufficient_data: fewer users than minUsers in the window. healthy or unhealthy: judged result.",
+            "enum": [
+              "no_reports",
+              "insufficient_data",
+              "healthy",
+              "unhealthy"
+            ],
+            "type": "string"
+          },
+          "verifyFailedUsers": {
+            "description": "verify_failed users in the window; may indicate tampered packages or a wrong embedded public key.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "windowStart": {
+            "description": "Start of the judgment window.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "policyEnabled",
+          "policy",
+          "windowStart",
+          "launchedUsers",
+          "failedUsers",
+          "verifyFailedUsers",
+          "downloadFailedUsers",
+          "failureRate",
+          "baselineFailureRate",
+          "evaluatedAt"
         ],
         "type": "object"
       },
@@ -4711,6 +4986,17 @@
             ],
             "type": "string"
           },
+          "healthStatus": {
+            "description": "Latest health judgment; empty when never judged (policy off). See docs/release-health.md.",
+            "enum": [
+              "",
+              "no_reports",
+              "insufficient_data",
+              "healthy",
+              "unhealthy"
+            ],
+            "type": "string"
+          },
           "id": {
             "description": "Release UUID.",
             "type": "string"
@@ -4760,6 +5046,7 @@
           "releaseType",
           "runtimeVersion",
           "status",
+          "healthStatus",
           "artifactKey",
           "createdByUserId",
           "createdAt",
@@ -7370,6 +7657,183 @@
         ]
       }
     },
+    "/api/v1/applications/{slug}/release-health-policies": {
+      "get": {
+        "operationId": "listReleaseHealthPolicies",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseHealthPoliciesResponse"
+                }
+              }
+            },
+            "description": "One policy per environment bound to the application; unsaved environments return defaults."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List release health policies",
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{slug}/release-health-policies/{environment}": {
+      "put": {
+        "operationId": "updateReleaseHealthPolicy",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Environment code bound to the application.",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseHealthPolicyRequest"
+              }
+            }
+          },
+          "description": "Release health policy payload.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseHealthPoliciesResponse"
+                }
+              }
+            },
+            "description": "Policies of all environments after the update."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot update this application (application:update)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Update release health policy",
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
     "/api/v1/applications/{slug}/signing": {
       "get": {
         "operationId": "getApplicationSigning",
@@ -8232,6 +8696,105 @@
           }
         },
         "summary": "List daily client pull statistics",
+        "tags": [
+          "Artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/applications/{applicationSlug}/environments/{environment}/launch-reports": {
+      "post": {
+        "operationId": "createLaunchReport",
+        "parameters": [
+          {
+            "description": "Application slug.",
+            "in": "path",
+            "name": "applicationSlug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Environment code.",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "description": "Environment code.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaunchReportRequest"
+              }
+            }
+          },
+          "description": "Launch report, at most 50 events.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchReportResponse"
+                }
+              }
+            },
+            "description": "Events accepted for aggregation; counts are flushed every 30 seconds."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "security": [
+          {
+            "ArtifactBearer": []
+          }
+        ],
+        "summary": "Report module launch outcomes",
         "tags": [
           "Artifacts"
         ]
@@ -13058,6 +13621,79 @@
           }
         },
         "summary": "Update percentage gray release",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/{id}/health": {
+      "get": {
+        "operationId": "getReleaseHealth",
+        "parameters": [
+          {
+            "description": "Release UUID.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Release UUID.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseHealthResponse"
+                }
+              }
+            },
+            "description": "Live health computed from launch reports, without side effects."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Get release health",
         "tags": [
           "Releases"
         ]

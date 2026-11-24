@@ -30,9 +30,11 @@ type App struct {
 	buildLogService *service.BuildLogService
 	// pullStats 在后台定期写入拉包统计，关闭时在断开数据库前写入最后一批。
 	pullStats *service.ArtifactPullStatsService
-	server    *echo.Echo
-	postgres  *pgxpool.Pool
-	otel      otelinfra.ShutdownFunc
+	// releaseHealth 在后台写入启动结果统计并判定发布健康，关闭时在断开数据库前写入最后一批。
+	releaseHealth *service.ReleaseHealthService
+	server        *echo.Echo
+	postgres      *pgxpool.Pool
+	otel          otelinfra.ShutdownFunc
 }
 
 const buildLogCleanupInterval = time.Hour
@@ -101,6 +103,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	artifactAccessTokenService := service.NewArtifactAccessTokenService(artifactAccessTokenRepository)
 	releaseRepository := postgres.NewReleaseRepository(postgresPool)
 	releaseService := service.NewReleaseService(releaseRepository)
+	releaseHealthService := service.NewReleaseHealthService(postgres.NewReleaseHealthRepository(postgresPool), releaseRepository, logger)
 	testPlanService := service.NewTestPlanService(postgres.NewTestPlanRepository(postgresPool))
 	storageRepository := postgres.NewStorageRepository(postgresPool)
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
@@ -152,6 +155,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ReleaseService:             releaseService,
 		ReleaseChannelService:      service.NewReleaseChannelService(postgres.NewReleaseChannelRepository(postgresPool)),
 		ArtifactSigningService:     service.NewArtifactSigningService(postgres.NewSigningKeyRepository(postgresPool), buildVariableSecrets),
+		ReleaseHealthService:       releaseHealthService,
 		ArtifactPullStatsService:   pullStatsService,
 		StorageService:             storageService,
 		TestPlanService:            testPlanService,
@@ -163,6 +167,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		logger:          logger,
 		buildLogService: buildLogService,
 		pullStats:       pullStatsService,
+		releaseHealth:   releaseHealthService,
 		server:          server,
 		postgres:        postgresPool,
 		otel:            otelShutdown,
@@ -207,6 +212,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.pullStats != nil {
 		go a.pullStats.Run(ctx)
+	}
+	if a.releaseHealth != nil {
+		go a.releaseHealth.Run(ctx)
 	}
 
 	go func() {
@@ -271,6 +279,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.pullStats != nil {
 		if err := a.pullStats.Flush(shutdownCtx); err != nil {
 			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("flush artifact pull stats: %w", err))
+		}
+	}
+
+	if a.releaseHealth != nil {
+		if err := a.releaseHealth.Flush(shutdownCtx); err != nil {
+			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("flush release health buckets: %w", err))
 		}
 	}
 

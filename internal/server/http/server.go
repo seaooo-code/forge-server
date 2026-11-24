@@ -27,6 +27,7 @@ type Dependencies struct {
 	ArtifactAccessTokenService ArtifactAccessTokenService
 	ArtifactPullStatsService   ArtifactPullStatsService
 	ArtifactSigningService     ArtifactSigningService
+	ReleaseHealthService       ReleaseHealthService
 	BuildService               BuildService
 	BuildQueueService          BuildQueueService
 	BuildAdapterService        BuildAdapterService
@@ -229,6 +230,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerFeishuAuthRoutes(api, deps.FeishuAuthService, deps.FeishuTenantService)
 	registerSetupRoutes(api, deps.FeishuTenantService)
 	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService)
+	registerLaunchReportRoutes(api, deps.ReleaseHealthService, deps.ArtifactAccessTokenService)
 	registerWebhookRoutes(api, deps.WebhookService)
 
 	protectedAPI := api.Group("")
@@ -251,6 +253,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
 	registerReleaseChannelRoutes(protectedAPI, deps.ReleaseChannelService, deps.AuthorizationService)
 	registerArtifactSigningRoutes(protectedAPI, deps.ArtifactSigningService, deps.AuthorizationService)
+	registerReleaseHealthRoutes(protectedAPI, deps.ReleaseHealthService, deps.AuthorizationService)
 	registerArtifactPullStatsRoutes(protectedAPI, deps.ArtifactPullStatsService)
 	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
 	registerTestPlanRoutes(protectedAPI, deps.TestPlanService, deps.AuthorizationService)

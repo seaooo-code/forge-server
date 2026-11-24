@@ -611,6 +611,7 @@ func releaseRecordSelectSQL() string {
 			rr.gray_percentage,
 			rr.expires_at,
 			rr.status,
+			coalesce(health.status, ''),
 			rr.artifact_key,
 			rr.artifact_url,
 			rr.description,
@@ -624,6 +625,7 @@ func releaseRecordSelectSQL() string {
 		join environments e on e.code = rr.environment_code
 		join users u on u.id = rr.created_by_user_id
 		join release_routes route on route.release_id = rr.id
+		left join release_health health on health.release_id = rr.id
 	`
 }
 
@@ -677,6 +679,7 @@ func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 		&record.GrayPercentage,
 		&expiresAt,
 		&record.Status,
+		&record.HealthStatus,
 		&record.ArtifactKey,
 		&record.ArtifactURL,
 		&record.Description,

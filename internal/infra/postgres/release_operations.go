@@ -70,7 +70,11 @@ func (r *ReleaseRepository) DeactivateRelease(ctx context.Context, input domain.
 	if _, err := tx.Exec(ctx, `update release_routes set status = 'inactive', updated_at = now() where id = $1`, routeID); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, fmt.Errorf("deactivate release route: %w", err)
 	}
-	if err := insertReleaseEvent(ctx, tx, input.ID, domain.ReleaseEventDeactivated, map[string]any{"reason": input.Reason}, input.ActorUserID); err != nil {
+	detail := map[string]any{"reason": input.Reason}
+	for key, value := range input.Detail {
+		detail[key] = value
+	}
+	if err := insertReleaseEvent(ctx, tx, input.ID, domain.ReleaseEventDeactivated, detail, input.ActorUserID); err != nil {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -57,12 +57,14 @@ type ReleaseRecord struct {
 	BuildRecordID   string
 	RuntimeVersion  string
 	// Channel 是发布所属的渠道，默认渠道为空字符串。
-	Channel         string
-	ReleaseType     ReleaseType
-	GrayStrategy    ReleaseGrayStrategy
-	GrayPercentage  int
-	ExpiresAt       *time.Time
-	Status          ReleaseStatus
+	Channel        string
+	ReleaseType    ReleaseType
+	GrayStrategy   ReleaseGrayStrategy
+	GrayPercentage int
+	ExpiresAt      *time.Time
+	Status         ReleaseStatus
+	// HealthStatus 是最近一次健康判定的结果，没有判定过（策略未开启）时为空，见 docs/release-health.md。
+	HealthStatus    ReleaseHealthStatus
 	ArtifactKey     string
 	ArtifactURL     string
 	Description     string
@@ -113,6 +115,8 @@ type ReleaseDeactivateInput struct {
 	ID          string
 	Reason      string
 	ActorUserID string
+	// Detail 合并进 deactivated 操作记录的 detail，例如健康判定自动停用时的失败率和阈值；人工停用时为空。
+	Detail map[string]any
 }
 
 // ReleaseRollbackInput 把一条生效中的全量发布回滚到同一模块、环境、运行时版本下上一次全量发布的构建。
@@ -132,6 +136,8 @@ const (
 	// ReleaseEventReplaced：被同一运行时版本下的新发布替换而失效，detail.byReleaseId 是新发布。
 	ReleaseEventReplaced    ReleaseEventKind = "replaced"
 	ReleaseEventDeactivated ReleaseEventKind = "deactivated"
+	// ReleaseEventHealthUnhealthy：健康判定从其他状态变为 unhealthy，只在变化时写一次，见 docs/release-health.md。
+	ReleaseEventHealthUnhealthy ReleaseEventKind = "health_unhealthy"
 )
 
 // MaxReleaseEvents 是一次返回的发布操作记录上限。

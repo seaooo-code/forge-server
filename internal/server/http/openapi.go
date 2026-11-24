@@ -21,6 +21,7 @@ func openAPIDocument() *openapi3.T {
 	addReleaseOperationsOpenAPI(doc)
 	addReleaseChannelsOpenAPI(doc)
 	addArtifactSigningOpenAPI(doc)
+	addReleaseHealthOpenAPI(doc)
 	return doc
 }
 
@@ -2522,12 +2523,14 @@ func releaseRecordSchema() *openapi3.Schema {
 		"releaseType",
 		"runtimeVersion",
 		"status",
+		"healthStatus",
 		"artifactKey",
 		"createdByUserId",
 		"createdAt",
 		"updatedAt",
 	).
 		WithProperty("applicationName", stringSchema("Application display name.")).
+		WithProperty("healthStatus", enumStringSchema("Latest health judgment; empty when never judged (policy off). See docs/release-health.md.", "", "no_reports", "insufficient_data", "healthy", "unhealthy")).
 		WithProperty("artifactKey", stringSchema("Released artifact object key root.")).
 		WithProperty("artifactUrl", stringSchema("Released artifact public URL.")).
 		WithProperty("buildRecordId", stringSchema("Build record UUID used by this release.")).

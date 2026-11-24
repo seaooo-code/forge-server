@@ -39,11 +39,12 @@ func addReleaseOperationsOpenAPI(doc *openapi3.T) {
 		WithProperty("name", stringSchema("User name.")))
 	eventDetail := openapi3.NewObjectSchema().WithAnyAdditionalProperties()
 	eventDetail.Description = "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, channel, grayPercentage (gray), rollbackFromReleaseId (rollback). " +
-		"gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason."
+		"gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason, plus auto, failureRate, launchedUsers, failedUsers, maxFailureRate, minDelta, windowMinutes and baselineFailureRate when stopped by health judgment. " +
+		"health_unhealthy: failureRate, launchedUsers, failedUsers, maxFailureRate, minDelta, windowMinutes, baselineFailureRate."
 	schemas["ReleaseEvent"] = schemaValue(objectSchema("id", "kind", "detail", "actor", "createdAt").
 		WithProperty("id", int64Schema("Event id.")).
 		WithProperty("kind", enumStringSchema("Event kind.", string(domain.ReleaseEventCreated), string(domain.ReleaseEventGrayPercentageUpdated),
-			string(domain.ReleaseEventPromotedToFull), string(domain.ReleaseEventReplaced), string(domain.ReleaseEventDeactivated))).
+			string(domain.ReleaseEventPromotedToFull), string(domain.ReleaseEventReplaced), string(domain.ReleaseEventDeactivated), string(domain.ReleaseEventHealthUnhealthy))).
 		WithProperty("detail", eventDetail).
 		WithProperty("actor", nullableSchemaRef("UserRef", "Who did it; null for system actions or deleted users.")).
 		WithProperty("createdAt", stringSchema("RFC3339 time.")))
