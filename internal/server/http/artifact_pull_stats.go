@@ -27,6 +27,7 @@ type artifactPullStatResponse struct {
 	ModuleName     string `json:"moduleName"`
 	RuntimeVersion string `json:"runtimeVersion"`
 	Platform       string `json:"platform"`
+	Channel        string `json:"channel"`
 	Outcome        string `json:"outcome"`
 	BuildRecordID  string `json:"buildRecordId"`
 	BuildNumber    int64  `json:"buildNumber"`
@@ -73,6 +74,7 @@ func (h artifactPullStatsHandler) list(c echo.Context) error {
 			ModuleName:     row.ModuleName,
 			RuntimeVersion: row.RuntimeVersion,
 			Platform:       row.Platform,
+			Channel:        row.Channel,
 			Outcome:        row.Outcome,
 			BuildRecordID:  row.BuildRecordID,
 			BuildNumber:    row.BuildNumber,

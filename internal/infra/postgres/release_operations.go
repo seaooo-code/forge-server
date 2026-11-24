@@ -88,7 +88,7 @@ func (r *ReleaseRepository) DeactivateRelease(ctx context.Context, input domain.
 	return record, route, nil
 }
 
-// PreviousFullRelease 返回同一模块、环境、运行时版本下，早于该发布、构建不同的最近一次全量发布。没有时返回 ErrReleaseRollbackUnavailable。
+// PreviousFullRelease 返回同一模块、环境、渠道、运行时版本下，早于该发布、构建不同的最近一次全量发布。没有时返回 ErrReleaseRollbackUnavailable。
 // 比例灰度转成的全量也算全量。
 func (r *ReleaseRepository) PreviousFullRelease(ctx context.Context, releaseID string) (domain.ReleaseRecord, error) {
 	var previousID string
@@ -99,6 +99,7 @@ func (r *ReleaseRepository) PreviousFullRelease(ctx context.Context, releaseID s
 		join release_records previous on previous.module_id = current.module_id
 			and previous.environment_code = current.environment_code
 			and previous.release_type = 'full'
+			and previous.channel = current.channel
 			and previous.build_record_id <> current.build_record_id
 			and previous.created_at < current.created_at
 		join release_routes previous_route on previous_route.release_id = previous.id

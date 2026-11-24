@@ -16,6 +16,7 @@ type releaseHandler struct {
 
 type releaseCreateRequest struct {
 	BuildRecordID  string `json:"buildRecordId"`
+	Channel        string `json:"channel"`
 	ReleaseType    string `json:"releaseType"`
 	GrayStrategy   string `json:"grayStrategy"`
 	GrayPercentage int    `json:"grayPercentage"`
@@ -52,6 +53,7 @@ type releaseRecordResponse struct {
 	ArtifactKey     string `json:"artifactKey"`
 	ArtifactURL     string `json:"artifactUrl"`
 	BuildRecordID   string `json:"buildRecordId"`
+	Channel         string `json:"channel"`
 	CreatedAt       string `json:"createdAt"`
 	CreatedBy       string `json:"createdBy"`
 	CreatedByUserID string `json:"createdByUserId"`
@@ -75,6 +77,7 @@ type releaseRouteResponse struct {
 	ArtifactKey     string `json:"artifactKey"`
 	ArtifactURL     string `json:"artifactUrl"`
 	BuildRecordID   string `json:"buildRecordId"`
+	Channel         string `json:"channel"`
 	CreatedAt       string `json:"createdAt"`
 	CreatedBy       string `json:"createdBy"`
 	CreatedByUserID string `json:"createdByUserId"`
@@ -114,8 +117,14 @@ func (h releaseHandler) list(c echo.Context) error {
 		return releaseErrorResponse(c, domain.ErrInvalidReleaseInput)
 	}
 
+	var channel *string
+	if c.QueryParams().Has("channel") {
+		value := c.QueryParam("channel")
+		channel = &value
+	}
 	records, summary, err := h.service.ListReleases(c.Request().Context(), domain.ReleaseRecordFilters{
 		ApplicationID: c.QueryParam("applicationId"),
+		Channel:       channel,
 		Environment:   c.QueryParam("environment"),
 		ModuleID:      c.QueryParam("moduleId"),
 		Pagination:    pagination,
@@ -159,6 +168,7 @@ func (h releaseHandler) create(c echo.Context) error {
 
 	record, route, err := h.service.CreateRelease(c.Request().Context(), domain.ReleaseCreateInput{
 		BuildRecordID:   request.BuildRecordID,
+		Channel:         request.Channel,
 		ReleaseType:     domain.ReleaseType(request.ReleaseType),
 		GrayStrategy:    domain.ReleaseGrayStrategy(request.GrayStrategy),
 		GrayPercentage:  request.GrayPercentage,
@@ -323,6 +333,7 @@ func (h releaseHandler) resolve(c echo.Context) error {
 		Environment:    c.QueryParam("environment"),
 		RuntimeVersion: c.QueryParam("runtimeVersion"),
 		UserID:         c.QueryParam("userId"),
+		Channel:        c.QueryParam("channel"),
 	})
 	if err != nil {
 		return releaseErrorResponse(c, err)
@@ -390,6 +401,8 @@ func releaseErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "module not found"})
 	case errors.Is(err, domain.ErrEnvironmentNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "environment not found"})
+	case errors.Is(err, domain.ErrReleaseChannelNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "release channel not found"})
 	case errors.Is(err, domain.ErrReleaseNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "release not found"})
 	case errors.Is(err, domain.ErrReleaseRouteNotFound):
@@ -415,6 +428,7 @@ func newReleaseRecordResponse(record domain.ReleaseRecord) releaseRecordResponse
 		ArtifactKey:     record.ArtifactKey,
 		ArtifactURL:     record.ArtifactURL,
 		BuildRecordID:   record.BuildRecordID,
+		Channel:         record.Channel,
 		CreatedAt:       formatTime(record.CreatedAt),
 		CreatedBy:       record.CreatedBy,
 		CreatedByUserID: record.CreatedByUserID,
@@ -440,6 +454,7 @@ func newReleaseRouteResponse(route domain.ReleaseRoute) releaseRouteResponse {
 		ArtifactKey:     route.ArtifactKey,
 		ArtifactURL:     route.ArtifactURL,
 		BuildRecordID:   route.BuildRecordID,
+		Channel:         route.Channel,
 		CreatedAt:       formatTime(route.CreatedAt),
 		CreatedBy:       route.CreatedBy,
 		CreatedByUserID: route.CreatedByUserID,

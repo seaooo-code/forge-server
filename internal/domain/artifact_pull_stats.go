@@ -25,8 +25,10 @@ type ArtifactPullStatKey struct {
 	ModuleID       string
 	RuntimeVersion string
 	Platform       string
-	Outcome        string
-	BuildRecordID  string
+	// Channel 是解析时实际使用的渠道，默认渠道为空字符串。
+	Channel       string
+	Outcome       string
+	BuildRecordID string
 }
 
 type ArtifactPullStat struct {

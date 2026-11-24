@@ -124,6 +124,7 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 		Platform:       normalized.Platform,
 		RuntimeVersion: normalized.RuntimeVersion,
 		UserID:         normalized.UserID,
+		Channel:        source.Channel,
 		Modules:        []domain.ArtifactModuleManifest{},
 		MissingModules: []domain.ArtifactMissingModule{},
 	}
@@ -176,6 +177,7 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			GrayStrategy:   module.GrayStrategy,
 			GrayPercentage: module.GrayPercentage,
 			Source:         artifactSource(module),
+			Channel:        module.Channel,
 			TestPlanID:     module.TestPlanID,
 			TestPlanName:   module.TestPlanName,
 			BuildRecordID:  record.ID,
@@ -246,10 +248,12 @@ func normalizeArtifactManifestInput(input domain.ArtifactManifestInput) (domain.
 		Platform:        strings.TrimSpace(input.Platform),
 		RuntimeVersion:  strings.TrimSpace(input.RuntimeVersion),
 		UserID:          strings.TrimSpace(input.UserID),
+		Channel:         strings.TrimSpace(input.Channel),
 	}
 	if !domain.IsValidApplicationSlug(normalized.ApplicationSlug) ||
 		normalized.Environment == "" ||
 		len(normalized.UserID) > 128 ||
+		normalized.Channel != "" && !domain.IsValidReleaseChannelCode(normalized.Channel) ||
 		!domain.IsValidPlatform(normalized.Platform) ||
 		!domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
 		return domain.ArtifactManifestInput{}, domain.ErrInvalidArtifactInput

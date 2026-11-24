@@ -19,6 +19,7 @@ func openAPIDocument() *openapi3.T {
 	doc := baseOpenAPIDocument()
 	addTestPlanOpenAPI(doc)
 	addReleaseOperationsOpenAPI(doc)
+	addReleaseChannelsOpenAPI(doc)
 	return doc
 }
 
@@ -518,11 +519,11 @@ func baseOpenAPIDocument() *openapi3.T {
 				}(),
 				Post: func() *openapi3.Operation {
 					op := operation("createRelease", "Create RN JS bundle release", []string{"Releases"}, responses(
-						response(http.StatusCreated, "Release created and route activated. Within the same module, environment and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one.", schemaRef("ReleaseDetailResponse")),
+						response(http.StatusCreated, "Release created and route activated. Within the same module, environment, channel and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
 						response(http.StatusForbidden, "Current user cannot create releases for this build.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Conflict. error is \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible.", schemaRef("ReleaseConflictErrorResponse")),
-						response(http.StatusNotFound, "Build record not found.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Build record not found, or error is \"release channel not found\" when channel is not registered for the application.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.RequestBody = requestBody("Release creation payload.", schemaRef("ReleaseCreateRequest"))
@@ -1592,6 +1593,11 @@ func artifactManifestParameters() openapi3.Parameters {
 				WithSchema(stringSchema("Client user id.")),
 		},
 		{
+			Value: openapi3.NewQueryParameter("channel").
+				WithDescription("Optional release channel code baked into the client, for example beta. Each module first resolves the channel's percentage gray and full release, then falls back to the default channel. Unregistered channels resolve as the default channel. Lowercase letter first, then lowercase letters, digits and hyphens, at most 32 characters.").
+				WithSchema(stringSchema("Release channel code.")),
+		},
+		{
 			Value: openapi3.NewHeaderParameter("If-None-Match").
 				WithDescription("Optional ETag from the previous manifest response. When it still matches, the server returns 304 with no body.").
 				WithSchema(stringSchema("Previous manifest ETag.")),
@@ -1822,6 +1828,11 @@ func releaseListParameters() openapi3.Parameters {
 				WithDescription("Release type filter.").
 				WithSchema(enumStringSchema("Release type filter.", "full", "gray")),
 		},
+		{
+			Value: openapi3.NewQueryParameter("channel").
+				WithDescription("Release channel filter. Omit to list all channels; pass an empty value to list only the default channel.").
+				WithSchema(stringSchema("Release channel filter.")),
+		},
 	}
 	return append(parameters, paginationParameters()...)
 }
@@ -1864,6 +1875,11 @@ func releaseResolveParameters() openapi3.Parameters {
 			Value: openapi3.NewQueryParameter("userId").
 				WithDescription("Optional user id for percentage gray bucketing.").
 				WithSchema(stringSchema("User id for percentage gray bucketing.")),
+		},
+		{
+			Value: openapi3.NewQueryParameter("channel").
+				WithDescription("Optional release channel. Routes of this channel are preferred, then the default channel.").
+				WithSchema(stringSchema("Release channel code.")),
 		},
 	}
 }
@@ -2378,12 +2394,13 @@ func buildArtifactTreeNodeSchema() *openapi3.Schema {
 }
 
 func artifactManifestResponseSchema() *openapi3.Schema {
-	return objectSchema("application", "environment", "platform", "runtimeVersion", "userId", "modules", "missingModules").
+	return objectSchema("application", "environment", "platform", "runtimeVersion", "userId", "channel", "modules", "missingModules").
 		WithPropertyRef("application", schemaRef("ArtifactManifestApplication")).
 		WithPropertyRef("environment", schemaRef("ArtifactManifestEnvironment")).
 		WithProperty("platform", enumStringSchema("Requested platform.", domain.BuildPlatforms...)).
 		WithProperty("runtimeVersion", stringSchema("Requested runtimeVersion.")).
 		WithProperty("userId", stringSchema("Requested client user id, empty when not provided.")).
+		WithProperty("channel", stringSchema("Channel actually used for resolution. Empty when no channel was requested or the requested channel is not registered for the application, in which case only the default channel is used.")).
 		WithPropertyRef("modules", arraySchemaRef("ArtifactManifestModule")).
 		WithPropertyRef("missingModules", arraySchemaRef("ArtifactMissingModule"))
 }
@@ -2402,7 +2419,7 @@ func artifactManifestEnvironmentSchema() *openapi3.Schema {
 }
 
 func artifactManifestModuleSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "source", "testPlan", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
+	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "source", "channel", "testPlan", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
@@ -2411,6 +2428,7 @@ func artifactManifestModuleSchema() *openapi3.Schema {
 		WithProperty("grayStrategy", enumStringSchema("Matched gray strategy.", "", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Matched percentage gray value.")).
 		WithProperty("source", enumStringSchema("Which rule matched this module.", string(domain.ArtifactSourceTestPlan), string(domain.ArtifactSourcePercentage), string(domain.ArtifactSourceFull))).
+		WithProperty("channel", stringSchema("Channel of the matched release. Empty when the release belongs to the default channel or the module came from a test plan.")).
 		WithProperty("testPlan", nullableSchemaRef("TestPlanRef", "Matched test plan when source is testPlan, otherwise null.")).
 		WithProperty("buildRecordId", stringSchema("Matched build record UUID.")).
 		WithProperty("branch", stringSchema("Branch of the matched build.")).
@@ -2451,6 +2469,7 @@ func artifactMissingModuleSchema() *openapi3.Schema {
 func releaseCreateRequestSchema() *openapi3.Schema {
 	return objectSchema("buildRecordId", "releaseType").
 		WithProperty("buildRecordId", stringSchema("Succeeded build record UUID to release.")).
+		WithProperty("channel", stringSchema("Optional release channel code registered for the application. Empty or omitted releases to the default channel. A release only replaces releases of the same channel and runtimeVersion.")).
 		WithProperty("releaseType", enumStringSchema("Release type. full updates the default route, gray updates the percentage gray route.", "full", "gray")).
 		WithProperty("grayStrategy", enumStringSchema("Gray strategy. Required for gray releases; only percentage is supported. Targeted gray was replaced by test plans.", "", "percentage")).
 		WithProperty("grayPercentage", int32Schema("Initial percentage for percentage gray releases. Create supports 0 to 99.")).
@@ -2495,6 +2514,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		"environment",
 		"environmentName",
 		"buildRecordId",
+		"channel",
 		"releaseType",
 		"runtimeVersion",
 		"status",
@@ -2507,6 +2527,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("artifactKey", stringSchema("Released artifact object key root.")).
 		WithProperty("artifactUrl", stringSchema("Released artifact public URL.")).
 		WithProperty("buildRecordId", stringSchema("Build record UUID used by this release.")).
+		WithProperty("channel", stringSchema("Release channel code; empty string is the default channel.")).
 		WithProperty("createdAt", dateTimeSchema("Release creation time.")).
 		WithProperty("createdBy", stringSchema("Release creator display name.")).
 		WithProperty("createdByUserId", stringSchema("Release creator user id.")).
@@ -2534,6 +2555,7 @@ func releaseRouteSchema() *openapi3.Schema {
 		"environmentName",
 		"releaseId",
 		"buildRecordId",
+		"channel",
 		"runtimeVersion",
 		"routeType",
 		"status",
@@ -2546,6 +2568,7 @@ func releaseRouteSchema() *openapi3.Schema {
 		WithProperty("artifactKey", stringSchema("Resolved artifact object key root.")).
 		WithProperty("artifactUrl", stringSchema("Resolved artifact public URL.")).
 		WithProperty("buildRecordId", stringSchema("Build record UUID used by this route.")).
+		WithProperty("channel", stringSchema("Release channel code; empty string is the default channel.")).
 		WithProperty("createdAt", dateTimeSchema("Route creation time.")).
 		WithProperty("createdBy", stringSchema("Route creator display name.")).
 		WithProperty("createdByUserId", stringSchema("Route creator user id.")).

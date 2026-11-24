@@ -121,6 +121,8 @@ func TestArtifactServiceManifestRequiresPlatformAndRuntimeVersion(t *testing.T) 
 		{ApplicationSlug: "seaooo", Environment: "qa", Platform: domain.PlatformAndroid},
 		{ApplicationSlug: "seaooo", Environment: "qa", Platform: "web", RuntimeVersion: "1.0.0"},
 		{ApplicationSlug: "seaooo", Environment: "qa", Platform: domain.PlatformAndroid, RuntimeVersion: "1.0.0/beta"},
+		{ApplicationSlug: "seaooo", Environment: "qa", Platform: domain.PlatformAndroid, RuntimeVersion: "1.0.0", Channel: "Beta"},
+		{ApplicationSlug: "seaooo", Environment: "qa", Platform: domain.PlatformAndroid, RuntimeVersion: "1.0.0", Channel: "1beta"},
 	} {
 		if _, err := service.GetApplicationManifest(context.Background(), input); !errors.Is(err, domain.ErrInvalidArtifactInput) {
 			t.Fatalf("expected invalid artifact input for %+v, got %v", input, err)

@@ -38,7 +38,7 @@ func addReleaseOperationsOpenAPI(doc *openapi3.T) {
 		WithProperty("id", stringSchema("Console user id.")).
 		WithProperty("name", stringSchema("User name.")))
 	eventDetail := openapi3.NewObjectSchema().WithAnyAdditionalProperties()
-	eventDetail.Description = "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, grayPercentage (gray), rollbackFromReleaseId (rollback). " +
+	eventDetail.Description = "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, channel, grayPercentage (gray), rollbackFromReleaseId (rollback). " +
 		"gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason."
 	schemas["ReleaseEvent"] = schemaValue(objectSchema("id", "kind", "detail", "actor", "createdAt").
 		WithProperty("id", int64Schema("Event id.")).
@@ -49,13 +49,14 @@ func addReleaseOperationsOpenAPI(doc *openapi3.T) {
 		WithProperty("createdAt", stringSchema("RFC3339 time.")))
 	schemas["ReleaseEventsResponse"] = schemaValue(objectSchema("events").
 		WithPropertyRef("events", arraySchemaRef("ReleaseEvent")))
-	schemas["ArtifactPullStat"] = schemaValue(objectSchema("day", "environment", "moduleId", "moduleName", "runtimeVersion", "platform", "outcome", "buildRecordId", "buildNumber", "requests").
+	schemas["ArtifactPullStat"] = schemaValue(objectSchema("day", "environment", "moduleId", "moduleName", "runtimeVersion", "platform", "channel", "outcome", "buildRecordId", "buildNumber", "requests").
 		WithProperty("day", stringSchema("Date (YYYY-MM-DD) in the server's local time zone.")).
 		WithProperty("environment", stringSchema("Environment code.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module name; empty when the module was deleted.")).
 		WithProperty("runtimeVersion", stringSchema("Client runtimeVersion.")).
 		WithProperty("platform", stringSchema("Client platform.")).
+		WithProperty("channel", stringSchema("Channel used for resolution; empty for the default channel and for unregistered channels.")).
 		WithProperty("outcome", stringSchema("testPlan, percentage or full when the module got a build; missing:{reason} when it did not, for example missing:no_release_for_runtime.")).
 		WithProperty("buildRecordId", stringSchema("Build served; empty for missing outcomes.")).
 		WithProperty("buildNumber", int64Schema("Build number; 0 for missing outcomes or deleted builds.")).

@@ -40,6 +40,8 @@ type ArtifactManifestInput struct {
 	RuntimeVersion  string
 	// UserID 是客户端上报的用户标识：用于匹配提测单成员和比例灰度分桶，为空时只按全量下发。
 	UserID string
+	// Channel 是客户端上报的渠道，为空表示默认渠道。
+	Channel string
 }
 
 // ArtifactSource 说明清单里的模块是按哪条规则命中的。
@@ -65,7 +67,9 @@ type ArtifactEnvironment struct {
 type ArtifactManifestSource struct {
 	Application ArtifactApplication
 	Environment ArtifactEnvironment
-	Modules     []ArtifactModuleReleaseSource
+	// Channel 是请求的渠道在应用下已注册时的值，否则为空。
+	Channel string
+	Modules []ArtifactModuleReleaseSource
 }
 
 type ArtifactModuleReleaseSource struct {
@@ -78,7 +82,9 @@ type ArtifactModuleReleaseSource struct {
 	ReleaseType    ReleaseType
 	GrayStrategy   ReleaseGrayStrategy
 	GrayPercentage int
-	BuildRecordID  string
+	// Channel 是命中的发布所属的渠道；命中默认渠道或提测单时为空。
+	Channel       string
+	BuildRecordID string
 	// TestPlanID 非空表示模块命中了提测单，此时发布相关字段为空，BuildRecordID 是提测单条目的构建。
 	TestPlanID   string
 	TestPlanName string
@@ -94,6 +100,8 @@ type ArtifactApplicationManifest struct {
 	Platform       string
 	RuntimeVersion string
 	UserID         string
+	// Channel 是本次解析实际使用的渠道：请求的渠道未注册时为空，按默认渠道解析。
+	Channel        string
 	Modules        []ArtifactModuleManifest
 	MissingModules []ArtifactMissingModule
 }
@@ -107,6 +115,7 @@ type ArtifactModuleManifest struct {
 	GrayStrategy   ReleaseGrayStrategy
 	GrayPercentage int
 	Source         ArtifactSource
+	Channel        string
 	TestPlanID     string
 	TestPlanName   string
 	BuildRecordID  string

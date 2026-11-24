@@ -56,6 +56,8 @@ type ReleaseRecord struct {
 	EnvironmentName string
 	BuildRecordID   string
 	RuntimeVersion  string
+	// Channel 是发布所属的渠道，默认渠道为空字符串。
+	Channel         string
 	ReleaseType     ReleaseType
 	GrayStrategy    ReleaseGrayStrategy
 	GrayPercentage  int
@@ -80,6 +82,7 @@ type ReleaseRoute struct {
 	ReleaseID       string
 	BuildRecordID   string
 	RuntimeVersion  string
+	Channel         string
 	RouteType       ReleaseRouteType
 	GrayStrategy    ReleaseGrayStrategy
 	GrayPercentage  int
@@ -93,7 +96,9 @@ type ReleaseRoute struct {
 }
 
 type ReleaseCreateInput struct {
-	BuildRecordID   string
+	BuildRecordID string
+	// Channel 非空时发布只对该渠道生效，必须是构建所属应用已注册的渠道。
+	Channel         string
 	ReleaseType     ReleaseType
 	GrayStrategy    ReleaseGrayStrategy
 	GrayPercentage  int
@@ -147,11 +152,13 @@ type ReleaseEvent struct {
 
 type ReleaseRecordFilters struct {
 	ApplicationID string
-	Environment   string
-	ModuleID      string
-	Pagination    Pagination
-	ReleaseType   ReleaseType
-	Status        ReleaseStatus
+	// Channel 为 nil 时不按渠道筛选；指向空字符串时只看默认渠道。
+	Channel     *string
+	Environment string
+	ModuleID    string
+	Pagination  Pagination
+	ReleaseType ReleaseType
+	Status      ReleaseStatus
 }
 
 type ReleaseRecordSummary struct {
@@ -172,6 +179,8 @@ type ReleaseResolveInput struct {
 	// RuntimeVersion 为空时不限制运行时版本，按创建时间取最新路由；非空时只在该运行时版本下解析。
 	RuntimeVersion string
 	UserID         string
+	// Channel 非空时先在该渠道解析，没有命中再回落到默认渠道。
+	Channel string
 }
 
 func IsValidReleaseType(releaseType ReleaseType) bool {

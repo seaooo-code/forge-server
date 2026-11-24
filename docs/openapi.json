@@ -1115,6 +1115,10 @@
             "description": "Matched build record UUID.",
             "type": "string"
           },
+          "channel": {
+            "description": "Channel of the matched release. Empty when the release belongs to the default channel or the module came from a test plan.",
+            "type": "string"
+          },
           "commitSha": {
             "description": "Commit SHA of the matched build.",
             "type": "string"
@@ -1197,6 +1201,7 @@
           "releaseId",
           "releaseType",
           "source",
+          "channel",
           "testPlan",
           "buildRecordId",
           "branch",
@@ -1211,6 +1216,10 @@
         "properties": {
           "application": {
             "$ref": "#/components/schemas/ArtifactManifestApplication"
+          },
+          "channel": {
+            "description": "Channel actually used for resolution. Empty when no channel was requested or the requested channel is not registered for the application, in which case only the default channel is used.",
+            "type": "string"
           },
           "environment": {
             "$ref": "#/components/schemas/ArtifactManifestEnvironment"
@@ -1251,6 +1260,7 @@
           "platform",
           "runtimeVersion",
           "userId",
+          "channel",
           "modules",
           "missingModules"
         ],
@@ -1306,6 +1316,10 @@
             "description": "Build served; empty for missing outcomes.",
             "type": "string"
           },
+          "channel": {
+            "description": "Channel used for resolution; empty for the default channel and for unregistered channels.",
+            "type": "string"
+          },
           "day": {
             "description": "Date (YYYY-MM-DD) in the server's local time zone.",
             "type": "string"
@@ -1347,6 +1361,7 @@
           "moduleName",
           "runtimeVersion",
           "platform",
+          "channel",
           "outcome",
           "buildRecordId",
           "buildNumber",
@@ -4302,6 +4317,97 @@
         ],
         "type": "object"
       },
+      "ReleaseChannel": {
+        "properties": {
+          "activeReleases": {
+            "description": "Active releases of this channel across all environments. The channel can only be deleted when this is 0.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "code": {
+            "description": "Channel code reported by clients. Immutable after creation.",
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Creation time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "description": "Description.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Display name.",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Update time.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "description",
+          "activeReleases",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "ReleaseChannelCreateRequest": {
+        "properties": {
+          "code": {
+            "description": "Channel code: a lowercase letter, then lowercase letters, digits and hyphens, at most 32 characters.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Optional description, at most 200 characters.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Display name, at most 50 characters.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ReleaseChannelUpdateRequest": {
+        "properties": {
+          "description": {
+            "description": "Optional description, at most 200 characters.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Display name, at most 50 characters.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ReleaseChannelsResponse": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseChannel"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "channels"
+        ],
+        "type": "object"
+      },
       "ReleaseConflictErrorResponse": {
         "properties": {
           "conflicts": {
@@ -4328,6 +4434,10 @@
         "properties": {
           "buildRecordId": {
             "description": "Succeeded build record UUID to release.",
+            "type": "string"
+          },
+          "channel": {
+            "description": "Optional release channel code registered for the application. Empty or omitted releases to the default channel. A release only replaces releases of the same channel and runtimeVersion.",
             "type": "string"
           },
           "description": {
@@ -4403,7 +4513,7 @@
           },
           "detail": {
             "additionalProperties": true,
-            "description": "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, grayPercentage (gray), rollbackFromReleaseId (rollback). gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason.",
+            "description": "Kind-specific detail. created: releaseType, buildRecordId, runtimeVersion, channel, grayPercentage (gray), rollbackFromReleaseId (rollback). gray_percentage_updated: from, to. promoted_to_full: fromPercentage. replaced: byReleaseId. deactivated: reason.",
             "type": "object"
           },
           "id": {
@@ -4475,6 +4585,10 @@
           },
           "buildRecordId": {
             "description": "Build record UUID used by this release.",
+            "type": "string"
+          },
+          "channel": {
+            "description": "Release channel code; empty string is the default channel.",
             "type": "string"
           },
           "createdAt": {
@@ -4565,6 +4679,7 @@
           "environment",
           "environmentName",
           "buildRecordId",
+          "channel",
           "releaseType",
           "runtimeVersion",
           "status",
@@ -4636,6 +4751,10 @@
           },
           "buildRecordId": {
             "description": "Build record UUID used by this route.",
+            "type": "string"
+          },
+          "channel": {
+            "description": "Release channel code; empty string is the default channel.",
             "type": "string"
           },
           "createdAt": {
@@ -4724,6 +4843,7 @@
           "environmentName",
           "releaseId",
           "buildRecordId",
+          "channel",
           "runtimeVersion",
           "routeType",
           "status",
@@ -6383,6 +6503,379 @@
         ]
       }
     },
+    "/api/v1/applications/{slug}/channels": {
+      "get": {
+        "operationId": "listReleaseChannels",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseChannelsResponse"
+                }
+              }
+            },
+            "description": "Channels of the application, oldest first."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid release channel request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or channel not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "List release channels",
+        "tags": [
+          "Releases"
+        ]
+      },
+      "post": {
+        "operationId": "createReleaseChannel",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseChannelCreateRequest"
+              }
+            }
+          },
+          "description": "Release channel payload.",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseChannel"
+                }
+              }
+            },
+            "description": "Channel created."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid release channel request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot release in this application (release:create)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or channel not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "error is \"release channel already exists\"."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Create release channel",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/applications/{slug}/channels/{code}": {
+      "delete": {
+        "operationId": "deleteReleaseChannel",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Channel code.",
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "description": "Channel code.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Channel deleted. Historical releases keep their channel code."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid release channel request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot release in this application (release:create)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or channel not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "error is \"release channel in use\": the channel still has active releases in some environment."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Delete release channel",
+        "tags": [
+          "Releases"
+        ]
+      },
+      "patch": {
+        "operationId": "updateReleaseChannel",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Channel code.",
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "description": "Channel code.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseChannelUpdateRequest"
+              }
+            }
+          },
+          "description": "Release channel payload.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseChannel"
+                }
+              }
+            },
+            "description": "Channel updated."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid release channel request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot release in this application (release:create)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or channel not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Update release channel",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
     "/api/v1/applications/{slug}/delete-check": {
       "get": {
         "operationId": "checkApplicationDelete",
@@ -7307,6 +7800,15 @@
             "name": "userId",
             "schema": {
               "description": "Client user id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional release channel code baked into the client, for example beta. Each module first resolves the channel's percentage gray and full release, then falls back to the default channel. Unregistered channels resolve as the default channel. Lowercase letter first, then lowercase letters, digits and hyphens, at most 32 characters.",
+            "in": "query",
+            "name": "channel",
+            "schema": {
+              "description": "Release channel code.",
               "type": "string"
             }
           },
@@ -11562,6 +12064,15 @@
             }
           },
           {
+            "description": "Release channel filter. Omit to list all channels; pass an empty value to list only the default channel.",
+            "in": "query",
+            "name": "channel",
+            "schema": {
+              "description": "Release channel filter.",
+              "type": "string"
+            }
+          },
+          {
             "description": "One-based page number. Defaults to 1.",
             "in": "query",
             "name": "page",
@@ -11641,7 +12152,7 @@
                 }
               }
             },
-            "description": "Release created and route activated. Within the same module, environment and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one."
+            "description": "Release created and route activated. Within the same module, environment, channel and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one."
           },
           "400": {
             "content": {
@@ -11671,7 +12182,7 @@
                 }
               }
             },
-            "description": "Build record not found."
+            "description": "Build record not found, or error is \"release channel not found\" when channel is not registered for the application."
           },
           "409": {
             "content": {
@@ -11739,6 +12250,15 @@
             "name": "userId",
             "schema": {
               "description": "User id for percentage gray bucketing.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional release channel. Routes of this channel are preferred, then the default channel.",
+            "in": "query",
+            "name": "channel",
+            "schema": {
+              "description": "Release channel code.",
               "type": "string"
             }
           }

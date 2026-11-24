@@ -41,6 +41,7 @@ type Dependencies struct {
 	FeishuTenantService        FeishuTenantService
 	ModuleService              ModuleService
 	ReleaseService             ReleaseService
+	ReleaseChannelService      ReleaseChannelService
 	StorageService             StorageService
 	TestPlanService            TestPlanService
 	Postgres                   *pgxpool.Pool
@@ -247,6 +248,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerModuleRoutes(protectedAPI, deps.ModuleService, deps.AuthorizationService)
 	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
+	registerReleaseChannelRoutes(protectedAPI, deps.ReleaseChannelService, deps.AuthorizationService)
 	registerArtifactPullStatsRoutes(protectedAPI, deps.ArtifactPullStatsService)
 	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
 	registerTestPlanRoutes(protectedAPI, deps.TestPlanService, deps.AuthorizationService)

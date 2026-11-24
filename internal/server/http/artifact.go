@@ -25,6 +25,7 @@ type artifactManifestResponse struct {
 	Platform       string                           `json:"platform"`
 	RuntimeVersion string                           `json:"runtimeVersion"`
 	UserID         string                           `json:"userId"`
+	Channel        string                           `json:"channel"`
 	Modules        []artifactModuleManifestResponse `json:"modules"`
 	MissingModules []artifactMissingModuleResponse  `json:"missingModules"`
 }
@@ -49,6 +50,7 @@ type artifactModuleManifestResponse struct {
 	GrayStrategy   string                         `json:"grayStrategy"`
 	GrayPercentage int                            `json:"grayPercentage"`
 	Source         string                         `json:"source"`
+	Channel        string                         `json:"channel"`
 	TestPlan       *artifactTestPlanResponse      `json:"testPlan"`
 	BuildRecordID  string                         `json:"buildRecordId"`
 	Branch         string                         `json:"branch"`
@@ -134,6 +136,7 @@ func (h artifactHandler) manifest(c echo.Context) error {
 		Platform:        c.QueryParam("platform"),
 		RuntimeVersion:  c.QueryParam("runtimeVersion"),
 		UserID:          c.QueryParam("userId"),
+		Channel:         c.QueryParam("channel"),
 	})
 	if err != nil {
 		return artifactErrorResponse(c, err)
@@ -144,7 +147,7 @@ func (h artifactHandler) manifest(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 	// 客户端冷启动和回到前台都会拉清单，内容没变时用 304 省掉响应体。
-	// ETag 取响应体哈希，platform、runtimeVersion、userId 都在响应体里，不同请求的 ETag 自然不同。
+	// ETag 取响应体哈希，platform、runtimeVersion、userId、channel 都在响应体里，不同请求的 ETag 自然不同。
 	sum := sha256.Sum256(body)
 	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 	c.Response().Header().Set("ETag", etag)
@@ -194,6 +197,7 @@ func newArtifactManifestResponse(manifest domain.ArtifactApplicationManifest) ar
 		Platform:       manifest.Platform,
 		RuntimeVersion: manifest.RuntimeVersion,
 		UserID:         manifest.UserID,
+		Channel:        manifest.Channel,
 		Modules:        newArtifactModuleManifestResponses(manifest.Modules),
 		MissingModules: newArtifactMissingModuleResponses(manifest.MissingModules),
 	}
@@ -215,6 +219,7 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 			GrayStrategy:   string(module.GrayStrategy),
 			GrayPercentage: module.GrayPercentage,
 			Source:         string(module.Source),
+			Channel:        module.Channel,
 			TestPlan:       testPlan,
 			BuildRecordID:  module.BuildRecordID,
 			Branch:         module.Branch,

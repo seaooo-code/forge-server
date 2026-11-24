@@ -55,7 +55,7 @@ func (s *ArtifactPullStatsService) RecordManifest(manifest domain.ArtifactApplic
 	key := func(moduleID string, outcome string, buildRecordID string) domain.ArtifactPullStatKey {
 		return domain.ArtifactPullStatKey{
 			Day: day, ApplicationID: manifest.Application.ID, Environment: manifest.Environment.ID, ModuleID: moduleID,
-			RuntimeVersion: manifest.RuntimeVersion, Platform: manifest.Platform, Outcome: outcome, BuildRecordID: buildRecordID,
+			RuntimeVersion: manifest.RuntimeVersion, Platform: manifest.Platform, Channel: manifest.Channel, Outcome: outcome, BuildRecordID: buildRecordID,
 		}
 	}
 

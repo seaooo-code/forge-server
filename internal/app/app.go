@@ -150,6 +150,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		FeishuTenantService:        feishuTenantService,
 		ModuleService:              moduleService,
 		ReleaseService:             releaseService,
+		ReleaseChannelService:      service.NewReleaseChannelService(postgres.NewReleaseChannelRepository(postgresPool)),
 		ArtifactPullStatsService:   pullStatsService,
 		StorageService:             storageService,
 		TestPlanService:            testPlanService,

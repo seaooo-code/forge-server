@@ -51,9 +51,11 @@ func (s *ReleaseService) ResolveReleaseRoute(ctx context.Context, input domain.R
 		Environment:    strings.TrimSpace(input.Environment),
 		RuntimeVersion: strings.TrimSpace(input.RuntimeVersion),
 		UserID:         strings.TrimSpace(input.UserID),
+		Channel:        strings.TrimSpace(input.Channel),
 	}
 	if !domain.IsValidModuleID(normalized.ModuleID) ||
 		normalized.Environment == "" ||
+		normalized.Channel != "" && !domain.IsValidReleaseChannelCode(normalized.Channel) ||
 		normalized.RuntimeVersion != "" && !domain.IsValidRuntimeVersion(normalized.RuntimeVersion) {
 		return domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
 	}
@@ -77,6 +79,7 @@ func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.Release
 	grayStrategy := domain.ReleaseGrayStrategy(strings.TrimSpace(string(input.GrayStrategy)))
 	normalized := domain.ReleaseCreateInput{
 		BuildRecordID:   strings.TrimSpace(input.BuildRecordID),
+		Channel:         strings.TrimSpace(input.Channel),
 		ReleaseType:     releaseType,
 		GrayStrategy:    grayStrategy,
 		GrayPercentage:  input.GrayPercentage,
@@ -85,6 +88,7 @@ func validateReleaseCreateInput(input domain.ReleaseCreateInput) (domain.Release
 	}
 	if normalized.BuildRecordID == "" ||
 		normalized.CreatedByUserID == "" ||
+		normalized.Channel != "" && !domain.IsValidReleaseChannelCode(normalized.Channel) ||
 		!domain.IsValidReleaseType(normalized.ReleaseType) {
 		return domain.ReleaseCreateInput{}, domain.ErrInvalidReleaseInput
 	}
@@ -113,6 +117,13 @@ func normalizeReleaseRecordFilters(filters domain.ReleaseRecordFilters) (domain.
 		ReleaseType:   domain.ReleaseType(strings.TrimSpace(string(filters.ReleaseType))),
 		Status:        domain.ReleaseStatus(strings.TrimSpace(string(filters.Status))),
 	}
+	if filters.Channel != nil {
+		channel := strings.TrimSpace(*filters.Channel)
+		if channel != "" && !domain.IsValidReleaseChannelCode(channel) {
+			return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
+		}
+		normalized.Channel = &channel
+	}
 	if !normalized.Pagination.IsValid() || normalized.ModuleID != "" && !domain.IsValidModuleID(normalized.ModuleID) {
 		return domain.ReleaseRecordFilters{}, domain.ErrInvalidReleaseInput
 	}
@@ -138,7 +149,7 @@ func (s *ReleaseService) DeactivateRelease(ctx context.Context, input domain.Rel
 	return s.repository.DeactivateRelease(ctx, normalized)
 }
 
-// RollbackRelease 把生效中的全量发布回滚到同一模块、环境、运行时版本下上一次全量发布的构建。
+// RollbackRelease 把生效中的全量发布回滚到同一模块、环境、渠道、运行时版本下上一次全量发布的构建。
 // 回滚是一次新的全量发布，同样经过能力约束校验，并结束进行中的比例灰度。
 func (s *ReleaseService) RollbackRelease(ctx context.Context, input domain.ReleaseRollbackInput) (domain.ReleaseRecord, domain.ReleaseRoute, error) {
 	normalized := domain.ReleaseRollbackInput{
@@ -165,6 +176,7 @@ func (s *ReleaseService) RollbackRelease(ctx context.Context, input domain.Relea
 	}
 	return s.repository.CreateRelease(ctx, domain.ReleaseCreateInput{
 		BuildRecordID:         previous.BuildRecordID,
+		Channel:               current.Channel,
 		ReleaseType:           domain.ReleaseTypeFull,
 		Description:           normalized.Description,
 		CreatedByUserID:       normalized.ActorUserID,

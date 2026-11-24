@@ -375,7 +375,7 @@ func TestReleaseServiceDeactivateValidatesInput(t *testing.T) {
 
 func TestReleaseServiceRollbackCreatesFullReleaseOfPreviousBuild(t *testing.T) {
 	repository := fakeReleaseRepository{
-		current:  domain.ReleaseRecord{ID: testReleaseUUID, ReleaseType: domain.ReleaseTypeFull, Status: domain.ReleaseStatusActive, BuildRecordID: "build-new"},
+		current:  domain.ReleaseRecord{ID: testReleaseUUID, ReleaseType: domain.ReleaseTypeFull, Status: domain.ReleaseStatusActive, BuildRecordID: "build-new", Channel: "beta"},
 		previous: domain.ReleaseRecord{ID: "release-old", ReleaseType: domain.ReleaseTypeFull, BuildRecordID: "build-old"},
 	}
 	service := NewReleaseService(&repository)
@@ -383,7 +383,7 @@ func TestReleaseServiceRollbackCreatesFullReleaseOfPreviousBuild(t *testing.T) {
 		t.Fatalf("rollback: %v", err)
 	}
 	input := repository.lastCreateInput
-	if input.BuildRecordID != "build-old" || input.ReleaseType != domain.ReleaseTypeFull || input.RollbackFromReleaseID != testReleaseUUID ||
+	if input.BuildRecordID != "build-old" || input.Channel != "beta" || input.ReleaseType != domain.ReleaseTypeFull || input.RollbackFromReleaseID != testReleaseUUID ||
 		input.CreatedByUserID != "ou-1" || input.Description != "回滚白屏" {
 		t.Fatalf("unexpected rollback release input: %+v", input)
 	}
@@ -399,5 +399,40 @@ func TestReleaseServiceRollbackCreatesFullReleaseOfPreviousBuild(t *testing.T) {
 	repository.current.Status, repository.previousErr = domain.ReleaseStatusActive, domain.ErrReleaseRollbackUnavailable
 	if _, _, err := service.RollbackRelease(context.Background(), domain.ReleaseRollbackInput{ID: testReleaseUUID, ActorUserID: "ou-1"}); !errors.Is(err, domain.ErrReleaseRollbackUnavailable) {
 		t.Fatalf("expected missing previous full to be unavailable, got %v", err)
+	}
+}
+
+func TestReleaseServiceNormalizesChannel(t *testing.T) {
+	repository := fakeReleaseRepository{}
+	service := NewReleaseService(&repository)
+	ctx := context.Background()
+
+	if _, _, err := service.CreateRelease(ctx, domain.ReleaseCreateInput{BuildRecordID: "build-1", Channel: " beta ", ReleaseType: domain.ReleaseTypeFull, CreatedByUserID: "user-1"}); err != nil {
+		t.Fatalf("create channel release: %v", err)
+	}
+	if repository.lastCreateInput.Channel != "beta" {
+		t.Fatalf("expected trimmed channel, got %q", repository.lastCreateInput.Channel)
+	}
+	for _, channel := range []string{"Beta", "1beta", "beta_1", strings.Repeat("a", 33)} {
+		if _, _, err := service.CreateRelease(ctx, domain.ReleaseCreateInput{BuildRecordID: "build-1", Channel: channel, ReleaseType: domain.ReleaseTypeFull, CreatedByUserID: "user-1"}); !errors.Is(err, domain.ErrInvalidReleaseInput) {
+			t.Fatalf("expected invalid channel %q to be rejected, got %v", channel, err)
+		}
+		if _, _, err := service.ListReleases(ctx, domain.ReleaseRecordFilters{Channel: &channel}); !errors.Is(err, domain.ErrInvalidReleaseInput) {
+			t.Fatalf("expected invalid channel filter %q to be rejected, got %v", channel, err)
+		}
+	}
+
+	empty := " "
+	if _, _, err := service.ListReleases(ctx, domain.ReleaseRecordFilters{Channel: &empty}); err != nil {
+		t.Fatalf("list default channel: %v", err)
+	}
+	if repository.lastListFilters.Channel == nil || *repository.lastListFilters.Channel != "" {
+		t.Fatalf("expected default channel filter, got %v", repository.lastListFilters.Channel)
+	}
+	if _, _, err := service.ListReleases(ctx, domain.ReleaseRecordFilters{}); err != nil {
+		t.Fatalf("list all channels: %v", err)
+	}
+	if repository.lastListFilters.Channel != nil {
+		t.Fatalf("expected no channel filter, got %v", *repository.lastListFilters.Channel)
 	}
 }
