@@ -742,6 +742,37 @@
         ],
         "type": "object"
       },
+      "ApplicationSigningResponse": {
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/SigningKey"
+            },
+            "type": "array"
+          },
+          "requireSignedReleases": {
+            "description": "When true, creating a release or rolling back rejects unsigned builds.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requireSignedReleases",
+          "keys"
+        ],
+        "type": "object"
+      },
+      "ApplicationSigningUpdateRequest": {
+        "properties": {
+          "requireSignedReleases": {
+            "description": "Only allow releasing signed builds. Turning it on requires an active key.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requireSignedReleases"
+        ],
+        "type": "object"
+      },
       "ApplicationStatusUpdateRequest": {
         "properties": {
           "status": {
@@ -1175,6 +1206,15 @@
             ],
             "type": "string"
           },
+          "signature": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactSignature"
+              }
+            ],
+            "description": "Signature of the matched build's file list, or null when the build is not signed. See docs/artifact-signing.md.",
+            "nullable": true
+          },
           "source": {
             "description": "Which rule matched this module.",
             "enum": [
@@ -1202,6 +1242,7 @@
           "releaseType",
           "source",
           "channel",
+          "signature",
           "testPlan",
           "buildRecordId",
           "branch",
@@ -1390,6 +1431,36 @@
           "from",
           "to",
           "stats"
+        ],
+        "type": "object"
+      },
+      "ArtifactSignature": {
+        "properties": {
+          "algorithm": {
+            "description": "Signature algorithm.",
+            "enum": [
+              "ed25519"
+            ],
+            "type": "string"
+          },
+          "keyId": {
+            "description": "Key id of the signing key; pick the embedded public key with this id.",
+            "type": "string"
+          },
+          "payload": {
+            "description": "Base64 of the signed JSON bytes: application, moduleId, environment, buildRecordId, buildNumber, runtimeVersion, commitSha, signedAt and files (path with platform prefix, sizeBytes, sha256). Verify the signature over these exact bytes before parsing.",
+            "type": "string"
+          },
+          "signature": {
+            "description": "Base64 Ed25519 signature of the payload bytes.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "algorithm",
+          "keyId",
+          "payload",
+          "signature"
         ],
         "type": "object"
       },
@@ -2080,6 +2151,10 @@
             "description": "runtimeVersion from forge.json. Empty until the build succeeds.",
             "type": "string"
           },
+          "signingKeyId": {
+            "description": "Key id of the signing key that signed this build's file list; empty when the build is not signed.",
+            "type": "string"
+          },
           "startedAt": {
             "description": "Build start time.",
             "format": "date-time",
@@ -2147,6 +2222,7 @@
           "codeSourceConnectionId",
           "commitSha",
           "runtimeVersion",
+          "signingKeyId",
           "providedCapabilities",
           "requiredCapabilities",
           "platforms",
@@ -4420,6 +4496,7 @@
             "description": "Conflict kind.",
             "enum": [
               "release already active",
+              "release build unsigned",
               "release capability conflict"
             ],
             "type": "string"
@@ -4917,6 +4994,67 @@
         },
         "required": [
           "setupRequired"
+        ],
+        "type": "object"
+      },
+      "SigningKey": {
+        "properties": {
+          "algorithm": {
+            "description": "Signature algorithm.",
+            "enum": [
+              "ed25519"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "Creation time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              }
+            ],
+            "description": "Who generated the key; null when the user was deleted.",
+            "nullable": true
+          },
+          "keyId": {
+            "description": "First 16 hex characters of the public key's SHA-256.",
+            "type": "string"
+          },
+          "publicKey": {
+            "description": "Base64 of the raw 32-byte Ed25519 public key, to embed in clients.",
+            "type": "string"
+          },
+          "retiredAt": {
+            "description": "Time the key was retired; empty for the active key.",
+            "type": "string"
+          },
+          "signedBuilds": {
+            "description": "Builds signed with this key.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "status": {
+            "description": "active signs new builds; retired no longer signs but its signed builds stay valid.",
+            "enum": [
+              "active",
+              "retired"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "keyId",
+          "algorithm",
+          "publicKey",
+          "status",
+          "createdBy",
+          "createdAt",
+          "retiredAt",
+          "signedBuilds"
         ],
         "type": "object"
       },
@@ -7227,6 +7365,360 @@
           }
         },
         "summary": "Update application member role",
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{slug}/signing": {
+      "get": {
+        "operationId": "getApplicationSigning",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationSigningResponse"
+                }
+              }
+            },
+            "description": "Signing settings and keys, active key first. Private keys are never returned."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid signing request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or signing key not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Get application signing settings",
+        "tags": [
+          "Applications"
+        ]
+      },
+      "patch": {
+        "operationId": "updateApplicationSigning",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationSigningUpdateRequest"
+              }
+            }
+          },
+          "description": "Signing settings payload.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationSigningResponse"
+                }
+              }
+            },
+            "description": "Updated signing settings."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid signing request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot update this application (application:update)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or signing key not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "error is \"signing key required\": turning on requireSignedReleases needs an active key."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Update application signing settings",
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{slug}/signing/keys": {
+      "post": {
+        "operationId": "createSigningKey",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SigningKey"
+                }
+              }
+            },
+            "description": "New active Ed25519 key. The previous active key becomes retired. Ship clients with the new public key before generating it, otherwise they reject newly signed builds."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid signing request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot update this application (application:update)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or signing key not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Generate signing key",
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{slug}/signing/keys/{keyId}": {
+      "delete": {
+        "operationId": "deleteSigningKey",
+        "parameters": [
+          {
+            "description": "Immutable application slug.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "Application slug.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Signing key id.",
+            "in": "path",
+            "name": "keyId",
+            "required": true,
+            "schema": {
+              "description": "Signing key id.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Key deleted. Builds it signed keep their signatures."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid signing request."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Console session is required."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot update this application (application:update)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Application or signing key not found."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "error is \"signing key active\": generate a new key first."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          }
+        },
+        "summary": "Delete retired signing key",
         "tags": [
           "Applications"
         ]
@@ -12192,7 +12684,7 @@
                 }
               }
             },
-            "description": "Conflict. error is \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible."
+            "description": "Conflict. error is \"release build unsigned\" when the application requires signed releases and the build is not signed, \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible."
           },
           "500": {
             "content": {

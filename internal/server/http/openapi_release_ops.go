@@ -27,7 +27,7 @@ func addReleaseOperationsOpenAPI(doc *openapi3.T) {
 			domain.ReleaseCapabilityUnmet, domain.ReleaseCapabilityCommonMissing)).
 		WithPropertyRef("shortfalls", arraySchemaRef("CapabilityShortfall")))
 	schemas["ReleaseConflictErrorResponse"] = schemaValue(objectSchema("error").
-		WithProperty("error", enumStringSchema("Conflict kind.", "release already active", "release capability conflict")).
+		WithProperty("error", enumStringSchema("Conflict kind.", "release already active", "release build unsigned", "release capability conflict")).
 		WithPropertyRef("conflicts", arraySchemaRef("ReleaseCapabilityConflict")))
 
 	schemas["ReleaseDeactivateRequest"] = schemaValue(objectSchema().

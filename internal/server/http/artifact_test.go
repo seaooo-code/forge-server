@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -101,6 +102,7 @@ func TestGetArtifactManifest(t *testing.T) {
 					TestPlanID:    "018f4d7a-0a6c-789b-9c12-36a4dfd9e001",
 					TestPlanName:  "登录改版",
 					BuildRecordID: "018f4d7a-0a6c-789b-9c12-36a4dfd9c001",
+					Signature:     domain.ArtifactSignature{KeyID: "3fa1c2d4e5b60718", Payload: `{"version":1}`, Signature: "c2ln"},
 					Branch:        "feature/login",
 					CommitSHA:     "abc123",
 					ArtifactKey:   "rn-bundles/seaooo/profile/QA/build-1",
@@ -122,9 +124,10 @@ func TestGetArtifactManifest(t *testing.T) {
 			},
 		},
 	}
+	service.manifest.Modules = append(service.manifest.Modules, domain.ArtifactModuleManifest{ID: "module-unsigned", Kind: domain.ModuleKindFeature, Source: domain.ArtifactSourceFull})
 	e := New(config.Config{}, testArtifactDependencies(service))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?platform=android&runtimeVersion=1.0.0&userId=1001", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/applications/seaooo/environments/qa/manifest?platform=android&runtimeVersion=1.0.0&userId=1001&channel=beta", nil)
 	addTestArtifactBearer(req)
 	rec := httptest.NewRecorder()
 
@@ -141,7 +144,7 @@ func TestGetArtifactManifest(t *testing.T) {
 	if response.Application.Slug != "seaooo" ||
 		response.Environment.ID != "qa" ||
 		response.UserID != "1001" ||
-		len(response.Modules) != 1 ||
+		len(response.Modules) != 2 ||
 		len(response.MissingModules) != 1 ||
 		response.Modules[0].Files[0].URL != "https://cdn.example.com/assets/icon.png" {
 		t.Fatalf("unexpected manifest response: %#v", response)
@@ -154,13 +157,22 @@ func TestGetArtifactManifest(t *testing.T) {
 	if module := response.Modules[0]; module.Source != "testPlan" || module.TestPlan == nil || module.TestPlan.Name != "登录改版" || module.ReleaseID != "" {
 		t.Fatalf("expected test plan source on module, got %#v", module)
 	}
+	// payload 下发被签名 JSON 原文的 base64；未签名的模块 signature 为 null。
+	if signature := response.Modules[0].Signature; signature == nil || signature.Algorithm != "ed25519" || signature.KeyID != "3fa1c2d4e5b60718" ||
+		signature.Payload != base64.StdEncoding.EncodeToString([]byte(`{"version":1}`)) || signature.Signature != "c2ln" {
+		t.Fatalf("unexpected module signature: %#v", response.Modules[0].Signature)
+	}
+	if response.Modules[1].Signature != nil {
+		t.Fatalf("unsigned module should have a null signature, got %#v", response.Modules[1].Signature)
+	}
 	file := response.Modules[0].Files[0]
 	if file.SHA256 != "hash" || len(file.Digests) != 2 || file.Digests["sha256"] != "hash" || file.Digests["md5"] != "md5-hash" {
 		t.Fatalf("expected sha256 and digests on manifest file, got %#v", file)
 	}
 	if service.lastManifestInput.UserID != "1001" ||
 		service.lastManifestInput.Platform != "android" ||
-		service.lastManifestInput.RuntimeVersion != "1.0.0" {
+		service.lastManifestInput.RuntimeVersion != "1.0.0" ||
+		service.lastManifestInput.Channel != "beta" {
 		t.Fatalf("expected query params to be passed to service, got %+v", service.lastManifestInput)
 	}
 }

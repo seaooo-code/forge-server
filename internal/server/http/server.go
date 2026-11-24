@@ -26,6 +26,7 @@ type Dependencies struct {
 	ArtifactService            ArtifactService
 	ArtifactAccessTokenService ArtifactAccessTokenService
 	ArtifactPullStatsService   ArtifactPullStatsService
+	ArtifactSigningService     ArtifactSigningService
 	BuildService               BuildService
 	BuildQueueService          BuildQueueService
 	BuildAdapterService        BuildAdapterService
@@ -249,6 +250,7 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)
 	registerReleaseChannelRoutes(protectedAPI, deps.ReleaseChannelService, deps.AuthorizationService)
+	registerArtifactSigningRoutes(protectedAPI, deps.ArtifactSigningService, deps.AuthorizationService)
 	registerArtifactPullStatsRoutes(protectedAPI, deps.ArtifactPullStatsService)
 	registerStorageRoutes(protectedAPI, deps.StorageService, deps.AuthorizationService)
 	registerTestPlanRoutes(protectedAPI, deps.TestPlanService, deps.AuthorizationService)

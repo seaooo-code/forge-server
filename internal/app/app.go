@@ -151,6 +151,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ModuleService:              moduleService,
 		ReleaseService:             releaseService,
 		ReleaseChannelService:      service.NewReleaseChannelService(postgres.NewReleaseChannelRepository(postgresPool)),
+		ArtifactSigningService:     service.NewArtifactSigningService(postgres.NewSigningKeyRepository(postgresPool), buildVariableSecrets),
 		ArtifactPullStatsService:   pullStatsService,
 		StorageService:             storageService,
 		TestPlanService:            testPlanService,

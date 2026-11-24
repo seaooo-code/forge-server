@@ -387,6 +387,8 @@ func releaseErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusConflict, releaseCapabilityConflictErrorResponse{Error: "release capability conflict", Conflicts: conflicts})
 	}
 	switch {
+	case errors.Is(err, domain.ErrReleaseBuildUnsigned):
+		return c.JSON(http.StatusConflict, map[string]string{"error": "release build unsigned"})
 	case errors.Is(err, domain.ErrReleaseAlreadyActive):
 		return c.JSON(http.StatusConflict, map[string]string{"error": "release already active"})
 	case errors.Is(err, domain.ErrReleaseNotActive):

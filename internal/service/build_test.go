@@ -432,11 +432,16 @@ func TestBuildServiceCompleteBuildRecordNormalizesBuildContract(t *testing.T) {
 		CommitSHA:      " abc123 ",
 		RuntimeVersion: " 1.2.0-android.725 ",
 		Platforms:      []string{"android", "ios", "android"},
+		Signature:      domain.ArtifactSignature{KeyID: "3fa1c2d4e5b60718", Payload: ` {"version":1} `, Signature: "c2ln"},
 	})
 	if err != nil {
 		t.Fatalf("complete build record: %v", err)
 	}
 	completion := repository.lastCompletion
+	// 签名内容是被签名的原始字节，必须原样传到仓储，连空白也不能改。
+	if completion.Signature != (domain.ArtifactSignature{KeyID: "3fa1c2d4e5b60718", Payload: ` {"version":1} `, Signature: "c2ln"}) {
+		t.Fatalf("signature must be passed through unchanged, got %+v", completion.Signature)
+	}
 	if completion.CommitSHA != "abc123" || completion.RuntimeVersion != "1.2.0-android.725" ||
 		len(completion.Platforms) != 2 || completion.Platforms[0] != "android" || completion.Platforms[1] != "ios" {
 		t.Fatalf("unexpected completion: %+v", completion)

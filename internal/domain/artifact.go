@@ -116,14 +116,16 @@ type ArtifactModuleManifest struct {
 	GrayPercentage int
 	Source         ArtifactSource
 	Channel        string
-	TestPlanID     string
-	TestPlanName   string
-	BuildRecordID  string
-	Branch         string
-	CommitSHA      string
-	ArtifactKey    string
-	ManifestKey    string
-	Files          []ArtifactManifestResolvedFile
+	// Signature 是命中构建的签名，构建未签名时各字段为空。
+	Signature     ArtifactSignature
+	TestPlanID    string
+	TestPlanName  string
+	BuildRecordID string
+	Branch        string
+	CommitSHA     string
+	ArtifactKey   string
+	ManifestKey   string
+	Files         []ArtifactManifestResolvedFile
 }
 
 type ArtifactManifestResolvedFile struct {

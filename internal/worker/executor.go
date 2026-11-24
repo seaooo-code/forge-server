@@ -65,8 +65,10 @@ type Executor struct {
 	// dependencyArtifacts 读取依赖构建的清单和文件，为空时使用 infra/s3。
 	dependencyArtifacts DependencyArtifactReader
 	variables           BuildVariableResolver
-	logs                BuildLogStore
-	logger              *slog.Logger
+	// signer 为空时不签名产物。
+	signer ArtifactSigner
+	logs   BuildLogStore
+	logger *slog.Logger
 	// runner 为空时使用 execCommand，测试可以替换成假实现。
 	runner commandRunner
 	// logFlushInterval 为 0 时使用 buildLogFlushInterval。
@@ -84,7 +86,15 @@ type ExecutorDependencies struct {
 	// DependencyArtifacts 为空时使用 infra/s3 按依赖构建的存储配置读取。
 	DependencyArtifacts DependencyArtifactReader
 	Logs                BuildLogStore
-	Variables           BuildVariableResolver
+	// Signer 为空时不签名产物，见 docs/artifact-signing.md。
+	Signer    ArtifactSigner
+	Variables BuildVariableResolver
+}
+
+// ArtifactSigner 用构建所属应用的 active 签名密钥签名产物文件列表，由 service.ArtifactSigningService 实现。
+// 应用没有 active 密钥时返回 ok=false。
+type ArtifactSigner interface {
+	SignArtifact(ctx context.Context, record domain.BuildRecord, runtimeVersion string, commitSHA string, files []domain.ArtifactManifestFile) (domain.ArtifactSignature, bool, error)
 }
 
 type buildWorkspace struct {
@@ -107,6 +117,7 @@ func NewExecutor(cfg config.WorkerConfig, deps ExecutorDependencies, logger *slo
 		dependencies:        deps.Dependencies,
 		dependencyArtifacts: dependencyArtifacts,
 		variables:           deps.Variables,
+		signer:              deps.Signer,
 		logs:                deps.Logs,
 		logger:              logger,
 	}
@@ -265,12 +276,27 @@ func (e *Executor) publishArtifact(ctx context.Context, record domain.BuildRecor
 	if err != nil {
 		return domain.BuildRecordCompletion{}, err
 	}
+	// 签名在上传前完成：应用配置了签名密钥但签名失败时，构建失败，不留下没有签名的产物。
+	var signature domain.ArtifactSignature
+	if e.signer != nil {
+		var signed bool
+		signature, signed, err = e.signer.SignArtifact(ctx, record, forgeManifest.RuntimeVersion, commitSHA, manifest.Files)
+		if err != nil {
+			return domain.BuildRecordCompletion{}, fmt.Errorf("签名产物失败：%w", err)
+		}
+		if signed {
+			logs.Linef("产物已签名：密钥 %s，%d 个文件", signature.KeyID, len(manifest.Files))
+		} else {
+			logs.Linef("应用没有生效中的签名密钥，产物未签名")
+		}
+	}
 	logs.Linef("上传 %d 个文件，共 %d 字节", manifest.FileCount, manifest.TotalSizeBytes)
 	if err := e.uploadArtifact(ctx, record, artifactRoot, manifest); err != nil {
 		return domain.BuildRecordCompletion{}, fmt.Errorf("上传产物失败：%w", err)
 	}
 
 	completion := buildRecordCompletion(record, manifest)
+	completion.Signature = signature
 	completion.CommitSHA = commitSHA
 	completion.RuntimeVersion = forgeManifest.RuntimeVersion
 	completion.Platforms = platforms

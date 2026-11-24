@@ -20,6 +20,7 @@ func openAPIDocument() *openapi3.T {
 	addTestPlanOpenAPI(doc)
 	addReleaseOperationsOpenAPI(doc)
 	addReleaseChannelsOpenAPI(doc)
+	addArtifactSigningOpenAPI(doc)
 	return doc
 }
 
@@ -522,7 +523,7 @@ func baseOpenAPIDocument() *openapi3.T {
 						response(http.StatusCreated, "Release created and route activated. Within the same module, environment, channel and runtimeVersion, a full release replaces the current full release and ends the active percentage gray release; a percentage release replaces the previous one.", schemaRef("ReleaseDetailResponse")),
 						response(http.StatusBadRequest, "Invalid release request.", schemaRef("ErrorResponse")),
 						response(http.StatusForbidden, "Current user cannot create releases for this build.", schemaRef("ErrorResponse")),
-						response(http.StatusConflict, "Conflict. error is \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible.", schemaRef("ReleaseConflictErrorResponse")),
+						response(http.StatusConflict, "Conflict. error is \"release build unsigned\" when the application requires signed releases and the build is not signed, \"release already active\" when the build is already active for the same target, or \"release capability conflict\" with conflicts when a Common and a Feature build that clients could receive together would not be compatible.", schemaRef("ReleaseConflictErrorResponse")),
 						response(http.StatusNotFound, "Build record not found, or error is \"release channel not found\" when channel is not registered for the application.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -2297,6 +2298,7 @@ func buildRecordSchema() *openapi3.Schema {
 		"codeSourceConnectionId",
 		"commitSha",
 		"runtimeVersion",
+		"signingKeyId",
 		"providedCapabilities",
 		"requiredCapabilities",
 		"platforms",
@@ -2331,6 +2333,7 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("ciPipelineId", int64Schema("GitLab pipeline id created for a gitlab_ci build. 0 for other builds or before the pipeline is created.")).
 		WithProperty("ciPipelineUrl", stringSchema("Web URL of the GitLab pipeline created for a gitlab_ci build. Empty for other builds.")).
 		WithProperty("manifestKey", stringSchema("S3 object key of the artifact manifest.")).
+		WithProperty("signingKeyId", stringSchema("Key id of the signing key that signed this build's file list; empty when the build is not signed.")).
 		WithProperty("fileCount", int32Schema("Uploaded artifact file count.")).
 		WithProperty("totalSizeBytes", int64Schema("Total uploaded artifact file size in bytes.")).
 		WithProperty("moduleId", stringSchema("Module id.")).
@@ -2419,7 +2422,7 @@ func artifactManifestEnvironmentSchema() *openapi3.Schema {
 }
 
 func artifactManifestModuleSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "source", "channel", "testPlan", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
+	return objectSchema("id", "name", "kind", "releaseId", "releaseType", "source", "channel", "signature", "testPlan", "buildRecordId", "branch", "commitSha", "artifactKey", "manifestKey", "files").
 		WithProperty("id", stringSchema("Module id.")).
 		WithProperty("name", stringSchema("Module display name.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
@@ -2429,6 +2432,7 @@ func artifactManifestModuleSchema() *openapi3.Schema {
 		WithProperty("grayPercentage", int32Schema("Matched percentage gray value.")).
 		WithProperty("source", enumStringSchema("Which rule matched this module.", string(domain.ArtifactSourceTestPlan), string(domain.ArtifactSourcePercentage), string(domain.ArtifactSourceFull))).
 		WithProperty("channel", stringSchema("Channel of the matched release. Empty when the release belongs to the default channel or the module came from a test plan.")).
+		WithProperty("signature", nullableSchemaRef("ArtifactSignature", "Signature of the matched build's file list, or null when the build is not signed. See docs/artifact-signing.md.")).
 		WithProperty("testPlan", nullableSchemaRef("TestPlanRef", "Matched test plan when source is testPlan, otherwise null.")).
 		WithProperty("buildRecordId", stringSchema("Matched build record UUID.")).
 		WithProperty("branch", stringSchema("Branch of the matched build.")).

@@ -131,6 +131,8 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, worke
 	}
 
 	normalized := domain.BuildRecordCompletion{
+		// 签名原样保留：签名内容是被签名的字节，任何改动都会让签名失效。
+		Signature:      completion.Signature,
 		CommitSHA:      strings.TrimSpace(completion.CommitSHA),
 		RuntimeVersion: strings.TrimSpace(completion.RuntimeVersion),
 		Platforms:      []string{},

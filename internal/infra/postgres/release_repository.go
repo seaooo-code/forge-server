@@ -39,15 +39,18 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	var runtimeVersion string
 	var buildStatus domain.BuildStatus
 	var build releaseCapabilityBuild
+	var requireSigned, signed bool
 	if err := tx.QueryRow(ctx, `
 		select br.module_id, br.environment_code, br.artifact_key, br.artifact_url, br.runtime_version, br.status,
-			m.kind, coalesce(m.common_module_id, ''), br.provided_capabilities, br.required_capabilities
+			m.kind, coalesce(m.common_module_id, ''), br.provided_capabilities, br.required_capabilities,
+			a.require_signed_releases, br.signature <> ''
 		from build_records br
 		join modules m on m.id = br.module_id
+		join applications a on a.id = m.application_id
 		where br.id = $1
 		for update of br
 	`, input.BuildRecordID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &runtimeVersion, &buildStatus,
-		&build.moduleKind, &build.commonModuleID, &build.provides, &build.requires); err != nil {
+		&build.moduleKind, &build.commonModuleID, &build.provides, &build.requires, &requireSigned, &signed); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrBuildRecordNotFound
 		}
@@ -55,6 +58,10 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	}
 	if buildStatus != domain.BuildStatusSucceeded || artifactKey == "" {
 		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrInvalidReleaseInput
+	}
+	// 应用要求签名时拒绝未签名构建，回滚也走这里，见 docs/artifact-signing.md 第 6 节。
+	if requireSigned && !signed {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseBuildUnsigned
 	}
 	if input.Channel != "" {
 		// for share 与删除渠道时的 for update 互斥：渠道删除和发布不会并发，删除时的"没有生效发布"检查才可靠。

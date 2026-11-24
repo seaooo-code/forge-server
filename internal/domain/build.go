@@ -81,12 +81,14 @@ type BuildRecord struct {
 	ArtifactKey              string
 	ArtifactURL              string
 	ManifestKey              string
-	FileCount                int
-	TotalSizeBytes           int64
-	ArtifactTree             ArtifactTree
-	Status                   BuildStatus
-	TriggerID                string
-	TriggerType              BuildTriggerType
+	// Signature 是产物文件列表的签名，未签名时各字段为空，见 docs/artifact-signing.md。
+	Signature      ArtifactSignature
+	FileCount      int
+	TotalSizeBytes int64
+	ArtifactTree   ArtifactTree
+	Status         BuildStatus
+	TriggerID      string
+	TriggerType    BuildTriggerType
 	// CreatedByUserID 为空表示历史构建或创建人已删除。
 	CreatedByUserID string
 	CreatedBy       *UserSummary
@@ -162,6 +164,8 @@ type BuildQueueStats struct {
 }
 
 type BuildRecordCompletion struct {
+	// Signature 是产物文件列表的签名，应用没有 active 签名密钥时为空。
+	Signature            ArtifactSignature
 	CommitSHA            string
 	RuntimeVersion       string
 	Platforms            []string

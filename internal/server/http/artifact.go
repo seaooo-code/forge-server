@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,7 @@ type artifactModuleManifestResponse struct {
 	GrayPercentage int                            `json:"grayPercentage"`
 	Source         string                         `json:"source"`
 	Channel        string                         `json:"channel"`
+	Signature      *artifactSignatureResponse     `json:"signature"`
 	TestPlan       *artifactTestPlanResponse      `json:"testPlan"`
 	BuildRecordID  string                         `json:"buildRecordId"`
 	Branch         string                         `json:"branch"`
@@ -58,6 +60,14 @@ type artifactModuleManifestResponse struct {
 	ArtifactKey    string                         `json:"artifactKey"`
 	ManifestKey    string                         `json:"manifestKey"`
 	Files          []artifactManifestFileResponse `json:"files"`
+}
+
+// artifactSignatureResponse 是模块构建的签名，payload 是被签名 JSON 原文的 base64，见 docs/artifact-signing.md 第 5 节。
+type artifactSignatureResponse struct {
+	Algorithm string `json:"algorithm"`
+	KeyID     string `json:"keyId"`
+	Payload   string `json:"payload"`
+	Signature string `json:"signature"`
 }
 
 type artifactManifestFileResponse struct {
@@ -210,6 +220,15 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 		if module.TestPlanID != "" {
 			testPlan = &artifactTestPlanResponse{ID: module.TestPlanID, Name: module.TestPlanName}
 		}
+		var signature *artifactSignatureResponse
+		if module.Signature.Signature != "" {
+			signature = &artifactSignatureResponse{
+				Algorithm: domain.ArtifactSigningAlgorithm,
+				KeyID:     module.Signature.KeyID,
+				Payload:   base64.StdEncoding.EncodeToString([]byte(module.Signature.Payload)),
+				Signature: module.Signature.Signature,
+			}
+		}
 		responses = append(responses, artifactModuleManifestResponse{
 			ID:             module.ID,
 			Name:           module.Name,
@@ -220,6 +239,7 @@ func newArtifactModuleManifestResponses(modules []domain.ArtifactModuleManifest)
 			GrayPercentage: module.GrayPercentage,
 			Source:         string(module.Source),
 			Channel:        module.Channel,
+			Signature:      signature,
 			TestPlan:       testPlan,
 			BuildRecordID:  module.BuildRecordID,
 			Branch:         module.Branch,

@@ -130,8 +130,9 @@ func (r *BuildRepository) RecordBuildCIPipeline(ctx context.Context, id string, 
 	return nil
 }
 
-// ListActiveDefaultReleaseBuilds 返回模块在环境下所有生效中的默认路由（route_type = 'default'、status = 'active'）
-// 指向的构建，按 runtime_version 排序。唯一索引保证每个运行时版本最多一条生效默认路由。
+// ListActiveDefaultReleaseBuilds 返回模块在环境下默认渠道所有生效中的默认路由（route_type = 'default'、status = 'active'、channel = ”）
+// 指向的构建，按 runtime_version 排序。唯一索引保证每个渠道、每个运行时版本最多一条生效默认路由。
+// 渠道发布不参与依赖注入，见 docs/channels.md 第 5.2 节。
 // 构建记录的存储配置取构建自己的 storage_configuration_id。
 func (r *BuildRepository) ListActiveDefaultReleaseBuilds(ctx context.Context, moduleID string, environment string) ([]domain.BuildRecord, error) {
 	rows, err := r.pool.Query(ctx, `
@@ -143,6 +144,7 @@ func (r *BuildRepository) ListActiveDefaultReleaseBuilds(ctx context.Context, mo
 			where rr.module_id = $1
 				and rr.environment_code = $2
 				and rr.route_type = 'default'
+				and rr.channel = ''
 				and rr.status = 'active'
 			order by rr.runtime_version, rr.updated_at desc
 		)
@@ -483,6 +485,9 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, wo
 				platforms = $10,
 				provided_capabilities = $12::jsonb,
 				required_capabilities = $13::jsonb,
+				signing_key_id = $14,
+				signed_payload = $15,
+				signature = $16,
 				finished_at = now(),
 				updated_at = now()
 			where id = $1 and worker_id = $11 and status = 'running'
@@ -495,7 +500,8 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, wo
 		join environments e on e.code = br.environment_code
 		join storage_configurations s on s.id = br.storage_configuration_id
 	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms), workerID,
-		capabilitiesJSON(completion.ProvidedCapabilities), capabilitiesJSON(completion.RequiredCapabilities)))
+		capabilitiesJSON(completion.ProvidedCapabilities), capabilitiesJSON(completion.RequiredCapabilities),
+		completion.Signature.KeyID, completion.Signature.Payload, completion.Signature.Signature))
 	if errors.Is(err, domain.ErrBuildRecordNotFound) {
 		return domain.BuildRecord{}, domain.ErrBuildLeaseLost
 	}
@@ -661,6 +667,9 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			br.artifact_key,
 			br.artifact_url,
 			br.manifest_key,
+			br.signing_key_id,
+			br.signed_payload,
+			br.signature,
 			br.file_count,
 			br.total_size_bytes,
 			br.status,
@@ -738,6 +747,9 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&record.ArtifactKey,
 		&record.ArtifactURL,
 		&record.ManifestKey,
+		&record.Signature.KeyID,
+		&record.Signature.Payload,
+		&record.Signature.Signature,
 		&record.FileCount,
 		&record.TotalSizeBytes,
 		&record.Status,

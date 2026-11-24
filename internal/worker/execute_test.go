@@ -131,3 +131,36 @@ func TestExecuteFailsWhenForgeManifestInvalid(t *testing.T) {
 		t.Fatalf("expected validation reason in log, got %q", store.content())
 	}
 }
+
+type failingArtifactSigner struct{ calls int }
+
+func (s *failingArtifactSigner) SignArtifact(context.Context, domain.BuildRecord, string, string, []domain.ArtifactManifestFile) (domain.ArtifactSignature, bool, error) {
+	s.calls++
+	return domain.ArtifactSignature{}, false, errors.New("decrypt signing key 3fa1c2d4e5b60718: bad key")
+}
+
+// 应用配置了签名密钥但签名失败时，构建在上传前失败，不留下没有签名的产物。
+func TestExecuteFailsBeforeUploadWhenSigningFails(t *testing.T) {
+	store := &fakeBuildLogStore{}
+	runner := &executeTestRunner{dockerBuild: func(cmd command) error {
+		outputDir := strings.TrimPrefix(cmd.args[slices.Index(cmd.args, "--output")+1], "type=local,dest=")
+		if err := os.MkdirAll(filepath.Join(outputDir, "android"), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(outputDir, "android", "index.android.bundle"), []byte("x"), 0o600); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(outputDir, "forge.json"), []byte(`{"runtimeVersion":"rt-1"}`), 0o600)
+	}}
+	executor := newExecuteTestExecutor(t, runner, store)
+	signer := &failingArtifactSigner{}
+	executor.signer = signer
+
+	_, err := executor.Execute(context.Background(), executeTestRecord())
+	if err == nil || !strings.Contains(err.Error(), "签名产物失败") || signer.calls != 1 {
+		t.Fatalf("expected signing failure, got %v (calls %d)", err, signer.calls)
+	}
+	if strings.Contains(store.content(), "上传 ") {
+		t.Fatalf("upload must not start after a signing failure: %q", store.content())
+	}
+}

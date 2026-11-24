@@ -55,6 +55,7 @@ type buildRecordResponse struct {
 	ModuleID                 string                    `json:"moduleId"`
 	ModuleName               string                    `json:"moduleName"`
 	ManifestKey              string                    `json:"manifestKey"`
+	SigningKeyID             string                    `json:"signingKeyId"`
 	FileCount                int                       `json:"fileCount"`
 	TotalSizeBytes           int64                     `json:"totalSizeBytes"`
 	QueuedAt                 string                    `json:"queuedAt"`
@@ -257,6 +258,7 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		ModuleID:                 record.ModuleID,
 		ModuleName:               record.ModuleName,
 		ManifestKey:              record.ManifestKey,
+		SigningKeyID:             record.Signature.KeyID,
 		FileCount:                record.FileCount,
 		TotalSizeBytes:           record.TotalSizeBytes,
 		QueuedAt:                 formatTime(record.QueuedAt),

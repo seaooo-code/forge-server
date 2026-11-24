@@ -178,6 +178,7 @@ func (s *ArtifactService) GetApplicationManifest(ctx context.Context, input doma
 			GrayPercentage: module.GrayPercentage,
 			Source:         artifactSource(module),
 			Channel:        module.Channel,
+			Signature:      record.Signature,
 			TestPlanID:     module.TestPlanID,
 			TestPlanName:   module.TestPlanName,
 			BuildRecordID:  record.ID,
