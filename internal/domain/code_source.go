@@ -19,6 +19,7 @@ var (
 	ErrCodeSourceConnectionInactive    = errors.New("code source connection is not active")
 	ErrCodeSourceCredentialInvalid     = errors.New("code source credential is invalid")
 	ErrCodeSourceRepositoryNotFound    = errors.New("code source repository not found")
+	ErrCodeSourceBranchNotFound        = errors.New("code source branch not found")
 	ErrCodeSourceWebhookUnauthorized   = errors.New("code source webhook signature is invalid")
 	ErrInvalidCodeSourceWebhookPayload = errors.New("invalid code source webhook payload")
 )
@@ -128,6 +129,16 @@ type RepositoryPage struct {
 type BranchSearchInput struct {
 	Query string
 	Limit int
+}
+
+// BranchCommit 是分支当前最新的一次提交，新增构建时展示，帮助确认要构建的代码。
+type BranchCommit struct {
+	Branch      string
+	SHA         string
+	Title       string
+	AuthorName  string
+	CommittedAt time.Time
+	WebURL      string
 }
 
 // ModuleRepository 是模块绑定的外部仓库。

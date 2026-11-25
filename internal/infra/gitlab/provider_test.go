@@ -8,6 +8,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"forge-server/internal/domain"
 )
@@ -144,6 +145,48 @@ func TestSearchBranchesUsesProjectBranchesAPI(t *testing.T) {
 	}
 	if len(branches) != 2 || branches[0] != "feature/login" || branches[1] != "feat-home" {
 		t.Fatalf("unexpected branches: %#v", branches)
+	}
+}
+
+func TestLatestBranchCommitUsesCommitsAPIWithRefName(t *testing.T) {
+	provider := newTestProvider(t, func(r *http.Request) *http.Response {
+		query := r.URL.Query()
+		if r.URL.EscapedPath() != "/sub/api/v4/projects/42/repository/commits" || query.Get("ref_name") != "feature/login" || query.Get("per_page") != "1" {
+			t.Fatalf("unexpected request %s?%s", r.URL.EscapedPath(), r.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `[{"id":"da1560886d4f094c3e6c9ef40349f7d38b5d27d7","short_id":"da156088","title":"新增登录页","author_name":"Chen","committed_date":"2026-11-25T14:30:00.000+08:00","web_url":"https://gitlab.example.com/rn/home/-/commit/da15608"}]`, nil)
+	})
+
+	commit, err := provider.LatestBranchCommit(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, " feature/login ")
+	if err != nil {
+		t.Fatalf("latest branch commit: %v", err)
+	}
+	if commit.Branch != "feature/login" || commit.SHA != "da1560886d4f094c3e6c9ef40349f7d38b5d27d7" || commit.Title != "新增登录页" ||
+		commit.AuthorName != "Chen" || !commit.CommittedAt.Equal(time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)) || commit.WebURL == "" {
+		t.Fatalf("unexpected commit: %+v", commit)
+	}
+}
+
+func TestLatestBranchCommitMapsMissingBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response *http.Response
+	}{
+		{"404", jsonResponse(http.StatusNotFound, `{"message":"404 Commit Not Found"}`, nil)},
+		{"empty", jsonResponse(http.StatusOK, `[]`, nil)},
+	} {
+		provider := newTestProvider(t, func(*http.Request) *http.Response { return tc.response })
+		if _, err := provider.LatestBranchCommit(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, "gone"); !errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
+			t.Fatalf("%s: expected branch not found, got %v", tc.name, err)
+		}
+	}
+	// 其他接口的 404 仍然只是授权失败，不受影响。
+	provider := newTestProvider(t, func(*http.Request) *http.Response {
+		return jsonResponse(http.StatusNotFound, `{"message":"404 Project Not Found"}`, nil)
+	})
+	_, err := provider.SearchBranches(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, domain.BranchSearchInput{Limit: 1})
+	if !errors.Is(err, domain.ErrCodeSourceAuthorization) || errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
+		t.Fatalf("expected authorization error for other 404, got %v", err)
 	}
 }
 

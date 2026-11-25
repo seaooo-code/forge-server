@@ -230,6 +230,37 @@ func (c *Client) listRepositoryBranches(ctx context.Context, token string, fullN
 	return names, hasNextPage(req.Response), nil
 }
 
+// latestCommit 取 ref 上最新的一条提交。ref 不存在时 GitHub 返回 404 或 422，都转换成 ErrCodeSourceBranchNotFound。
+func (c *Client) latestCommit(ctx context.Context, token string, fullName string, ref string) (domain.BranchCommit, error) {
+	query := url.Values{}
+	query.Set("sha", ref)
+	query.Set("per_page", "1")
+	req, err := c.newAPIRequest(ctx, http.MethodGet, "/repos/"+fullName+"/commits", query, nil, token)
+	if err != nil {
+		return domain.BranchCommit{}, err
+	}
+
+	var response []commitResponse
+	if err := c.do(req, &response); err != nil {
+		if req.Response != nil && (req.Response.StatusCode == http.StatusNotFound || req.Response.StatusCode == http.StatusUnprocessableEntity) {
+			return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, ref)
+		}
+		return domain.BranchCommit{}, err
+	}
+	if len(response) == 0 {
+		return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, ref)
+	}
+	commit := response[0]
+	title, _, _ := strings.Cut(commit.Commit.Message, "\n")
+	return domain.BranchCommit{
+		SHA:         commit.SHA,
+		Title:       strings.TrimSpace(title),
+		AuthorName:  commit.Commit.Author.Name,
+		CommittedAt: commit.Commit.Committer.Date,
+		WebURL:      commit.HTMLURL,
+	}, nil
+}
+
 type installationToken struct {
 	ExpiresAt time.Time
 	Token     string
@@ -498,6 +529,20 @@ type accessTokenResponse struct {
 
 type branchResponse struct {
 	Name string `json:"name"`
+}
+
+type commitResponse struct {
+	SHA     string `json:"sha"`
+	HTMLURL string `json:"html_url"`
+	Commit  struct {
+		Message string `json:"message"`
+		Author  struct {
+			Name string `json:"name"`
+		} `json:"author"`
+		Committer struct {
+			Date time.Time `json:"date"`
+		} `json:"committer"`
+	} `json:"commit"`
 }
 
 type repositoriesResponse struct {

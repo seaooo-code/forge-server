@@ -32,9 +32,10 @@ type ModuleCodeSourceStore interface {
 	GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error)
 }
 
-// ModuleBranchSearcher 按模块绑定的仓库搜索分支，由 CodeSourceService 实现。
+// ModuleBranchSearcher 按模块绑定的仓库搜索分支、查询分支最新提交，由 CodeSourceService 实现。
 type ModuleBranchSearcher interface {
 	SearchBranches(ctx context.Context, repository domain.ModuleRepository, query string) ([]string, error)
+	LatestBranchCommit(ctx context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error)
 }
 
 // ModuleBuildVariablePreparer 校验并加密创建模块时一起提交的构建变量，由 BuildVariableService 实现。
@@ -97,6 +98,18 @@ func (s *ModuleService) SearchBranches(ctx context.Context, id string, query str
 		return nil, domain.ErrCodeSourceProviderNotFound
 	}
 	return s.branches.SearchBranches(ctx, module.Repository, query)
+}
+
+// LatestBranchCommit 查询模块绑定仓库某个分支的最新提交，供新增构建时确认要构建的代码。
+func (s *ModuleService) LatestBranchCommit(ctx context.Context, id string, branch string) (domain.BranchCommit, error) {
+	module, err := s.GetModule(ctx, id)
+	if err != nil {
+		return domain.BranchCommit{}, err
+	}
+	if s.branches == nil {
+		return domain.BranchCommit{}, domain.ErrCodeSourceProviderNotFound
+	}
+	return s.branches.LatestBranchCommit(ctx, module.Repository, branch)
 }
 
 func (s *ModuleService) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {

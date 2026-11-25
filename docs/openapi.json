@@ -1464,6 +1464,43 @@
         ],
         "type": "object"
       },
+      "BranchCommit": {
+        "properties": {
+          "authorName": {
+            "description": "Commit author name.",
+            "type": "string"
+          },
+          "branch": {
+            "description": "Branch name.",
+            "type": "string"
+          },
+          "committedAt": {
+            "description": "Commit time in RFC3339, or empty when unknown.",
+            "type": "string"
+          },
+          "sha": {
+            "description": "Full commit SHA.",
+            "type": "string"
+          },
+          "title": {
+            "description": "First line of the commit message.",
+            "type": "string"
+          },
+          "webUrl": {
+            "description": "Commit page on the code source, or empty when unknown.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorName",
+          "branch",
+          "committedAt",
+          "sha",
+          "title",
+          "webUrl"
+        ],
+        "type": "object"
+      },
       "BuildAdapter": {
         "properties": {
           "createdAt": {
@@ -4061,6 +4098,17 @@
           "repositoryFullName",
           "repository",
           "buildConfig"
+        ],
+        "type": "object"
+      },
+      "ModuleBranchCommitResponse": {
+        "properties": {
+          "commit": {
+            "$ref": "#/components/schemas/BranchCommit"
+          }
+        },
+        "required": [
+          "commit"
         ],
         "type": "object"
       },
@@ -12722,6 +12770,99 @@
           }
         },
         "summary": "Update module",
+        "tags": [
+          "Modules"
+        ]
+      }
+    },
+    "/api/v1/modules/{id}/branch-commit": {
+      "get": {
+        "operationId": "getModuleBranchCommit",
+        "parameters": [
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch name.",
+            "in": "query",
+            "name": "branch",
+            "required": true,
+            "schema": {
+              "description": "Branch name.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleBranchCommitResponse"
+                }
+              }
+            },
+            "description": "Latest commit of the branch."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Branch is empty, code source connection is inactive or request is invalid."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Current user cannot create builds for this module."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module, code source connection or branch not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          }
+        },
+        "summary": "Get the latest commit of a module repository branch",
         "tags": [
           "Modules"
         ]

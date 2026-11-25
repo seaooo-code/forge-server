@@ -29,6 +29,8 @@ type CodeSourceProvider interface {
 	SearchRepositories(ctx context.Context, conn domain.CodeSourceConnection, input domain.RepositorySearchInput) (domain.RepositoryPage, error)
 	// SearchBranches 按关键词搜索仓库分支名，最多返回 input.Limit 条。
 	SearchBranches(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, input domain.BranchSearchInput) ([]string, error)
+	// LatestBranchCommit 返回分支当前最新的提交；分支不存在时返回 ErrCodeSourceBranchNotFound。
+	LatestBranchCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error)
 	// CloneCredentials 提供 clone 凭证，worker 通过 GIT_ASKPASS 使用。
 	CloneCredentials(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository) (domain.GitCredentials, error)
 	// ParseWebhook 校验 webhook 来源并解析出统一事件；不需要处理的事件返回 ok=false。
@@ -316,6 +318,19 @@ func (s *CodeSourceService) SearchBranches(ctx context.Context, repository domai
 		branches = []string{}
 	}
 	return branches, nil
+}
+
+// LatestBranchCommit 通过模块绑定仓库所在的连接查询分支最新提交。
+func (s *CodeSourceService) LatestBranchCommit(ctx context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return domain.BranchCommit{}, domain.ErrInvalidCodeSourceInput
+	}
+	conn, provider, err := s.openConnection(ctx, repository.ConnectionID, true)
+	if err != nil {
+		return domain.BranchCommit{}, err
+	}
+	return provider.LatestBranchCommit(ctx, conn, repository, branch)
 }
 
 // CloneCredentials 供 worker 获取仓库 clone 凭证。

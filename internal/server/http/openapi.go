@@ -389,6 +389,25 @@ func baseOpenAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/modules/{id}/branch-commit", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("getModuleBranchCommit", "Get the latest commit of a module repository branch", []string{"Modules"}, responses(
+						response(http.StatusOK, "Latest commit of the branch.", schemaRef("ModuleBranchCommitResponse")),
+						response(http.StatusBadRequest, "Branch is empty, code source connection is inactive or request is invalid.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Current user cannot create builds for this module.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module, code source connection or branch not found.", schemaRef("ErrorResponse")),
+						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = append(moduleIDParameters(), &openapi3.ParameterRef{
+						Value: openapi3.NewQueryParameter("branch").
+							WithDescription("Branch name.").
+							WithRequired(true).
+							WithSchema(stringSchema("Branch name.")),
+					})
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/modules/{id}/build-variables", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("listModuleBuildVariables", "List module build variables", []string{"Modules"}, responses(
@@ -1209,6 +1228,15 @@ func baseOpenAPIDocument() *openapi3.T {
 				"CodeSourceRepositorySearchResponse":    schemaValue(codeSourceRepositorySearchResponseSchema()),
 				"ModuleBranchesResponse": schemaValue(objectSchema("branches").
 					WithProperty("branches", stringArraySchema("Matched branch names."))),
+				"BranchCommit": schemaValue(objectSchema("authorName", "branch", "committedAt", "sha", "title", "webUrl").
+					WithProperty("authorName", stringSchema("Commit author name.")).
+					WithProperty("branch", stringSchema("Branch name.")).
+					WithProperty("committedAt", stringSchema("Commit time in RFC3339, or empty when unknown.")).
+					WithProperty("sha", stringSchema("Full commit SHA.")).
+					WithProperty("title", stringSchema("First line of the commit message.")).
+					WithProperty("webUrl", stringSchema("Commit page on the code source, or empty when unknown."))),
+				"ModuleBranchCommitResponse": schemaValue(objectSchema("commit").
+					WithPropertyRef("commit", schemaRef("BranchCommit"))),
 				"CodeSourcesResponse":                    schemaValue(codeSourcesResponseSchema()),
 				"ArtifactAccessToken":                    schemaValue(artifactAccessTokenSchema()),
 				"ArtifactAccessTokensResponse":           schemaValue(artifactAccessTokensResponseSchema()),

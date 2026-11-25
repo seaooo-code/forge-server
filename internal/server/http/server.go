@@ -164,6 +164,7 @@ type ModuleService interface {
 	GetModule(ctx context.Context, id string) (domain.Module, error)
 	ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error)
 	SearchBranches(ctx context.Context, id string, query string) ([]string, error)
+	LatestBranchCommit(ctx context.Context, id string, branch string) (domain.BranchCommit, error)
 	UpdateModule(ctx context.Context, id string, input domain.ModuleInput) (domain.Module, error)
 }
 

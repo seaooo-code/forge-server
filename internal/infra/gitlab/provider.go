@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,9 @@ const (
 	maxResponseBytes    = 4 << 20
 	expiresAtDateLayout = "2006-01-02"
 )
+
+// errNotFound 标记 GitLab 返回 404，和 domain 错误一起包装，调用方按需转换成具体的「不存在」错误。
+var errNotFound = errors.New("gitlab resource not found")
 
 type Provider struct {
 	httpClient *http.Client
@@ -152,6 +156,38 @@ func (p *Provider) SearchBranches(ctx context.Context, conn domain.CodeSourceCon
 	return names, nil
 }
 
+// LatestBranchCommit 用提交列表接口按 ref_name 取最新一条，分支名走查询参数，不用处理路径里的斜杠转义。
+func (p *Provider) LatestBranchCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+	projectID := strings.TrimSpace(repo.ExternalRepositoryID)
+	branch = strings.TrimSpace(branch)
+	if projectID == "" || branch == "" {
+		return domain.BranchCommit{}, domain.ErrInvalidCodeSourceInput
+	}
+	query := url.Values{}
+	query.Set("ref_name", branch)
+	query.Set("per_page", "1")
+
+	var commits []commitResponse
+	if _, err := p.get(ctx, conn, "/projects/"+url.PathEscape(projectID)+"/repository/commits", query, &commits); err != nil {
+		if errors.Is(err, errNotFound) {
+			return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, branch)
+		}
+		return domain.BranchCommit{}, err
+	}
+	if len(commits) == 0 {
+		return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, branch)
+	}
+	commit := commits[0]
+	return domain.BranchCommit{
+		Branch:      branch,
+		SHA:         commit.ID,
+		Title:       commit.Title,
+		AuthorName:  commit.AuthorName,
+		CommittedAt: commit.CommittedDate,
+		WebURL:      commit.WebURL,
+	}, nil
+}
+
 func (p *Provider) CloneCredentials(_ context.Context, conn domain.CodeSourceConnection, _ domain.ModuleRepository) (domain.GitCredentials, error) {
 	if strings.TrimSpace(conn.Credential) == "" {
 		return domain.GitCredentials{}, fmt.Errorf("%w: gitlab access token is required", domain.ErrCodeSourceCredentialInvalid)
@@ -229,6 +265,11 @@ func (p *Provider) get(ctx context.Context, conn domain.CodeSourceConnection, pa
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return nil, fmt.Errorf("%w: gitlab rejected access token", domain.ErrCodeSourceCredentialInvalid)
+	case resp.StatusCode == http.StatusNotFound:
+		var response errorResponse
+		_ = json.NewDecoder(body).Decode(&response)
+		// 仍然归为 ErrCodeSourceAuthorization，errNotFound 只给需要区分「资源不存在」的调用方判断。
+		return nil, fmt.Errorf("%w: %w: gitlab status=%d message=%s", domain.ErrCodeSourceAuthorization, errNotFound, resp.StatusCode, response.message())
 	case resp.StatusCode < 200 || resp.StatusCode >= 300:
 		var response errorResponse
 		_ = json.NewDecoder(body).Decode(&response)
@@ -263,6 +304,14 @@ type projectResponse struct {
 
 type branchResponse struct {
 	Name string `json:"name"`
+}
+
+type commitResponse struct {
+	ID            string    `json:"id"`
+	Title         string    `json:"title"`
+	AuthorName    string    `json:"author_name"`
+	CommittedDate time.Time `json:"committed_date"`
+	WebURL        string    `json:"web_url"`
 }
 
 type pushPayload struct {

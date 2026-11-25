@@ -295,6 +295,17 @@ type fakeModuleService struct {
 	lastInput *domain.ModuleInput
 	branches  []string
 	branchErr error
+	commit    domain.BranchCommit
+	commitErr error
+}
+
+func (s fakeModuleService) LatestBranchCommit(_ context.Context, _ string, branch string) (domain.BranchCommit, error) {
+	if s.commitErr != nil {
+		return domain.BranchCommit{}, s.commitErr
+	}
+	commit := s.commit
+	commit.Branch = branch
+	return commit, nil
 }
 
 func (s fakeModuleService) SearchBranches(context.Context, string, string) ([]string, error) {
@@ -467,6 +478,58 @@ func TestSearchModuleBranchesMapsErrors(t *testing.T) {
 	for _, tc := range cases {
 		e := newAuthorizedTestServer(Dependencies{ModuleService: fakeModuleService{branchErr: tc.err}})
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/branches", nil)
+		addTestConsoleSession(req)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != tc.status {
+			t.Fatalf("%v: expected status %d, got %d: %s", tc.err, tc.status, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestGetModuleBranchCommit(t *testing.T) {
+	committedAt := time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)
+	e := newAuthorizedTestServer(Dependencies{
+		ModuleService: fakeModuleService{commit: domain.BranchCommit{
+			SHA:         "7b628206c7e95429b62c3ce857b4e938a9cdd87b",
+			Title:       "新增专注计时页面",
+			AuthorName:  "seaooo",
+			CommittedAt: committedAt,
+			WebURL:      "https://git.example.com/demo/-/commit/7b62820",
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/branch-commit?branch=feature%2Flogin", nil)
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var response moduleBranchCommitResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Commit.Branch != "feature/login" || response.Commit.SHA != "7b628206c7e95429b62c3ce857b4e938a9cdd87b" ||
+		response.Commit.CommittedAt != "2026-11-25T06:30:00Z" || response.Commit.AuthorName != "seaooo" || response.Commit.Title == "" || response.Commit.WebURL == "" {
+		t.Fatalf("unexpected commit: %+v", response.Commit)
+	}
+}
+
+func TestGetModuleBranchCommitMapsErrors(t *testing.T) {
+	cases := []struct {
+		err    error
+		status int
+	}{
+		{domain.ErrModuleNotFound, http.StatusNotFound},
+		{domain.ErrCodeSourceBranchNotFound, http.StatusNotFound},
+		{domain.ErrInvalidCodeSourceInput, http.StatusBadRequest},
+		{domain.ErrCodeSourceAuthorization, http.StatusBadGateway},
+	}
+	for _, tc := range cases {
+		e := newAuthorizedTestServer(Dependencies{ModuleService: fakeModuleService{commitErr: tc.err}})
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/branch-commit?branch=main", nil)
 		addTestConsoleSession(req)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)

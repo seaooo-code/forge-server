@@ -161,6 +161,29 @@ func (p *Provider) SearchBranches(ctx context.Context, conn domain.CodeSourceCon
 	return matched, nil
 }
 
+// LatestBranchCommit 用提交列表接口按 sha=分支名 取最新一条，分支名走查询参数，不用处理路径里的斜杠转义。
+func (p *Provider) LatestBranchCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+	fullName := strings.Trim(strings.TrimSpace(repo.FullName), "/")
+	branch = strings.TrimSpace(branch)
+	if fullName == "" || branch == "" {
+		return domain.BranchCommit{}, domain.ErrInvalidCodeSourceInput
+	}
+	config, installationID, err := p.connectionContext(ctx, conn)
+	if err != nil {
+		return domain.BranchCommit{}, err
+	}
+	token, err := p.installationAccessToken(ctx, config, installationID)
+	if err != nil {
+		return domain.BranchCommit{}, err
+	}
+	commit, err := p.latestCommit(ctx, token.Token, fullName, branch)
+	if err != nil {
+		return domain.BranchCommit{}, err
+	}
+	commit.Branch = branch
+	return commit, nil
+}
+
 func (p *Provider) CloneCredentials(ctx context.Context, conn domain.CodeSourceConnection, _ domain.ModuleRepository) (domain.GitCredentials, error) {
 	config, installationID, err := p.connectionContext(ctx, conn)
 	if err != nil {

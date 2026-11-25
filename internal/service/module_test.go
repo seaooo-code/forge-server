@@ -396,6 +396,13 @@ func TestModuleServiceRejectsGitLabCIOnOtherProviders(t *testing.T) {
 type recordingBranchSearcher struct {
 	repository domain.ModuleRepository
 	query      string
+	branch     string
+}
+
+func (s *recordingBranchSearcher) LatestBranchCommit(_ context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+	s.repository = repository
+	s.branch = branch
+	return domain.BranchCommit{Branch: branch, SHA: "abc"}, nil
 }
 
 func (s *recordingBranchSearcher) SearchBranches(_ context.Context, repository domain.ModuleRepository, query string) ([]string, error) {
@@ -417,6 +424,23 @@ func TestModuleServiceSearchBranchesUsesModuleRepository(t *testing.T) {
 		t.Fatalf("unexpected search: %#v %+v", branches, searcher)
 	}
 	if _, err := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").SearchBranches(context.Background(), "module-home", ""); !errors.Is(err, domain.ErrCodeSourceProviderNotFound) {
+		t.Fatalf("expected provider not found without searcher, got %v", err)
+	}
+}
+
+func TestModuleServiceLatestBranchCommitUsesModuleRepository(t *testing.T) {
+	repository := fakeModuleRepository{module: testServiceModule("module-home", domain.ModuleKindFeature)}
+	searcher := &recordingBranchSearcher{}
+	service := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").WithBranchSearcher(searcher)
+
+	commit, err := service.LatestBranchCommit(context.Background(), "module-home", "feature/login")
+	if err != nil {
+		t.Fatalf("latest branch commit: %v", err)
+	}
+	if commit.SHA != "abc" || searcher.branch != "feature/login" || searcher.repository != repository.module.Repository {
+		t.Fatalf("unexpected lookup: %+v %+v", commit, searcher)
+	}
+	if _, err := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").LatestBranchCommit(context.Background(), "module-home", "main"); !errors.Is(err, domain.ErrCodeSourceProviderNotFound) {
 		t.Fatalf("expected provider not found without searcher, got %v", err)
 	}
 }

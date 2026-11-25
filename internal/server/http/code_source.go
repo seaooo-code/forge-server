@@ -452,6 +452,8 @@ func codeSourceErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source connection not found"})
 	case errors.Is(err, domain.ErrCodeSourceRepositoryNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source repository not found"})
+	case errors.Is(err, domain.ErrCodeSourceBranchNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source branch not found"})
 	case errors.Is(err, domain.ErrCodeSourceInstallationNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "code source installation not found"})
 	case errors.Is(err, domain.ErrCodeSourceProviderNotFound):

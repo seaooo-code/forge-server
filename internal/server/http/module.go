@@ -69,6 +69,19 @@ type moduleBranchesResponse struct {
 	Branches []string `json:"branches"`
 }
 
+type branchCommitResponse struct {
+	AuthorName  string `json:"authorName"`
+	Branch      string `json:"branch"`
+	CommittedAt string `json:"committedAt"`
+	SHA         string `json:"sha"`
+	Title       string `json:"title"`
+	WebURL      string `json:"webUrl"`
+}
+
+type moduleBranchCommitResponse struct {
+	Commit branchCommitResponse `json:"commit"`
+}
+
 type moduleSummaryResponse struct {
 	Common  int `json:"common"`
 	Feature int `json:"feature"`
@@ -119,6 +132,7 @@ func registerModuleRoutes(group *echo.Group, service ModuleService, authService 
 	group.GET("/modules", handler.list)
 	group.GET("/modules/:id", handler.detail)
 	group.GET("/modules/:id/branches", handler.branches)
+	group.GET("/modules/:id/branch-commit", handler.branchCommit)
 	group.POST("/modules", handler.create)
 	group.PATCH("/modules/:id", handler.update)
 	group.DELETE("/modules/:id", handler.delete)
@@ -182,6 +196,32 @@ func (h moduleHandler) branches(c echo.Context) error {
 		return codeSourceErrorResponse(c, err)
 	}
 	return c.JSON(http.StatusOK, moduleBranchesResponse{Branches: branches})
+}
+
+// branchCommit 供新增构建时展示所选分支的最新提交，权限与创建构建一致（build:create）。
+func (h moduleHandler) branchCommit(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "module service unavailable"})
+	}
+	if err := authorizeCurrentUser(c, h.authService, domain.ActionBuildCreate, domain.AuthorizationResource{ModuleID: c.Param("id")}); err != nil {
+		return err
+	}
+
+	commit, err := h.service.LatestBranchCommit(c.Request().Context(), c.Param("id"), c.QueryParam("branch"))
+	if err != nil {
+		if errors.Is(err, domain.ErrModuleNotFound) {
+			return moduleErrorResponse(c, err)
+		}
+		return codeSourceErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, moduleBranchCommitResponse{Commit: branchCommitResponse{
+		AuthorName:  commit.AuthorName,
+		Branch:      commit.Branch,
+		CommittedAt: formatTime(commit.CommittedAt),
+		SHA:         commit.SHA,
+		Title:       commit.Title,
+		WebURL:      commit.WebURL,
+	}})
 }
 
 func (h moduleHandler) create(c echo.Context) error {

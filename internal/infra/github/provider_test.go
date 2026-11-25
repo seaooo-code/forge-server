@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
@@ -262,6 +263,50 @@ func TestSearchBranchesFiltersAcrossPagesUpToLimit(t *testing.T) {
 	}
 	if len(requestedPages) != 2 {
 		t.Fatalf("expected to stop after page 2, requested %v", requestedPages)
+	}
+}
+
+func TestLatestBranchCommitUsesCommitsAPI(t *testing.T) {
+	provider := newTestProvider(t)
+	status, body := http.StatusOK, `[{"sha":"da1560886d4f094c3e6c9ef40349f7d38b5d27d7","html_url":"https://github.com/acme/home/commit/da15608","commit":{"message":"新增登录页\n\n详细说明","author":{"name":"Chen"},"committer":{"date":"2026-11-25T06:30:00Z"}}}]`
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/app/installations/1001/access_tokens":
+			return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"token":"installation-token"}`))}, nil
+		case "/repos/acme/home/commits":
+			if r.URL.Query().Get("sha") != "feature/login" || r.URL.Query().Get("per_page") != "1" || r.Header.Get("Authorization") != "Bearer installation-token" {
+				t.Fatalf("unexpected request %s?%s", r.URL.Path, r.URL.RawQuery)
+			}
+			return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		default:
+			t.Fatalf("unexpected github path %s", r.URL.Path)
+			return nil, nil
+		}
+	})}
+	conn := domain.CodeSourceConnection{Provider: domain.CodeSourceProviderGitHub, ExternalID: "1001"}
+	repo := domain.ModuleRepository{FullName: "acme/home"}
+
+	commit, err := provider.LatestBranchCommit(context.Background(), conn, repo, "feature/login")
+	if err != nil {
+		t.Fatalf("latest branch commit: %v", err)
+	}
+	if commit.Branch != "feature/login" || commit.SHA != "da1560886d4f094c3e6c9ef40349f7d38b5d27d7" || commit.Title != "新增登录页" ||
+		commit.AuthorName != "Chen" || !commit.CommittedAt.Equal(time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)) || commit.WebURL == "" {
+		t.Fatalf("unexpected commit: %+v", commit)
+	}
+
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusNotFound, `{"message":"Not Found"}`},
+		{http.StatusUnprocessableEntity, `{"message":"No commit found for SHA: feature/login"}`},
+		{http.StatusOK, `[]`},
+	} {
+		status, body = tc.status, tc.body
+		if _, err := provider.LatestBranchCommit(context.Background(), conn, repo, "feature/login"); !errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
+			t.Fatalf("status %d: expected branch not found, got %v", tc.status, err)
+		}
 	}
 }
 

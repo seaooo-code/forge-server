@@ -197,6 +197,29 @@ func TestCodeSourceServiceCloneCredentialsUsesDecryptedConnection(t *testing.T) 
 	}
 }
 
+func TestCodeSourceServiceLatestBranchCommitTrimsBranch(t *testing.T) {
+	provider := &fakeCodeSourceProvider{provider: domain.CodeSourceProviderGitLab, commit: domain.BranchCommit{Branch: "main", SHA: "abc"}}
+	service, store := newTestCodeSourceService(provider)
+	store.put(testGitLabConnection())
+	repository := domain.ModuleRepository{ConnectionID: "code-source-1", ExternalRepositoryID: "42"}
+
+	commit, err := service.LatestBranchCommit(context.Background(), repository, "  main  ")
+	if err != nil {
+		t.Fatalf("latest branch commit: %v", err)
+	}
+	if commit.SHA != "abc" || provider.lastCommitRef != "main" || provider.lastBranchRepo.ExternalRepositoryID != "42" {
+		t.Fatalf("unexpected provider call: %+v %q %+v", commit, provider.lastCommitRef, provider.lastBranchRepo)
+	}
+	// 分支为空时不访问代码托管方。
+	provider.lastCommitRef = ""
+	if _, err := service.LatestBranchCommit(context.Background(), repository, "  "); !errors.Is(err, domain.ErrInvalidCodeSourceInput) {
+		t.Fatalf("expected invalid input for empty branch, got %v", err)
+	}
+	if provider.lastCommitRef != "" {
+		t.Fatalf("provider must not be called for empty branch, got %q", provider.lastCommitRef)
+	}
+}
+
 func TestCodeSourceServiceSearchBranchesTrimsQueryAndLimits(t *testing.T) {
 	provider := &fakeCodeSourceProvider{provider: domain.CodeSourceProviderGitLab}
 	service, store := newTestCodeSourceService(provider)
@@ -476,6 +499,7 @@ type fakeCodeSourceProvider struct {
 	verifyErr   error
 	page        domain.RepositoryPage
 	branches    []string
+	commit      domain.BranchCommit
 	credentials domain.GitCredentials
 	event       domain.PushEvent
 	parseOK     bool
@@ -486,6 +510,7 @@ type fakeCodeSourceProvider struct {
 	lastSearchInput domain.RepositorySearchInput
 	lastBranchRepo  domain.ModuleRepository
 	lastBranchInput domain.BranchSearchInput
+	lastCommitRef   string
 	lastCloneConn   domain.CodeSourceConnection
 	lastCloneRepo   domain.ModuleRepository
 	lastWebhook     domain.WebhookRequest
@@ -510,6 +535,12 @@ func (p *fakeCodeSourceProvider) SearchBranches(_ context.Context, _ domain.Code
 	p.lastBranchRepo = repo
 	p.lastBranchInput = input
 	return p.branches, nil
+}
+
+func (p *fakeCodeSourceProvider) LatestBranchCommit(_ context.Context, _ domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+	p.lastBranchRepo = repo
+	p.lastCommitRef = branch
+	return p.commit, nil
 }
 
 func (p *fakeCodeSourceProvider) CloneCredentials(_ context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository) (domain.GitCredentials, error) {
