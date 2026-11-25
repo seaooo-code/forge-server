@@ -475,3 +475,65 @@ func TestSearchModuleBranchesMapsErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateModuleWithBuildVariables(t *testing.T) {
+	var lastInput domain.ModuleInput
+	e := newAuthorizedTestServer(Dependencies{
+		ModuleService: fakeModuleService{
+			module:    testHTTPModule("module-profile", domain.ModuleKindFeature),
+			lastInput: &lastInput,
+		},
+	})
+
+	body := map[string]any{}
+	raw, _ := json.Marshal(testModuleRequest("module-profile"))
+	_ = json.Unmarshal(raw, &body)
+	body["buildVariables"] = []map[string]any{
+		{"key": "YRN_KIND", "value": "business"},
+		{"key": "NPM_TOKEN", "value": "secret-token", "isSecret": true, "environmentCode": "qa"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(body))
+	req.Header.Set("Content-Type", "application/json")
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	variables := lastInput.BuildVariables
+	if len(variables) != 2 {
+		t.Fatalf("expected build variables passed to the service, got %#v", variables)
+	}
+	if variables[0].Key != "YRN_KIND" || variables[0].Value != "business" || variables[0].IsSecret {
+		t.Fatalf("unexpected plain variable: %#v", variables[0])
+	}
+	if variables[1].Key != "NPM_TOKEN" || !variables[1].IsSecret || variables[1].EnvironmentCode != "qa" {
+		t.Fatalf("unexpected secret variable: %#v", variables[1])
+	}
+	for _, variable := range variables {
+		if variable.UpdatedByUserID == "" {
+			t.Fatalf("updated-by user must come from the console session, got %#v", variable)
+		}
+	}
+}
+
+func TestCreateModuleRejectsInvalidBuildVariables(t *testing.T) {
+	for err, want := range map[error]string{
+		domain.ErrInvalidBuildVariableInput: "invalid build variable request",
+		domain.ErrEnvironmentNotFound:       "build variable environment not found",
+	} {
+		e := newAuthorizedTestServer(Dependencies{ModuleService: fakeModuleService{createErr: err}})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/modules", jsonBody(testModuleRequest("module-profile")))
+		req.Header.Set("Content-Type", "application/json")
+		addTestConsoleSession(req)
+		rec := httptest.NewRecorder()
+
+		e.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("expected 400 %q for %v, got %d: %s", want, err, rec.Code, rec.Body.String())
+		}
+	}
+}

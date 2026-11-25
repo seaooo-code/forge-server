@@ -4144,6 +4144,13 @@
           "buildConfig": {
             "$ref": "#/components/schemas/ModuleBuildConfig"
           },
+          "buildVariables": {
+            "description": "Optional build variables created together with the module in one transaction, at most 100. Same rules as the build variable upsert API; a key may appear only once per environmentCode.",
+            "items": {
+              "$ref": "#/components/schemas/BuildVariableUpsertRequest"
+            },
+            "type": "array"
+          },
           "commonModuleId": {
             "description": "Required for Feature modules. Must point to a Common module of the same application.",
             "type": "string"

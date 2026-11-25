@@ -2229,6 +2229,9 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 		WithPropertyRef("buildConfig", schemaRef("ModuleBuildConfig"))
 	if includeID {
 		schema.WithProperty("id", stringSchema("Immutable module id."))
+		buildVariables := arraySchemaRef("BuildVariableUpsertRequest")
+		buildVariables.Value.Description = "Optional build variables created together with the module in one transaction, at most 100. Same rules as the build variable upsert API; a key may appear only once per environmentCode."
+		schema.WithPropertyRef("buildVariables", buildVariables)
 	}
 	return schema
 }

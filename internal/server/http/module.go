@@ -91,6 +91,8 @@ type moduleRequest struct {
 	OwnerUserID        string                   `json:"ownerUserId"`
 	Repository         moduleRepositoryRequest  `json:"repository"`
 	BuildConfig        moduleBuildConfigRequest `json:"buildConfig"`
+	// BuildVariables 只在创建模块时生效，和模块在同一个事务里写入；更新模块时忽略。
+	BuildVariables []buildVariableUpsertRequest `json:"buildVariables"`
 }
 
 // moduleRepositoryRequest 只需要连接和外部仓库 id，仓库名称、地址等以服务端仓库缓存为准。
@@ -195,6 +197,13 @@ func (h moduleHandler) create(c echo.Context) error {
 		return err
 	}
 
+	if len(input.BuildVariables) > 0 {
+		session, _ := consoleSession(c)
+		for index := range input.BuildVariables {
+			input.BuildVariables[index].UpdatedByUserID = domain.ConsoleUserIDFromFeishu(session.User)
+		}
+	}
+
 	module, err := h.service.CreateModule(c.Request().Context(), input)
 	if err != nil {
 		return moduleErrorResponse(c, err)
@@ -276,6 +285,14 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 	}
 	if includeID {
 		input.ID = request.ID
+		for _, variable := range request.BuildVariables {
+			input.BuildVariables = append(input.BuildVariables, domain.ModuleBuildVariable{
+				Key:             variable.Key,
+				Value:           variable.Value,
+				IsSecret:        variable.IsSecret,
+				EnvironmentCode: variable.EnvironmentCode,
+			})
+		}
 	}
 
 	return input, true
@@ -306,6 +323,10 @@ func moduleErrorResponse(c echo.Context, err error) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case errors.Is(err, domain.ErrCodeSourceConnectionInactive):
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "code source connection is not active"})
+	case errors.Is(err, domain.ErrInvalidBuildVariableInput):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid build variable request"})
+	case errors.Is(err, domain.ErrEnvironmentNotFound):
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "build variable environment not found"})
 	case errors.Is(err, domain.ErrForbidden):
 		return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
 	default:

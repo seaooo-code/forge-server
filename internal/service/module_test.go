@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -417,5 +418,98 @@ func TestModuleServiceSearchBranchesUsesModuleRepository(t *testing.T) {
 	}
 	if _, err := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").SearchBranches(context.Background(), "module-home", ""); !errors.Is(err, domain.ErrCodeSourceProviderNotFound) {
 		t.Fatalf("expected provider not found without searcher, got %v", err)
+	}
+}
+
+func TestModuleServiceCreatesBuildVariablesWithModule(t *testing.T) {
+	repository := fakeModuleRepository{}
+	service := newTestModuleService(&repository).WithBuildVariables(NewBuildVariableService(nil, fakeSecretBox{}))
+
+	input := validModuleInput("module-profile")
+	input.BuildVariables = []domain.ModuleBuildVariable{
+		{Key: " YRN_KIND ", Value: "business", UpdatedByUserID: "ou-li-ming"},
+		{Key: "NPM_TOKEN", Value: "secret-token", IsSecret: true, UpdatedByUserID: "ou-li-ming"},
+		{Key: "YRN_KIND", Value: "common", EnvironmentCode: "staging", UpdatedByUserID: "ou-li-ming"},
+	}
+	if _, err := service.CreateModule(context.Background(), input); err != nil {
+		t.Fatalf("create module: %v", err)
+	}
+
+	saved := repository.lastCreateInput.BuildVariables
+	if len(saved) != 3 {
+		t.Fatalf("expected 3 build variables passed to the repository, got %#v", saved)
+	}
+	for _, variable := range saved {
+		if variable.ModuleID != "module-profile" || variable.Value != "" || variable.ValueEncrypted == "" {
+			t.Fatalf("build variable must be bound to the module and only carry ciphertext, got %#v", variable)
+		}
+	}
+	if saved[0].Key != "YRN_KIND" || saved[0].ValueEncrypted != "enc:business" {
+		t.Fatalf("expected trimmed key and encrypted value, got %#v", saved[0])
+	}
+	if !saved[1].IsSecret || saved[1].ValueEncrypted != "enc:secret-token" {
+		t.Fatalf("expected encrypted secret, got %#v", saved[1])
+	}
+	if saved[2].EnvironmentCode != "staging" {
+		t.Fatalf("expected environment override to be kept, got %#v", saved[2])
+	}
+}
+
+func TestModuleServiceRejectsInvalidBuildVariablesOnCreate(t *testing.T) {
+	variable := func(key string, value string, environment string, secret bool) domain.ModuleBuildVariable {
+		return domain.ModuleBuildVariable{Key: key, Value: value, EnvironmentCode: environment, IsSecret: secret, UpdatedByUserID: "ou-li-ming"}
+	}
+	tooMany := make([]domain.ModuleBuildVariable, 0, maxModuleCreateBuildVariables+1)
+	for index := 0; index <= maxModuleCreateBuildVariables; index++ {
+		tooMany = append(tooMany, variable("VAR_"+string(rune('A'+index%26))+strings.Repeat("X", index/26), "v", "", false))
+	}
+	tests := map[string][]domain.ModuleBuildVariable{
+		"invalid key":          {variable("lower_case", "v", "", false)},
+		"reserved prefix":      {variable("FORGE_BRANCH", "v", "", false)},
+		"empty secret":         {variable("NPM_TOKEN", "", "", true)},
+		"duplicate key":        {variable("YRN_KIND", "a", "", false), variable("YRN_KIND", "b", "", false)},
+		"duplicate env key":    {variable("YRN_KIND", "a", "qa", false), variable("YRN_KIND", "b", " qa ", false)},
+		"too many variables":   tooMany,
+		"missing updated user": {{Key: "YRN_KIND", Value: "a"}},
+	}
+	for name, variables := range tests {
+		t.Run(name, func(t *testing.T) {
+			repository := fakeModuleRepository{}
+			service := newTestModuleService(&repository).WithBuildVariables(NewBuildVariableService(nil, fakeSecretBox{}))
+			input := validModuleInput("module-profile")
+			input.BuildVariables = variables
+			if _, err := service.CreateModule(context.Background(), input); !errors.Is(err, domain.ErrInvalidBuildVariableInput) {
+				t.Fatalf("expected invalid build variable input, got %v", err)
+			}
+			if repository.createCalls != 0 {
+				t.Fatal("module must not be created when its build variables are invalid")
+			}
+		})
+	}
+}
+
+func TestModuleServiceAllowsSameKeyForDifferentEnvironments(t *testing.T) {
+	repository := fakeModuleRepository{}
+	service := newTestModuleService(&repository).WithBuildVariables(NewBuildVariableService(nil, fakeSecretBox{}))
+	input := validModuleInput("module-profile")
+	input.BuildVariables = []domain.ModuleBuildVariable{
+		{Key: "YRN_KIND", Value: "a", UpdatedByUserID: "ou-li-ming"},
+		{Key: "YRN_KIND", Value: "b", EnvironmentCode: "qa", UpdatedByUserID: "ou-li-ming"},
+	}
+	if _, err := service.CreateModule(context.Background(), input); err != nil {
+		t.Fatalf("expected one value per environment to be allowed, got %v", err)
+	}
+}
+
+func TestModuleServiceIgnoresBuildVariablesOnUpdate(t *testing.T) {
+	repository := fakeModuleRepository{}
+	service := newTestModuleService(&repository).WithBuildVariables(NewBuildVariableService(nil, fakeSecretBox{}))
+	input := validModuleInput("")
+	input.BuildVariables = []domain.ModuleBuildVariable{{Key: "YRN_KIND", Value: "a", UpdatedByUserID: "ou-li-ming"}}
+	if _, err := service.UpdateModule(context.Background(), "module-profile", input); err != nil {
+		t.Fatalf("update module: %v", err)
+	}
+	if len(repository.lastUpdateInput.BuildVariables) != 0 {
+		t.Fatalf("update must not pass build variables to the repository, got %#v", repository.lastUpdateInput.BuildVariables)
 	}
 }

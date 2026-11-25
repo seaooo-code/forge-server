@@ -158,6 +158,37 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 		return domain.Module{}, fmt.Errorf("insert module: %w", err)
 	}
 
+	// 创建时一起提交的构建变量和模块在同一个事务里写入，任何一条失败都整体回滚，不会留下缺变量的模块。
+	for _, variable := range input.BuildVariables {
+		if _, err := tx.Exec(ctx, `
+			insert into module_build_variables (
+				module_id,
+				key,
+				value_encrypted,
+				is_secret,
+				environment_code,
+				updated_by_user_id,
+				updated_at
+			) values ($1, $2, $3, $4, nullif($5, ''), $6, now())
+		`,
+			input.ID,
+			variable.Key,
+			variable.ValueEncrypted,
+			variable.IsSecret,
+			variable.EnvironmentCode,
+			variable.UpdatedByUserID,
+		); err != nil {
+			var pgErr *pgconn.PgError
+			switch {
+			case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "module_build_variables_environment_code_fkey":
+				return domain.Module{}, domain.ErrEnvironmentNotFound
+			case isUniqueViolation(err), isForeignKeyViolation(err), isCheckViolation(err):
+				return domain.Module{}, domain.ErrInvalidBuildVariableInput
+			}
+			return domain.Module{}, fmt.Errorf("insert build variable %s: %w", variable.Key, err)
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `
 		update applications
 		set module_count = module_count + 1, updated_at = now()

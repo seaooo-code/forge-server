@@ -85,6 +85,9 @@ type ModuleInput struct {
 	OwnerUserID        string
 	Repository         ModuleRepository
 	BuildConfig        ModuleBuildConfig
+	// BuildVariables 是创建模块时一起写入的构建变量，与模块在同一个事务里创建。HTTP 层传入明文 Value，
+	// service 校验并加密后只保留 ValueEncrypted。更新模块时忽略，构建变量走单独的接口修改。
+	BuildVariables []ModuleBuildVariable
 }
 
 type ModuleListFilters struct {

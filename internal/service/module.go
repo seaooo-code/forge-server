@@ -10,9 +10,11 @@ import (
 )
 
 const (
-	maxModuleAutoBuildBranches = 20
-	maxModuleBuildPathLength   = 255
-	maxModuleCIJobLength       = 255
+	// maxModuleCreateBuildVariables 是创建模块时一次最多写入的构建变量数。
+	maxModuleCreateBuildVariables = 100
+	maxModuleAutoBuildBranches    = 20
+	maxModuleBuildPathLength      = 255
+	maxModuleCIJobLength          = 255
 )
 
 type ModuleRepository interface {
@@ -35,6 +37,11 @@ type ModuleBranchSearcher interface {
 	SearchBranches(ctx context.Context, repository domain.ModuleRepository, query string) ([]string, error)
 }
 
+// ModuleBuildVariablePreparer 校验并加密创建模块时一起提交的构建变量，由 BuildVariableService 实现。
+type ModuleBuildVariablePreparer interface {
+	PrepareBuildVariable(input domain.ModuleBuildVariableInput) (domain.ModuleBuildVariable, error)
+}
+
 // ModuleBuildAdapterReader 用于在模块选用构建适配器时校验适配器状态和参数定义。
 type ModuleBuildAdapterReader interface {
 	GetBuildAdapter(ctx context.Context, id string) (domain.BuildAdapter, error)
@@ -43,6 +50,7 @@ type ModuleBuildAdapterReader interface {
 type ModuleService struct {
 	branches              ModuleBranchSearcher
 	buildAdapters         ModuleBuildAdapterReader
+	buildVariables        ModuleBuildVariablePreparer
 	codeSources           ModuleCodeSourceStore
 	defaultDockerfilePath string
 	repository            ModuleRepository
@@ -64,6 +72,12 @@ func NewModuleService(repository ModuleRepository, codeSources ModuleCodeSourceS
 // WithBuildAdapters 注入构建适配器读取；未注入时模块不能选择 adapter 构建方式。
 func (s *ModuleService) WithBuildAdapters(reader ModuleBuildAdapterReader) *ModuleService {
 	s.buildAdapters = reader
+	return s
+}
+
+// WithBuildVariables 注入构建变量校验；未注入时创建模块不能带构建变量。
+func (s *ModuleService) WithBuildVariables(preparer ModuleBuildVariablePreparer) *ModuleService {
+	s.buildVariables = preparer
 	return s
 }
 
@@ -110,7 +124,45 @@ func (s *ModuleService) CreateModule(ctx context.Context, input domain.ModuleInp
 	if err := s.validateModuleBuildAdapter(ctx, normalized.BuildConfig, ""); err != nil {
 		return domain.Module{}, err
 	}
+	variables, err := s.prepareCreateBuildVariables(normalized.ID, input.BuildVariables)
+	if err != nil {
+		return domain.Module{}, err
+	}
+	normalized.BuildVariables = variables
 	return s.repository.CreateModule(ctx, normalized)
+}
+
+// prepareCreateBuildVariables 校验并加密创建模块时一起提交的构建变量：规则与单独修改变量相同，
+// 另外不允许同一个 key 在同一个环境里出现两次。
+func (s *ModuleService) prepareCreateBuildVariables(moduleID string, inputs []domain.ModuleBuildVariable) ([]domain.ModuleBuildVariable, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	if s.buildVariables == nil || len(inputs) > maxModuleCreateBuildVariables {
+		return nil, domain.ErrInvalidBuildVariableInput
+	}
+	prepared := make([]domain.ModuleBuildVariable, 0, len(inputs))
+	seen := make(map[[2]string]bool, len(inputs))
+	for _, input := range inputs {
+		variable, err := s.buildVariables.PrepareBuildVariable(domain.ModuleBuildVariableInput{
+			ModuleID:        moduleID,
+			Key:             input.Key,
+			Value:           input.Value,
+			IsSecret:        input.IsSecret,
+			EnvironmentCode: input.EnvironmentCode,
+			UpdatedByUserID: input.UpdatedByUserID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		scope := [2]string{variable.Key, variable.EnvironmentCode}
+		if seen[scope] {
+			return nil, domain.ErrInvalidBuildVariableInput
+		}
+		seen[scope] = true
+		prepared = append(prepared, variable)
+	}
+	return prepared, nil
 }
 
 func (s *ModuleService) UpdateModule(ctx context.Context, id string, input domain.ModuleInput) (domain.Module, error) {

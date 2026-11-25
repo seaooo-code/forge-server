@@ -55,6 +55,23 @@ func (s *BuildVariableService) ListBuildVariables(ctx context.Context, moduleID 
 }
 
 func (s *BuildVariableService) UpsertBuildVariable(ctx context.Context, input domain.ModuleBuildVariableInput) (domain.ModuleBuildVariable, error) {
+	prepared, err := s.PrepareBuildVariable(input)
+	if err != nil {
+		return domain.ModuleBuildVariable{}, err
+	}
+	saved, err := s.repository.UpsertModuleBuildVariable(ctx, prepared)
+	if err != nil {
+		return domain.ModuleBuildVariable{}, err
+	}
+	if err := s.revealForConsole(&saved); err != nil {
+		return domain.ModuleBuildVariable{}, err
+	}
+	return saved, nil
+}
+
+// PrepareBuildVariable 校验构建变量并加密取值，返回可以直接写库的记录（只有 ValueEncrypted，没有明文）。
+// 单独修改变量和创建模块时一起写入变量都用它，保证两条路径的校验规则一致。
+func (s *BuildVariableService) PrepareBuildVariable(input domain.ModuleBuildVariableInput) (domain.ModuleBuildVariable, error) {
 	normalized := domain.ModuleBuildVariableInput{
 		ModuleID:        strings.TrimSpace(input.ModuleID),
 		Key:             strings.TrimSpace(input.Key),
@@ -76,21 +93,14 @@ func (s *BuildVariableService) UpsertBuildVariable(ctx context.Context, input do
 	if err != nil {
 		return domain.ModuleBuildVariable{}, err
 	}
-	saved, err := s.repository.UpsertModuleBuildVariable(ctx, domain.ModuleBuildVariable{
+	return domain.ModuleBuildVariable{
 		ModuleID:        normalized.ModuleID,
 		Key:             normalized.Key,
 		ValueEncrypted:  encrypted,
 		IsSecret:        normalized.IsSecret,
 		EnvironmentCode: normalized.EnvironmentCode,
 		UpdatedByUserID: normalized.UpdatedByUserID,
-	})
-	if err != nil {
-		return domain.ModuleBuildVariable{}, err
-	}
-	if err := s.revealForConsole(&saved); err != nil {
-		return domain.ModuleBuildVariable{}, err
-	}
-	return saved, nil
+	}, nil
 }
 
 func (s *BuildVariableService) DeleteBuildVariable(ctx context.Context, moduleID string, key string, environmentCode string) error {
