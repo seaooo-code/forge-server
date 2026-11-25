@@ -81,11 +81,6 @@ data.pack_version = packVersion;
 fs.writeFileSync(file, JSON.stringify(data, null, 4));
 ' "$YRN_CONFIG_FILE" "$FORGE_BUILD_NUMBER" "$maketime" "$YRN_PACK_VERSION"
 
-# business 包需要同环境下生效的 common 产物：按 Forge 传入的 FORGE_DEPS 下载到 $FORGE_DEPS_DIR/common。
-if [ "$YRN_KIND" = "business" ]; then
-  node "$FORGE_SCRIPTS_DIR/forge-fetch-deps.js" "$FORGE_DEPS_DIR/common"
-fi
-
 read -r sdk native mapver pkgname < <(node -e '
 const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
 // 不用 console.log 输出多个参数：仓库的 .gitlab-ci.yml 设置了 FORCE_COLOR，console.log 会给数字加上颜色控制符，
@@ -94,6 +89,12 @@ process.stdout.write([c.SDKVersion, c.maxNativeApiLevel, c.moduleIdMapVersion, c
 ' "$YRN_CONFIG_FILE")
 runtime="${sdk}-n${native}-m${mapver}"
 log "包名 $pkgname，runtimeVersion $runtime"
+
+# business 包需要同环境下生效的 common 产物：按 Forge 传入的 FORGE_DEPS 下载到 $FORGE_DEPS_DIR/common。
+# FORGE_DEPS 里是 Common 模块所有生效中的运行时版本，这里只下载和本包相同的 runtimeVersion，没有时直接失败。
+if [ "$YRN_KIND" = "business" ]; then
+  node "$FORGE_SCRIPTS_DIR/forge-fetch-deps.js" "$FORGE_DEPS_DIR/common" "$runtime"
+fi
 
 rm -rf "$DIST_DIR"
 mkdir -p build-config "$DIST_DIR"

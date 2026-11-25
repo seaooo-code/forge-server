@@ -95,7 +95,7 @@ Feature 模块构建时需要读取所属 Common 模块产物里的文件（例�
    | 没有公开访问地址 | worker 写进**当前构建**存储的依赖清单（`{当前构建的产物目录}/ci-deps/{依赖构建 ID}.json`）的预签名地址 | 依赖清单里每个文件的 `url`，是依赖构建存储的预签名地址 |
 
    没有公开访问地址时，`baseUrl` 为空，`expiresAt` 是所有预签名地址的过期时间：构建超时（`FORGE_WORKER_BUILD_TIMEOUT`）加 30 分钟，最长 7 天。依赖清单只包含需要注入的平台文件，格式是 `{"buildRecordId", "expiresAt", "files": [{"path", "objectKey", "sizeBytes", "sha256", "url"}]}`。文件地址不直接放进 `FORGE_DEPS`，因为 Linux 限制单个环境变量不超过 128 KiB，几百个文件的 Common 包展开后会超过，job 容器无法启动。
-3. job 运行 [`docs/gitlab-ci/forge-fetch-deps.js`](gitlab-ci/forge-fetch-deps.js)，它按清单下载依赖文件、校验大小和 sha256，写成与 docker 构建相同的目录结构：
+3. job 运行 [`docs/gitlab-ci/forge-fetch-deps.js`](gitlab-ci/forge-fetch-deps.js)，它按清单下载依赖文件、校验大小和 sha256，写成与 docker 构建相同的目录结构。`items` 包含 Common 模块**所有**生效中的运行时版本：Forge 在构建前不知道 Feature 包的 runtimeVersion，只能全部交出去。脚本的第二个参数可以指定只下载哪个 runtimeVersion，没有这个版本时直接失败，并列出生效中的版本；YRN 示例脚本 `yrn-build-ci.sh` 会先从包配置算出 runtimeVersion，再只下载这一个版本：
 
 ```text
 .forge/deps/common/index.json

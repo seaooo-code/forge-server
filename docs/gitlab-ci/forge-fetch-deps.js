@@ -6,7 +6,9 @@
 //   - 依赖构建的存储有公开访问地址：manifestUrl 是依赖构建的 manifest.json，文件地址是 baseUrl + objectKey；
 //   - 没有公开访问地址：manifestUrl 是 Forge 生成的依赖清单的预签名地址，清单里每个文件带预签名的 url，在 expiresAt 前有效。
 //
-// 用法：node forge-fetch-deps.js [输出目录，默认 .forge/deps/common]
+// 用法：node forge-fetch-deps.js [输出目录，默认 .forge/deps/common] [runtimeVersion]
+//   指定 runtimeVersion 时只下载这一个版本的依赖，其他版本跳过；FORGE_DEPS 里没有这个版本时直接失败，并列出生效中的版本。
+//   Forge 在构建前不知道功能包的 runtimeVersion，会把 Common 模块所有生效版本都交给 job，由构建脚本按自己的版本挑选。
 // 环境变量：
 //   FORGE_DEPS            Forge 传入的 JSON；不存在时什么都不做（不是 Feature 模块，或没有依赖）
 //   FORGE_DEPS_MAX_BYTES  依赖总大小上限，默认 209715200（200 MiB）
@@ -107,12 +109,28 @@ async function main() {
   }
 
   const outputDir = path.resolve(process.argv[2] || path.join('.forge', 'deps', 'common'));
+  const wantedRuntimeVersion = String(process.argv[3] || '').trim();
   const maxBytes = Number(process.env.FORGE_DEPS_MAX_BYTES || 200 * 1024 * 1024);
-  const items = Array.isArray(deps.items) ? deps.items : [];
+  const allItems = Array.isArray(deps.items) ? deps.items : [];
+  const available = allItems.map((item) => String(item.runtimeVersion || ''));
+  let items = allItems;
+  if (wantedRuntimeVersion) {
+    items = allItems.filter((item) => item.runtimeVersion === wantedRuntimeVersion);
+    if (items.length === 0) {
+      fail(
+        `Common 模块 ${deps.moduleId} 在环境 ${deps.environment} 下没有 runtimeVersion ${wantedRuntimeVersion} 的生效发布` +
+          `（生效中的版本：${available.join('、') || '无'}），请先发布同版本的 Common 包，再重新触发构建`,
+      );
+    }
+    const skipped = available.filter((value) => value !== wantedRuntimeVersion);
+    if (skipped.length > 0) {
+      log(`只下载 runtimeVersion ${wantedRuntimeVersion}，跳过 ${skipped.join('、')}`);
+    }
+  }
   fs.mkdirSync(outputDir, { recursive: true });
 
   const index = { moduleId: deps.moduleId, environment: deps.environment, items: [] };
-  if (items.length === 0) {
+  if (allItems.length === 0) {
     log(`Common 模块 ${deps.moduleId} 在环境 ${deps.environment} 下没有生效中的默认路由，只写入空的 index.json`);
   }
 
