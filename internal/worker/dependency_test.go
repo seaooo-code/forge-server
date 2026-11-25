@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"forge-server/internal/domain"
 	"forge-server/internal/service"
@@ -37,6 +38,28 @@ func (p *fakeDependencyProvider) RecordBuildDependencies(_ context.Context, _ st
 type fakeDependencyArtifacts struct {
 	manifests map[string]domain.ArtifactManifest
 	objects   map[string][]byte
+	// puts 记录 PutArtifactObject 写入的 {存储 bucket}/{key}，presignErr 非空时预签名失败。
+	puts       []string
+	presignErr error
+	presignTTL time.Duration
+}
+
+func (r *fakeDependencyArtifacts) PutArtifactObject(_ context.Context, record domain.BuildRecord, objectKey string, body []byte, _ string) error {
+	if r.objects == nil {
+		r.objects = map[string][]byte{}
+	}
+	r.objects[objectKey] = body
+	r.puts = append(r.puts, record.StorageBucket+"/"+objectKey)
+	return nil
+}
+
+// PresignArtifactObject 返回 https://presigned.example/{bucket}/{key}?ttl=...，测试据此断言用的是哪个存储。
+func (r *fakeDependencyArtifacts) PresignArtifactObject(_ context.Context, record domain.BuildRecord, objectKey string, ttl time.Duration) (string, error) {
+	if r.presignErr != nil {
+		return "", r.presignErr
+	}
+	r.presignTTL = ttl
+	return "https://presigned.example/" + record.StorageBucket + "/" + objectKey + "?ttl=" + ttl.String(), nil
 }
 
 func (r *fakeDependencyArtifacts) ReadArtifactManifest(_ context.Context, record domain.BuildRecord) (domain.ArtifactManifest, error) {

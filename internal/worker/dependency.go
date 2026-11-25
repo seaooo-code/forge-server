@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"forge-server/internal/domain"
 	s3infra "forge-server/internal/infra/s3"
@@ -25,15 +26,20 @@ type BuildDependencyProvider interface {
 	RecordBuildDependencies(ctx context.Context, buildID string, dependencies []domain.BuildDependency) error
 }
 
-// DependencyArtifactReader 按依赖构建自己的存储配置读取产物清单和文件，默认实现是 infra/s3。
+// DependencyArtifactReader 按构建记录自己的存储配置读写产物，默认实现是 infra/s3。
+// docker 构建只读取依赖构建的清单和文件；gitlab_ci 构建在依赖构建的存储没有公开访问地址时，
+// 还要生成预签名下载地址，并把依赖清单写进当前构建的存储，见 docs/gitlab-ci-build.md 第 5 节。
 type DependencyArtifactReader interface {
 	service.ArtifactManifestReader
 	service.ArtifactObjectReader
+	PutArtifactObject(ctx context.Context, record domain.BuildRecord, objectKey string, body []byte, contentType string) error
+	PresignArtifactObject(ctx context.Context, record domain.BuildRecord, objectKey string, ttl time.Duration) (string, error)
 }
 
 type s3DependencyArtifactReader struct {
 	s3infra.ManifestReader
 	s3infra.ObjectReader
+	s3infra.ObjectPresigner
 }
 
 // buildDependenciesDirArgValue 是 FORGE_DEPS_DIR 的值，相对构建上下文，Dockerfile 里可以直接 COPY。

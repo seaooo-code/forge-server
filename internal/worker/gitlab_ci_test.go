@@ -531,19 +531,81 @@ func TestExecuteGitLabCIPassesDependenciesToThePipeline(t *testing.T) {
 	}
 }
 
-func TestExecuteGitLabCIRejectsDependencyWithoutPublicURL(t *testing.T) {
+func TestExecuteGitLabCIPresignsDependencyWithoutPublicURL(t *testing.T) {
+	client := ciTestSuccessClient(nil)
+	first := dependencyTestBuild("a0000000-0000-0000-0000-000000000001", 3, "1.0", "ios")
+	first.StorageBucket = "private-bucket"
+	artifacts := &fakeDependencyArtifacts{}
+	artifacts.add(first, "forge.json", `{"runtimeVersion":"1.0"}`)
+	artifacts.add(first, "ios/commonMap.ios.json", "[]")
+	artifacts.add(first, "android/commonMap.android.json", "[]")
+	provider := &fakeDependencyProvider{ok: true, plan: service.BuildDependencyPlan{ModuleID: "common", Environment: "qa", Builds: []domain.BuildRecord{first}}}
+	executor := newCITestExecutor(t, client, &fakeCIRecorder{}, &fakeBuildLogStore{})
+	executor.cfg.BuildTimeout = 90 * time.Minute
+	executor.dependencies = provider
+	executor.dependencyArtifacts = artifacts
+	record := ciTestRecord()
+	record.ModuleKind = domain.ModuleKindFeature
+	record.CommonModuleID = "common"
+	record.StorageBucket = "feature-bucket"
+
+	_, _ = executor.Execute(context.Background(), record)
+
+	if client.creates != 1 {
+		t.Fatalf("expected the pipeline to be created, got %d creates", client.creates)
+	}
+	raw, ok := variableValue(client.createVars, "FORGE_DEPS")
+	if !ok {
+		t.Fatal("expected FORGE_DEPS to be passed")
+	}
+	var deps ciDependencies
+	if err := json.Unmarshal([]byte(raw), &deps); err != nil {
+		t.Fatalf("decode FORGE_DEPS: %v", err)
+	}
+	item := deps.Items[0]
+	listKey := executor.artifactKey(record) + "/ci-deps/" + first.ID + ".json"
+	if item.BaseURL != "" || item.ManifestURL != "https://presigned.example/feature-bucket/"+listKey+"?ttl=2h0m0s" || item.ExpiresAt == "" {
+		t.Fatalf("expected presigned manifest url in the feature build's storage, got %#v", item)
+	}
+	if artifacts.presignTTL != 2*time.Hour {
+		t.Fatalf("presigned urls must outlive the build timeout, got ttl %s", artifacts.presignTTL)
+	}
+	if len(artifacts.puts) != 1 || artifacts.puts[0] != "feature-bucket/"+listKey {
+		t.Fatalf("expected one dependency list written to the feature build's storage, got %#v", artifacts.puts)
+	}
+
+	var list ciPresignedManifest
+	if err := json.Unmarshal(artifacts.objects[listKey], &list); err != nil {
+		t.Fatalf("decode dependency list: %v", err)
+	}
+	if list.BuildRecordID != first.ID || len(list.Files) != 1 {
+		t.Fatalf("expected only the ios file of the dependency build, got %#v", list)
+	}
+	file := list.Files[0]
+	if file.Path != "ios/commonMap.ios.json" || file.ObjectKey != first.ArtifactKey+"/ios/commonMap.ios.json" || file.SizeBytes != 2 || file.SHA256 == "" {
+		t.Fatalf("unexpected dependency file: %#v", file)
+	}
+	if file.URL != "https://presigned.example/private-bucket/"+file.ObjectKey+"?ttl=2h0m0s" {
+		t.Fatalf("file url must be presigned with the dependency build's storage, got %s", file.URL)
+	}
+}
+
+func TestExecuteGitLabCIFailsBeforePipelineWhenPresignFails(t *testing.T) {
 	client := ciTestSuccessClient(nil)
 	first := dependencyTestBuild("a0000000-0000-0000-0000-000000000001", 3, "1.0", "android")
+	artifacts := &fakeDependencyArtifacts{presignErr: errors.New("invalid credentials")}
+	artifacts.add(first, "android/commonMap.android.json", "[]")
 	provider := &fakeDependencyProvider{ok: true, plan: service.BuildDependencyPlan{ModuleID: "common", Environment: "qa", Builds: []domain.BuildRecord{first}}}
 	executor := newCITestExecutor(t, client, &fakeCIRecorder{}, &fakeBuildLogStore{})
 	executor.dependencies = provider
+	executor.dependencyArtifacts = artifacts
 	record := ciTestRecord()
 	record.ModuleKind = domain.ModuleKindFeature
 	record.CommonModuleID = "common"
 
 	_, err := executor.Execute(context.Background(), record)
-	if err == nil || !strings.Contains(err.Error(), "公开访问地址") {
-		t.Fatalf("expected public url error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "预签名") || !strings.Contains(err.Error(), "invalid credentials") {
+		t.Fatalf("expected presign error, got %v", err)
 	}
 	if client.creates != 0 {
 		t.Fatal("pipeline must not be created when dependencies cannot be handed over")

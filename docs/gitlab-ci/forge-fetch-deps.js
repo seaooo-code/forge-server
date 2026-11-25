@@ -2,6 +2,10 @@
 // 依赖产物下载脚本，供 gitlab_ci 构建的 CI job 使用。Forge 通过 pipeline 变量 FORGE_DEPS 传入需要的 Common 依赖构建，
 // 这个脚本把它们下载到 .forge/deps/common/{runtimeVersion}/{platform}/...，并写出 index.json，目录结构与 docker 构建的依赖注入一致。
 //
+// 下载地址有两种，见 forge-server/docs/gitlab-ci-build.md 第 5 节：
+//   - 依赖构建的存储有公开访问地址：manifestUrl 是依赖构建的 manifest.json，文件地址是 baseUrl + objectKey；
+//   - 没有公开访问地址：manifestUrl 是 Forge 生成的依赖清单的预签名地址，清单里每个文件带预签名的 url，在 expiresAt 前有效。
+//
 // 用法：node forge-fetch-deps.js [输出目录，默认 .forge/deps/common]
 // 环境变量：
 //   FORGE_DEPS            Forge 传入的 JSON；不存在时什么都不做（不是 Feature 模块，或没有依赖）
@@ -30,13 +34,18 @@ function fail(message) {
   process.exit(1);
 }
 
+// 预签名地址的查询参数里有签名，出错时只打印路径部分，避免签名进入 job 日志。
+function displayURL(url) {
+  return String(url).split('?')[0];
+}
+
 function get(url) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https:') ? https : http;
     const request = client.get(url, { timeout: REQUEST_TIMEOUT_MS }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
-        reject(new Error(`GET ${url} 返回 ${response.statusCode}`));
+        reject(new Error(`GET ${displayURL(url)} 返回 ${response.statusCode}`));
         return;
       }
       const chunks = [];
@@ -44,7 +53,7 @@ function get(url) {
       response.on('end', () => resolve(Buffer.concat(chunks)));
       response.on('error', reject);
     });
-    request.on('timeout', () => request.destroy(new Error(`GET ${url} 超时`)));
+    request.on('timeout', () => request.destroy(new Error(`GET ${displayURL(url)} 超时`)));
     request.on('error', reject);
   });
 }
@@ -114,6 +123,9 @@ async function main() {
     if (!/^[A-Za-z0-9._-]+$/.test(runtimeVersion) || runtimeVersion === '.' || runtimeVersion === '..' || runtimeVersion === 'index.json') {
       fail(`runtimeVersion ${JSON.stringify(runtimeVersion)} 不能作为目录名`);
     }
+    if (item.expiresAt && Date.parse(item.expiresAt) <= Date.now()) {
+      fail(`依赖构建 #${item.buildNumber} 的预签名下载地址已在 ${item.expiresAt} 过期，请在 Forge 重新触发构建`);
+    }
     const manifest = JSON.parse((await getWithRetry(item.manifestUrl)).toString('utf8'));
     const platforms = new Set();
     let fileCount = 0;
@@ -127,8 +139,8 @@ async function main() {
       if (!relative.includes('/') || !PLATFORMS.includes(platform) || !(item.platforms || []).includes(platform)) {
         continue;
       }
-      if (!file.sha256 || !(file.sizeBytes >= 0) || !file.objectKey) {
-        fail(`依赖构建 #${item.buildNumber} 的清单文件 ${relative} 缺少 sha256、大小或 objectKey`);
+      if (!file.sha256 || !(file.sizeBytes >= 0) || !(file.url || file.objectKey)) {
+        fail(`依赖构建 #${item.buildNumber} 的清单文件 ${relative} 缺少 sha256、大小或下载地址`);
       }
       totalBytes += file.sizeBytes;
       if (totalBytes > maxBytes) {
@@ -137,7 +149,7 @@ async function main() {
       platforms.add(platform);
       fileCount++;
       const target = path.join(outputDir, runtimeVersion, ...relative.split('/'));
-      const url = `${String(item.baseUrl).replace(/\/+$/, '')}/${String(file.objectKey).replace(/^\/+/, '')}`;
+      const url = file.url || `${String(item.baseUrl).replace(/\/+$/, '')}/${String(file.objectKey).replace(/^\/+/, '')}`;
       downloads.push(async () => {
         const body = await getWithRetry(url);
         if (body.length !== file.sizeBytes) {

@@ -87,7 +87,14 @@ Feature 模块构建时需要读取所属 Common 模块产物里的文件（例�
 }
 ```
 
-   `items` 为空表示 Common 模块没有生效中的默认路由，是否因此失败由 job 自己判断。
+   `items` 为空表示 Common 模块没有生效中的默认路由，是否因此失败由 job 自己判断。下载地址按依赖构建所用的存储配置分两种：
+
+   | 存储配置 | `manifestUrl` | 文件地址 |
+   | --- | --- | --- |
+   | 有公开访问地址（`publicBaseUrl`） | 依赖构建的 `manifest.json` | `baseUrl` + 清单里的 `objectKey` |
+   | 没有公开访问地址 | worker 写进**当前构建**存储的依赖清单（`{当前构建的产物目录}/ci-deps/{依赖构建 ID}.json`）的预签名地址 | 依赖清单里每个文件的 `url`，是依赖构建存储的预签名地址 |
+
+   没有公开访问地址时，`baseUrl` 为空，`expiresAt` 是所有预签名地址的过期时间：构建超时（`FORGE_WORKER_BUILD_TIMEOUT`）加 30 分钟，最长 7 天。依赖清单只包含需要注入的平台文件，格式是 `{"buildRecordId", "expiresAt", "files": [{"path", "objectKey", "sizeBytes", "sha256", "url"}]}`。文件地址不直接放进 `FORGE_DEPS`，因为 Linux 限制单个环境变量不超过 128 KiB，几百个文件的 Common 包展开后会超过，job 容器无法启动。
 3. job 运行 [`docs/gitlab-ci/forge-fetch-deps.js`](gitlab-ci/forge-fetch-deps.js)，它按清单下载依赖文件、校验大小和 sha256，写成与 docker 构建相同的目录结构：
 
 ```text
@@ -95,7 +102,14 @@ Feature 模块构建时需要读取所属 Common 模块产物里的文件（例�
 .forge/deps/common/{runtimeVersion}/{platform}/...
 ```
 
-这要求 **runner 能访问依赖构建所用存储配置的公开访问地址**（`publicBaseUrl`）。依赖构建的存储配置没有公开访问地址时，构建会直接失败，不会创建 pipeline。
+这要求 **runner 能访问对象存储**：有公开访问地址时访问 `publicBaseUrl`；没有时访问存储的 S3 Endpoint（例如 FDS 的 `https://s3-cnbj3-fusion.mi-fds.net`）。
+
+预签名地址的注意事项：
+
+- 地址本身就是凭证，在有效期内任何拿到它的人都能下载对应文件。`FORGE_DEPS` 是 pipeline 变量，项目 Developer 及以上成员能在 pipeline 页面看到它，进而读取依赖清单里的文件地址，和他们能触发构建的权限范围一致。`forge-fetch-deps.js` 报错时只打印地址的路径部分，不会把签名写进 job 日志。
+- pipeline 排队太久、超过 `expiresAt` 才开始运行时，下载脚本会直接失败并提示重新触发。
+- 预签名失败（例如存储密钥失效）或写入依赖清单失败时，构建直接失败，不会创建 pipeline。
+- 依赖清单留在当前构建的产物目录里，和产物一样靠 bucket 的生命周期规则清理。
 
 ## 6. `.gitlab-ci.yml` 写法
 
@@ -150,4 +164,5 @@ YRN 725 业务仓库的完整示例见 [`docs/adapters/yrn-725/gitlab-ci/`](adap
 | `job "xxx" 没有 artifacts` | job 没有配置 `artifacts.paths`，或 artifacts 已过期 |
 | `没有产物目录 dist` | artifacts 里没有 `ciArtifactPath` 指定的目录 |
 | `分支已前进` | 构建记录指定了 commit，但创建 pipeline 时分支已经前进 |
-| `依赖构建 … 没有公开访问地址` | 依赖构建所用的存储配置没有配置 `publicBaseUrl` |
+| `依赖构建 … 生成预签名下载地址失败` | 依赖构建所用的存储配置没有公开访问地址，worker 改用预签名地址时出错：存储密钥失效，或当前构建的存储写入失败 |
+| `[forge-deps] … 预签名下载地址已在 … 过期` | pipeline 排队时间超过了 `expiresAt`，在 Forge 重新触发构建 |

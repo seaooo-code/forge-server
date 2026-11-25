@@ -51,10 +51,32 @@ type ciDependencyItem struct {
 	BuildNumber    int64    `json:"buildNumber"`
 	CommitSHA      string   `json:"commitSha"`
 	Platforms      []string `json:"platforms"`
-	// ManifestURL 是依赖构建产物清单的地址，BaseURL 是依赖构建所用存储的公开访问地址，清单里的 objectKey 拼在它后面就是文件地址。
+	// ManifestURL 是依赖产物清单的地址，清单里每个文件有 objectKey 和可选的 url：
+	//   - 依赖构建的存储有公开访问地址时，是依赖构建的 manifest.json，BaseURL 是公开访问地址，objectKey 拼在它后面就是文件地址；
+	//   - 没有公开访问地址时，是 worker 写进当前构建存储的依赖清单的预签名地址，清单里每个文件带预签名的 url，BaseURL 为空，
+	//     ExpiresAt 是这些地址的过期时间。
 	ManifestURL string `json:"manifestUrl"`
-	BaseURL     string `json:"baseUrl"`
+	BaseURL     string `json:"baseUrl,omitempty"`
+	ExpiresAt   string `json:"expiresAt,omitempty"`
 }
+
+// ciPresignedManifest 是存储没有公开访问地址时，worker 为 CI job 写入的依赖清单，只包含需要注入的平台文件。
+type ciPresignedManifest struct {
+	BuildRecordID string                  `json:"buildRecordId"`
+	ExpiresAt     string                  `json:"expiresAt"`
+	Files         []ciPresignedDependency `json:"files"`
+}
+
+type ciPresignedDependency struct {
+	Path      string `json:"path"`
+	ObjectKey string `json:"objectKey"`
+	SizeBytes int64  `json:"sizeBytes"`
+	SHA256    string `json:"sha256"`
+	URL       string `json:"url"`
+}
+
+// ciDependencyURLMaxTTL 是预签名地址的最长有效期，S3 SigV4 的上限是 7 天。
+const ciDependencyURLMaxTTL = 7 * 24 * time.Hour
 
 // executeGitLabCI 把构建转交给代码源的 CI：触发 pipeline、等待并转发 job 日志，成功后取回 job 的 artifacts，
 // 再走与 docker 构建相同的校验、清单和上传。
@@ -225,22 +247,28 @@ func (e *Executor) ciDependencyVariable(ctx context.Context, record domain.Build
 		logs.Linef("警告：所属 Common 模块 %s 在环境 %s 下没有生效中的默认路由，FORGE_DEPS 的 items 为空", plan.ModuleID, plan.Environment)
 	}
 	for _, build := range plan.Builds {
-		baseURL := strings.TrimRight(strings.TrimSpace(build.StoragePublicBaseURL), "/")
-		manifestURL := artifactURL(build.StoragePublicBaseURL, build.ManifestKey)
-		if baseURL == "" || manifestURL == "" {
-			return "", false, fmt.Errorf("依赖构建 #%d 所用的存储配置没有公开访问地址，CI job 无法下载依赖产物", build.Number)
-		}
 		platforms := slices.Clone(build.Platforms)
 		slices.Sort(platforms)
-		payload.Items = append(payload.Items, ciDependencyItem{
+		item := ciDependencyItem{
 			RuntimeVersion: build.RuntimeVersion,
 			BuildRecordID:  build.ID,
 			BuildNumber:    build.Number,
 			CommitSHA:      build.CommitSHA,
 			Platforms:      platforms,
-			ManifestURL:    manifestURL,
-			BaseURL:        baseURL,
-		})
+		}
+		if baseURL := strings.TrimRight(strings.TrimSpace(build.StoragePublicBaseURL), "/"); baseURL != "" {
+			item.ManifestURL = artifactURL(build.StoragePublicBaseURL, build.ManifestKey)
+			item.BaseURL = baseURL
+		} else {
+			manifestURL, expiresAt, err := e.presignCIDependency(ctx, record, build)
+			if err != nil {
+				return "", false, fmt.Errorf("依赖构建 #%d 所用的存储配置没有公开访问地址，生成预签名下载地址失败：%w", build.Number, err)
+			}
+			item.ManifestURL = manifestURL
+			item.ExpiresAt = expiresAt.Format(time.RFC3339)
+			logs.Linef("依赖构建 #%d 所用的存储没有公开访问地址，改用预签名下载地址，有效期到 %s", build.Number, item.ExpiresAt)
+		}
+		payload.Items = append(payload.Items, item)
 		dependencies = append(dependencies, domain.BuildDependency{ModuleID: plan.ModuleID, RuntimeVersion: build.RuntimeVersion, BuildRecordID: build.ID})
 		logs.Linef("依赖：runtimeVersion %s，构建 #%d（commit %s），平台 %s", build.RuntimeVersion, build.Number, build.CommitSHA[:min(7, len(build.CommitSHA))], strings.Join(platforms, ","))
 	}
@@ -252,6 +280,66 @@ func (e *Executor) ciDependencyVariable(ctx context.Context, record domain.Build
 		return "", false, fmt.Errorf("编码 FORGE_DEPS 失败：%w", err)
 	}
 	return string(encoded), true, nil
+}
+
+// presignCIDependency 为依赖构建里需要注入的平台文件生成预签名下载地址，写成依赖清单放进当前构建的存储，
+// 返回这份清单的预签名地址。文件地址不直接放进 FORGE_DEPS：Linux 限制单个环境变量不超过 128 KiB，
+// 大的 Common 包（例如几百个资源文件）展开后会超过，job 容器无法启动。
+func (e *Executor) presignCIDependency(ctx context.Context, record domain.BuildRecord, build domain.BuildRecord) (string, time.Time, error) {
+	ttl := e.cfg.BuildTimeout + 30*time.Minute
+	if e.cfg.BuildTimeout <= 0 {
+		ttl = 2 * time.Hour
+	}
+	ttl = min(ttl, ciDependencyURLMaxTTL)
+	expiresAt := time.Now().UTC().Add(ttl).Truncate(time.Second)
+
+	manifest, err := e.dependencyArtifacts.ReadArtifactManifest(ctx, build)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("读取产物清单失败：%w", err)
+	}
+	maxBytes := e.cfg.DepsMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultDepsMaxBytes
+	}
+	presigned := ciPresignedManifest{BuildRecordID: build.ID, ExpiresAt: expiresAt.Format(time.RFC3339), Files: []ciPresignedDependency{}}
+	var totalBytes int64
+	for _, file := range manifest.Files {
+		filePath, _, ok, err := dependencyFilePath(file.Path, build.Platforms)
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		if !ok {
+			continue
+		}
+		if file.SizeBytes < 0 || strings.TrimSpace(file.SHA256) == "" || strings.TrimSpace(file.ObjectKey) == "" {
+			return "", time.Time{}, fmt.Errorf("清单文件 %s 缺少大小、sha256 或 objectKey", filePath)
+		}
+		totalBytes += file.SizeBytes
+		if totalBytes > maxBytes {
+			return "", time.Time{}, fmt.Errorf("依赖产物总大小超过上限 %d 字节（FORGE_WORKER_DEPS_MAX_BYTES）", maxBytes)
+		}
+		url, err := e.dependencyArtifacts.PresignArtifactObject(ctx, build, file.ObjectKey, ttl)
+		if err != nil {
+			return "", time.Time{}, fmt.Errorf("预签名 %s 失败：%w", filePath, err)
+		}
+		presigned.Files = append(presigned.Files, ciPresignedDependency{Path: filePath, ObjectKey: file.ObjectKey, SizeBytes: file.SizeBytes, SHA256: file.SHA256, URL: url})
+	}
+
+	body, err := json.Marshal(presigned)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("编码依赖清单失败：%w", err)
+	}
+	// 依赖清单写在当前构建的产物目录下，每个依赖构建一份，重新触发时覆盖。Forge 不会自动删除产物目录，
+	// 和产物一样靠 bucket 的生命周期规则清理（部署文档建议按天过期）。
+	key := e.artifactKey(record) + "/ci-deps/" + artifactPathSegment(build.ID) + ".json"
+	if err := e.dependencyArtifacts.PutArtifactObject(ctx, record, key, body, "application/json"); err != nil {
+		return "", time.Time{}, fmt.Errorf("写入依赖清单失败：%w", err)
+	}
+	url, err := e.dependencyArtifacts.PresignArtifactObject(ctx, record, key, ttl)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("预签名依赖清单失败：%w", err)
+	}
+	return url, expiresAt, nil
 }
 
 // waitCIPipeline 轮询 pipeline 直到结束，期间把目标 job 的日志增量写入构建日志。pipeline 成功且目标 job 成功时返回该 job。
