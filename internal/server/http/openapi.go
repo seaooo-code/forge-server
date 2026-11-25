@@ -1267,12 +1267,14 @@ func baseOpenAPIDocument() *openapi3.T {
 					WithProperty("webUrl", stringSchema("Commit page on the code source, or empty when unknown."))),
 				"ModuleBranchCommitResponse": schemaValue(objectSchema("commit").
 					WithPropertyRef("commit", schemaRef("BranchCommit"))),
-				"CommitComparison": schemaValue(objectSchema("status", "commits", "totalCommits", "totalExact", "behindBy", "webUrl").
+				"CommitComparison": schemaValue(objectSchema("status", "commits", "totalCommits", "totalExact", "behindBy", "behindCommits", "behindExact", "webUrl").
 					WithProperty("status", enumStringSchema("ahead: to is after from, commits are new in to. behind: to is before from (rollback), commits are in from but not in to. diverged: both sides have their own commits, commits are new in to and behindBy counts the other side. identical: same commit.", "ahead", "behind", "diverged", "identical")).
 					WithPropertyRef("commits", arraySchemaRef("BranchCommit")).
 					WithProperty("totalCommits", int64Schema("Number of differing commits; commits holds at most the newest 50.")).
 					WithProperty("totalExact", boolSchema("False when there were too many commits to count and totalCommits is a lower bound.")).
-					WithProperty("behindBy", int64Schema("For diverged, commits only in from.")).
+					WithProperty("behindBy", int64Schema("For diverged, number of commits only in from.")).
+					WithPropertyRef("behindCommits", arraySchemaRef("BranchCommit")).
+					WithProperty("behindExact", boolSchema("For diverged, false when behindBy is a lower bound.")).
 					WithProperty("webUrl", stringSchema("Compare page on the code source, or empty when unknown."))),
 				"ModuleCommitComparisonResponse": schemaValue(objectSchema("comparison").
 					WithPropertyRef("comparison", schemaRef("CommitComparison"))),

@@ -317,6 +317,8 @@ func TestCompareCommitsListsNewestFirstAndReversesWhenBehind(t *testing.T) {
 	}
 	responses := map[string]string{
 		"/repos/acme/home/compare/aaa...bbb": `{"status":"ahead","ahead_by":2,"behind_by":0,"html_url":"https://github.com/acme/home/compare/aaa...bbb","commits":[` + commit("c1", "旧的") + `,` + commit("c2", "新的\\n\\n说明") + `]}`,
+		"/repos/acme/home/compare/aaa...ddd": `{"status":"diverged","ahead_by":1,"behind_by":1,"html_url":"https://github.com/acme/home/compare/aaa...ddd","commits":[` + commit("c4", "功能分支上的") + `]}`,
+		"/repos/acme/home/compare/ddd...aaa": `{"status":"diverged","ahead_by":1,"behind_by":1,"html_url":"https://github.com/acme/home/compare/ddd...aaa","commits":[` + commit("c5", "线上独有的") + `]}`,
 		"/repos/acme/home/compare/bbb...aaa": `{"status":"behind","ahead_by":0,"behind_by":2,"html_url":"https://github.com/acme/home/compare/bbb...aaa","commits":[]}`,
 	}
 	provider.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -335,6 +337,11 @@ func TestCompareCommitsListsNewestFirstAndReversesWhenBehind(t *testing.T) {
 	ahead, err := provider.CompareCommits(context.Background(), conn, repo, "aaa", "bbb")
 	if err != nil || ahead.Status != domain.CommitComparisonAhead || ahead.TotalCommits != 2 || len(ahead.Commits) != 2 || ahead.Commits[0].Title != "新的" || !ahead.TotalExact {
 		t.Fatalf("unexpected ahead comparison: %+v %v", ahead, err)
+	}
+	diverged, err := provider.CompareCommits(context.Background(), conn, repo, "aaa", "ddd")
+	if err != nil || diverged.Status != domain.CommitComparisonDiverged || diverged.Commits[0].Title != "功能分支上的" || diverged.BehindBy != 1 ||
+		len(diverged.BehindCommits) != 1 || diverged.BehindCommits[0].Title != "线上独有的" || diverged.WebURL != "https://github.com/acme/home/compare/aaa...ddd" {
+		t.Fatalf("unexpected diverged comparison: %+v %v", diverged, err)
 	}
 	// 待发布的 aaa 比线上的 bbb 旧（回退）：反向比较列出会被撤掉的提交，链接也指向反向比较页。
 	rollback, err := provider.CompareCommits(context.Background(), conn, repo, "bbb", "aaa")

@@ -149,7 +149,7 @@ const (
 	CommitComparisonAhead CommitComparisonStatus = "ahead"
 	// CommitComparisonBehind：to 在 from 之前（例如回退），Commits 是 from 比 to 多出、发布后会被撤掉的提交。
 	CommitComparisonBehind CommitComparisonStatus = "behind"
-	// CommitComparisonDiverged：两边各有对方没有的提交，Commits 是 to 这边多出的提交，BehindBy 是 from 那边多出的数量。
+	// CommitComparisonDiverged：两边各有对方没有的提交，Commits 是 to 这边多出的提交，BehindCommits、BehindBy 是 from 那边多出的。
 	CommitComparisonDiverged  CommitComparisonStatus = "diverged"
 	CommitComparisonIdentical CommitComparisonStatus = "identical"
 )
@@ -161,8 +161,11 @@ type CommitComparison struct {
 	TotalCommits int
 	// TotalExact 为 false 时提交太多没有数完，TotalCommits 是已经数到的数量。
 	TotalExact bool
-	BehindBy   int
-	WebURL     string
+	// BehindCommits 只在 Diverged 时有值：from 独有、发布 to 之后会被撤下的提交，最多 MaxComparisonCommits 条，BehindBy 是实际数量。
+	BehindCommits []BranchCommit
+	BehindBy      int
+	BehindExact   bool
+	WebURL        string
 }
 
 // MaxComparisonCommits 是比较结果里最多返回的提交数。

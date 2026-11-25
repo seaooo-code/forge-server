@@ -570,7 +570,7 @@ func TestCompareModuleCommits(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	got := response.Comparison
-	if got.Status != "ahead" || got.TotalCommits != 1 || !got.TotalExact || got.WebURL == "" || len(got.Commits) != 1 ||
+	if got.Status != "ahead" || got.TotalCommits != 1 || !got.TotalExact || got.WebURL == "" || len(got.Commits) != 1 || got.BehindCommits == nil ||
 		got.Commits[0].Title != "新增登录页" || got.Commits[0].CommittedAt != "2026-11-25T06:30:00Z" {
 		t.Fatalf("unexpected comparison: %+v", got)
 	}

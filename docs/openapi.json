@@ -2877,9 +2877,19 @@
       "CommitComparison": {
         "properties": {
           "behindBy": {
-            "description": "For diverged, commits only in from.",
+            "description": "For diverged, number of commits only in from.",
             "format": "int64",
             "type": "integer"
+          },
+          "behindCommits": {
+            "items": {
+              "$ref": "#/components/schemas/BranchCommit"
+            },
+            "type": "array"
+          },
+          "behindExact": {
+            "description": "For diverged, false when behindBy is a lower bound.",
+            "type": "boolean"
           },
           "commits": {
             "items": {
@@ -2917,6 +2927,8 @@
           "totalCommits",
           "totalExact",
           "behindBy",
+          "behindCommits",
+          "behindExact",
           "webUrl"
         ],
         "type": "object"

@@ -83,12 +83,14 @@ type moduleBranchCommitResponse struct {
 }
 
 type commitComparisonResponse struct {
-	BehindBy     int                    `json:"behindBy"`
-	Commits      []branchCommitResponse `json:"commits"`
-	Status       string                 `json:"status"`
-	TotalCommits int                    `json:"totalCommits"`
-	TotalExact   bool                   `json:"totalExact"`
-	WebURL       string                 `json:"webUrl"`
+	BehindBy      int                    `json:"behindBy"`
+	BehindCommits []branchCommitResponse `json:"behindCommits"`
+	BehindExact   bool                   `json:"behindExact"`
+	Commits       []branchCommitResponse `json:"commits"`
+	Status        string                 `json:"status"`
+	TotalCommits  int                    `json:"totalCommits"`
+	TotalExact    bool                   `json:"totalExact"`
+	WebURL        string                 `json:"webUrl"`
 }
 
 type moduleCommitComparisonResponse struct {
@@ -260,13 +262,19 @@ func (h moduleHandler) compare(c echo.Context) error {
 	for _, commit := range comparison.Commits {
 		commits = append(commits, newBranchCommitResponse(commit))
 	}
+	behindCommits := make([]branchCommitResponse, 0, len(comparison.BehindCommits))
+	for _, commit := range comparison.BehindCommits {
+		behindCommits = append(behindCommits, newBranchCommitResponse(commit))
+	}
 	return c.JSON(http.StatusOK, moduleCommitComparisonResponse{Comparison: commitComparisonResponse{
-		BehindBy:     comparison.BehindBy,
-		Commits:      commits,
-		Status:       string(comparison.Status),
-		TotalCommits: comparison.TotalCommits,
-		TotalExact:   comparison.TotalExact,
-		WebURL:       comparison.WebURL,
+		BehindBy:      comparison.BehindBy,
+		BehindCommits: behindCommits,
+		BehindExact:   comparison.BehindExact,
+		Commits:       commits,
+		Status:        string(comparison.Status),
+		TotalCommits:  comparison.TotalCommits,
+		TotalExact:    comparison.TotalExact,
+		WebURL:        comparison.WebURL,
 	}})
 }
 

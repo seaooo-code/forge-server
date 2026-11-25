@@ -217,6 +217,7 @@ func (p *Provider) CompareCommits(ctx context.Context, conn domain.CodeSourceCon
 	switch {
 	case aheadTotal > 0 && behindTotal > 0:
 		comparison.Status = domain.CommitComparisonDiverged
+		comparison.BehindCommits, comparison.BehindExact = behind, behindExact
 	case aheadTotal > 0:
 		comparison.Status = domain.CommitComparisonAhead
 	case behindTotal > 0:

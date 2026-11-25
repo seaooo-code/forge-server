@@ -236,6 +236,11 @@ func TestCompareCommitsUsesRevisionRanges(t *testing.T) {
 		if tc.firstTitle != "" && (len(comparison.Commits) == 0 || comparison.Commits[0].Title != tc.firstTitle) {
 			t.Fatalf("%s: unexpected commits: %+v", tc.name, comparison.Commits)
 		}
+		// 分叉时同时列出线上独有、发布后会被撤下的提交；其他情况不填。
+		wantBehind := tc.status == domain.CommitComparisonDiverged
+		if wantBehind != (len(comparison.BehindCommits) == 1) || (wantBehind && (comparison.BehindCommits[0].Title != "线上独有的" || !comparison.BehindExact)) {
+			t.Fatalf("%s: unexpected behind commits: %+v exact=%v", tc.name, comparison.BehindCommits, comparison.BehindExact)
+		}
 	}
 }
 

@@ -184,7 +184,7 @@ func (p *Provider) ResolveCommit(ctx context.Context, conn domain.CodeSourceConn
 	return commit, nil
 }
 
-// CompareCommits 用 compare 接口取方向和数量；to 落后时再反向比较一次，列出发布后会被撤掉的提交。
+// CompareCommits 用 compare 接口取方向和数量；to 落后或分叉时再反向比较一次，列出发布后会被撤掉的提交。
 func (p *Provider) CompareCommits(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, from string, to string) (domain.CommitComparison, error) {
 	fullName := strings.Trim(strings.TrimSpace(repo.FullName), "/")
 	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
@@ -200,12 +200,16 @@ func (p *Provider) CompareCommits(ctx context.Context, conn domain.CodeSourceCon
 		return domain.CommitComparison{}, err
 	}
 	comparison, err := p.compareCommits(ctx, token.Token, fullName, from, to)
-	if err != nil || comparison.Status != domain.CommitComparisonBehind {
+	if err != nil || (comparison.Status != domain.CommitComparisonBehind && comparison.Status != domain.CommitComparisonDiverged) {
 		return comparison, err
 	}
 	reversed, err := p.compareCommits(ctx, token.Token, fullName, to, from)
 	if err != nil {
 		return domain.CommitComparison{}, err
+	}
+	if comparison.Status == domain.CommitComparisonDiverged {
+		comparison.BehindCommits, comparison.BehindExact = reversed.Commits, true
+		return comparison, nil
 	}
 	reversed.Status = domain.CommitComparisonBehind
 	reversed.BehindBy = 0
