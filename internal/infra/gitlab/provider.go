@@ -156,36 +156,107 @@ func (p *Provider) SearchBranches(ctx context.Context, conn domain.CodeSourceCon
 	return names, nil
 }
 
-// LatestBranchCommit 用提交列表接口按 ref_name 取最新一条，分支名走查询参数，不用处理路径里的斜杠转义。
-func (p *Provider) LatestBranchCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+// ResolveCommit 用提交列表接口按 ref_name（分支名或 SHA）取最新一条，ref 走查询参数，不用处理路径里的斜杠转义。
+func (p *Provider) ResolveCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, ref string) (domain.BranchCommit, error) {
 	projectID := strings.TrimSpace(repo.ExternalRepositoryID)
-	branch = strings.TrimSpace(branch)
-	if projectID == "" || branch == "" {
+	ref = strings.TrimSpace(ref)
+	if projectID == "" || ref == "" {
 		return domain.BranchCommit{}, domain.ErrInvalidCodeSourceInput
 	}
 	query := url.Values{}
-	query.Set("ref_name", branch)
+	query.Set("ref_name", ref)
 	query.Set("per_page", "1")
 
 	var commits []commitResponse
 	if _, err := p.get(ctx, conn, "/projects/"+url.PathEscape(projectID)+"/repository/commits", query, &commits); err != nil {
 		if errors.Is(err, errNotFound) {
-			return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, branch)
+			return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, ref)
 		}
 		return domain.BranchCommit{}, err
 	}
 	if len(commits) == 0 {
-		return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, branch)
+		return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, ref)
 	}
-	commit := commits[0]
-	return domain.BranchCommit{
-		Branch:      branch,
-		SHA:         commit.ID,
-		Title:       commit.Title,
-		AuthorName:  commit.AuthorName,
-		CommittedAt: commit.CommittedDate,
-		WebURL:      commit.WebURL,
-	}, nil
+	commit := commits[0].branchCommit()
+	commit.Branch = ref
+	return commit, nil
+}
+
+// commitRangePageSize、commitRangeMaxPages 限制比较时统计提交数的请求量，超过时 TotalExact 为 false。
+const (
+	commitRangePageSize = 100
+	commitRangeMaxPages = 5
+)
+
+// CompareCommits 用提交列表接口的 revision range（from..to、to..from）分别取两边多出的提交。
+// 不用 compare 接口：它总是带上 diff，大改动时响应体会超过上限。
+func (p *Provider) CompareCommits(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, from string, to string) (domain.CommitComparison, error) {
+	projectID := strings.TrimSpace(repo.ExternalRepositoryID)
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if projectID == "" || from == "" || to == "" {
+		return domain.CommitComparison{}, domain.ErrInvalidCodeSourceInput
+	}
+	ahead, aheadTotal, aheadExact, err := p.listCommitRange(ctx, conn, projectID, from+".."+to)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	behind, behindTotal, behindExact, err := p.listCommitRange(ctx, conn, projectID, to+".."+from)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	comparison := domain.CommitComparison{
+		Status:       domain.CommitComparisonIdentical,
+		Commits:      ahead,
+		TotalCommits: aheadTotal,
+		TotalExact:   aheadExact,
+		BehindBy:     behindTotal,
+	}
+	if web := strings.TrimRight(strings.TrimSpace(repo.WebURL), "/"); web != "" {
+		comparison.WebURL = web + "/-/compare/" + url.PathEscape(from) + "..." + url.PathEscape(to)
+	}
+	switch {
+	case aheadTotal > 0 && behindTotal > 0:
+		comparison.Status = domain.CommitComparisonDiverged
+	case aheadTotal > 0:
+		comparison.Status = domain.CommitComparisonAhead
+	case behindTotal > 0:
+		comparison.Status = domain.CommitComparisonBehind
+		comparison.Commits, comparison.TotalCommits, comparison.TotalExact = behind, behindTotal, behindExact
+		if comparison.WebURL != "" {
+			comparison.WebURL = strings.TrimRight(strings.TrimSpace(repo.WebURL), "/") + "/-/compare/" + url.PathEscape(to) + "..." + url.PathEscape(from)
+		}
+	}
+	return comparison, nil
+}
+
+// listCommitRange 按 git log 顺序（新的在前）列出 revision range 里的提交，返回前 MaxComparisonCommits 条和总数。
+func (p *Provider) listCommitRange(ctx context.Context, conn domain.CodeSourceConnection, projectID string, revisionRange string) ([]domain.BranchCommit, int, bool, error) {
+	commits := []domain.BranchCommit{}
+	total := 0
+	for page := 1; page <= commitRangeMaxPages; page++ {
+		query := url.Values{}
+		query.Set("ref_name", revisionRange)
+		query.Set("per_page", strconv.Itoa(commitRangePageSize))
+		query.Set("page", strconv.Itoa(page))
+		var response []commitResponse
+		header, err := p.get(ctx, conn, "/projects/"+url.PathEscape(projectID)+"/repository/commits", query, &response)
+		if err != nil {
+			if errors.Is(err, errNotFound) {
+				return nil, 0, false, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, revisionRange)
+			}
+			return nil, 0, false, err
+		}
+		total += len(response)
+		for _, item := range response {
+			if len(commits) < domain.MaxComparisonCommits {
+				commits = append(commits, item.branchCommit())
+			}
+		}
+		if strings.TrimSpace(header.Get("X-Next-Page")) == "" {
+			return commits, total, true, nil
+		}
+	}
+	return commits, total, false, nil
 }
 
 func (p *Provider) CloneCredentials(_ context.Context, conn domain.CodeSourceConnection, _ domain.ModuleRepository) (domain.GitCredentials, error) {
@@ -312,6 +383,10 @@ type commitResponse struct {
 	AuthorName    string    `json:"author_name"`
 	CommittedDate time.Time `json:"committed_date"`
 	WebURL        string    `json:"web_url"`
+}
+
+func (c commitResponse) branchCommit() domain.BranchCommit {
+	return domain.BranchCommit{SHA: c.ID, Title: c.Title, AuthorName: c.AuthorName, CommittedAt: c.CommittedDate, WebURL: c.WebURL}
 }
 
 type pushPayload struct {

@@ -286,7 +286,7 @@ func TestLatestBranchCommitUsesCommitsAPI(t *testing.T) {
 	conn := domain.CodeSourceConnection{Provider: domain.CodeSourceProviderGitHub, ExternalID: "1001"}
 	repo := domain.ModuleRepository{FullName: "acme/home"}
 
-	commit, err := provider.LatestBranchCommit(context.Background(), conn, repo, "feature/login")
+	commit, err := provider.ResolveCommit(context.Background(), conn, repo, "feature/login")
 	if err != nil {
 		t.Fatalf("latest branch commit: %v", err)
 	}
@@ -304,9 +304,42 @@ func TestLatestBranchCommitUsesCommitsAPI(t *testing.T) {
 		{http.StatusOK, `[]`},
 	} {
 		status, body = tc.status, tc.body
-		if _, err := provider.LatestBranchCommit(context.Background(), conn, repo, "feature/login"); !errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
+		if _, err := provider.ResolveCommit(context.Background(), conn, repo, "feature/login"); !errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
 			t.Fatalf("status %d: expected branch not found, got %v", tc.status, err)
 		}
+	}
+}
+
+func TestCompareCommitsListsNewestFirstAndReversesWhenBehind(t *testing.T) {
+	provider := newTestProvider(t)
+	commit := func(sha string, message string) string {
+		return `{"sha":"` + sha + `","html_url":"https://github.com/acme/home/commit/` + sha + `","commit":{"message":"` + message + `","author":{"name":"Chen"},"committer":{"date":"2026-11-25T06:30:00Z"}}}`
+	}
+	responses := map[string]string{
+		"/repos/acme/home/compare/aaa...bbb": `{"status":"ahead","ahead_by":2,"behind_by":0,"html_url":"https://github.com/acme/home/compare/aaa...bbb","commits":[` + commit("c1", "旧的") + `,` + commit("c2", "新的\\n\\n说明") + `]}`,
+		"/repos/acme/home/compare/bbb...aaa": `{"status":"behind","ahead_by":0,"behind_by":2,"html_url":"https://github.com/acme/home/compare/bbb...aaa","commits":[]}`,
+	}
+	provider.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/app/installations/1001/access_tokens" {
+			return &http.Response{StatusCode: http.StatusCreated, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"token":"installation-token"}`))}, nil
+		}
+		body, ok := responses[r.URL.Path]
+		if !ok {
+			t.Fatalf("unexpected github path %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	conn := domain.CodeSourceConnection{Provider: domain.CodeSourceProviderGitHub, ExternalID: "1001"}
+	repo := domain.ModuleRepository{FullName: "acme/home"}
+
+	ahead, err := provider.CompareCommits(context.Background(), conn, repo, "aaa", "bbb")
+	if err != nil || ahead.Status != domain.CommitComparisonAhead || ahead.TotalCommits != 2 || len(ahead.Commits) != 2 || ahead.Commits[0].Title != "新的" || !ahead.TotalExact {
+		t.Fatalf("unexpected ahead comparison: %+v %v", ahead, err)
+	}
+	// 待发布的 aaa 比线上的 bbb 旧（回退）：反向比较列出会被撤掉的提交，链接也指向反向比较页。
+	rollback, err := provider.CompareCommits(context.Background(), conn, repo, "bbb", "aaa")
+	if err != nil || rollback.Status != domain.CommitComparisonBehind || rollback.TotalCommits != 2 || rollback.Commits[0].Title != "新的" || rollback.WebURL != "https://github.com/acme/home/compare/aaa...bbb" {
+		t.Fatalf("unexpected behind comparison: %+v %v", rollback, err)
 	}
 }
 

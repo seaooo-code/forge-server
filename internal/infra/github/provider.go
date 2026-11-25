@@ -161,11 +161,11 @@ func (p *Provider) SearchBranches(ctx context.Context, conn domain.CodeSourceCon
 	return matched, nil
 }
 
-// LatestBranchCommit 用提交列表接口按 sha=分支名 取最新一条，分支名走查询参数，不用处理路径里的斜杠转义。
-func (p *Provider) LatestBranchCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+// ResolveCommit 用提交列表接口按 sha=ref（分支名或 SHA）取最新一条，ref 走查询参数，不用处理路径里的斜杠转义。
+func (p *Provider) ResolveCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, ref string) (domain.BranchCommit, error) {
 	fullName := strings.Trim(strings.TrimSpace(repo.FullName), "/")
-	branch = strings.TrimSpace(branch)
-	if fullName == "" || branch == "" {
+	ref = strings.TrimSpace(ref)
+	if fullName == "" || ref == "" {
 		return domain.BranchCommit{}, domain.ErrInvalidCodeSourceInput
 	}
 	config, installationID, err := p.connectionContext(ctx, conn)
@@ -176,12 +176,40 @@ func (p *Provider) LatestBranchCommit(ctx context.Context, conn domain.CodeSourc
 	if err != nil {
 		return domain.BranchCommit{}, err
 	}
-	commit, err := p.latestCommit(ctx, token.Token, fullName, branch)
+	commit, err := p.latestCommit(ctx, token.Token, fullName, ref)
 	if err != nil {
 		return domain.BranchCommit{}, err
 	}
-	commit.Branch = branch
+	commit.Branch = ref
 	return commit, nil
+}
+
+// CompareCommits 用 compare 接口取方向和数量；to 落后时再反向比较一次，列出发布后会被撤掉的提交。
+func (p *Provider) CompareCommits(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, from string, to string) (domain.CommitComparison, error) {
+	fullName := strings.Trim(strings.TrimSpace(repo.FullName), "/")
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if fullName == "" || from == "" || to == "" {
+		return domain.CommitComparison{}, domain.ErrInvalidCodeSourceInput
+	}
+	config, installationID, err := p.connectionContext(ctx, conn)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	token, err := p.installationAccessToken(ctx, config, installationID)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	comparison, err := p.compareCommits(ctx, token.Token, fullName, from, to)
+	if err != nil || comparison.Status != domain.CommitComparisonBehind {
+		return comparison, err
+	}
+	reversed, err := p.compareCommits(ctx, token.Token, fullName, to, from)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	reversed.Status = domain.CommitComparisonBehind
+	reversed.BehindBy = 0
+	return reversed, nil
 }
 
 func (p *Provider) CloneCredentials(ctx context.Context, conn domain.CodeSourceConnection, _ domain.ModuleRepository) (domain.GitCredentials, error) {

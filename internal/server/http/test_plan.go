@@ -103,18 +103,22 @@ type testPlansResponse struct {
 }
 
 type testPlanItemResponse struct {
-	ModuleID       string   `json:"moduleId"`
-	ModuleName     string   `json:"moduleName"`
-	ModuleKind     string   `json:"moduleKind"`
-	Branch         string   `json:"branch"`
-	Mode           string   `json:"mode"`
-	BuildRecordID  string   `json:"buildRecordId"`
-	BuildNumber    int64    `json:"buildNumber"`
-	CommitSHA      string   `json:"commitSha"`
-	RuntimeVersion string   `json:"runtimeVersion"`
-	Platforms      []string `json:"platforms"`
-	UpdatedBy      string   `json:"updatedBy"`
-	UpdatedAt      string   `json:"updatedAt"`
+	ModuleID         string   `json:"moduleId"`
+	ModuleName       string   `json:"moduleName"`
+	ModuleKind       string   `json:"moduleKind"`
+	Branch           string   `json:"branch"`
+	Mode             string   `json:"mode"`
+	BuildRecordID    string   `json:"buildRecordId"`
+	BuildNumber      int64    `json:"buildNumber"`
+	CommitSHA        string   `json:"commitSha"`
+	CommitTitle      string   `json:"commitTitle"`
+	CommitAuthorName string   `json:"commitAuthorName"`
+	CommittedAt      string   `json:"committedAt"`
+	RepositoryWebURL string   `json:"repositoryWebUrl"`
+	RuntimeVersion   string   `json:"runtimeVersion"`
+	Platforms        []string `json:"platforms"`
+	UpdatedBy        string   `json:"updatedBy"`
+	UpdatedAt        string   `json:"updatedAt"`
 }
 
 type testPlanMemberResponse struct {
@@ -634,18 +638,22 @@ func newTestPlanDetailResponse(detail domain.TestPlanDetail) testPlanDetailRespo
 			platforms = []string{}
 		}
 		response.Items = append(response.Items, testPlanItemResponse{
-			ModuleID:       item.ModuleID,
-			ModuleName:     item.ModuleName,
-			ModuleKind:     string(item.ModuleKind),
-			Branch:         item.Branch,
-			Mode:           string(item.Mode),
-			BuildRecordID:  item.BuildRecordID,
-			BuildNumber:    item.BuildNumber,
-			CommitSHA:      item.CommitSHA,
-			RuntimeVersion: item.RuntimeVersion,
-			Platforms:      platforms,
-			UpdatedBy:      item.UpdatedBy,
-			UpdatedAt:      formatTime(item.UpdatedAt),
+			ModuleID:         item.ModuleID,
+			ModuleName:       item.ModuleName,
+			ModuleKind:       string(item.ModuleKind),
+			Branch:           item.Branch,
+			Mode:             string(item.Mode),
+			BuildRecordID:    item.BuildRecordID,
+			BuildNumber:      item.BuildNumber,
+			CommitSHA:        item.CommitSHA,
+			CommitTitle:      item.CommitTitle,
+			CommitAuthorName: item.CommitAuthorName,
+			CommittedAt:      formatOptionalTime(item.CommittedAt),
+			RepositoryWebURL: item.RepositoryWebURL,
+			RuntimeVersion:   item.RuntimeVersion,
+			Platforms:        platforms,
+			UpdatedBy:        item.UpdatedBy,
+			UpdatedAt:        formatTime(item.UpdatedAt),
 		})
 	}
 	response.CommonDependencyWarning = hasCommon && hasFeature

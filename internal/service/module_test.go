@@ -397,9 +397,16 @@ type recordingBranchSearcher struct {
 	repository domain.ModuleRepository
 	query      string
 	branch     string
+	compared   []string
 }
 
-func (s *recordingBranchSearcher) LatestBranchCommit(_ context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+func (s *recordingBranchSearcher) CompareCommits(_ context.Context, repository domain.ModuleRepository, from string, to string) (domain.CommitComparison, error) {
+	s.repository = repository
+	s.compared = []string{from, to}
+	return domain.CommitComparison{Status: domain.CommitComparisonBehind}, nil
+}
+
+func (s *recordingBranchSearcher) ResolveCommit(_ context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
 	s.repository = repository
 	s.branch = branch
 	return domain.BranchCommit{Branch: branch, SHA: "abc"}, nil
@@ -442,6 +449,17 @@ func TestModuleServiceLatestBranchCommitUsesModuleRepository(t *testing.T) {
 	}
 	if _, err := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").LatestBranchCommit(context.Background(), "module-home", "main"); !errors.Is(err, domain.ErrCodeSourceProviderNotFound) {
 		t.Fatalf("expected provider not found without searcher, got %v", err)
+	}
+}
+
+func TestModuleServiceCompareCommitsUsesModuleRepository(t *testing.T) {
+	repository := fakeModuleRepository{module: testServiceModule("module-home", domain.ModuleKindFeature)}
+	searcher := &recordingBranchSearcher{}
+	service := NewModuleService(&repository, newFakeModuleCodeSourceStore(), "Dockerfile").WithBranchSearcher(searcher)
+
+	comparison, err := service.CompareCommits(context.Background(), "module-home", "aaa", "bbb")
+	if err != nil || comparison.Status != domain.CommitComparisonBehind || searcher.repository != repository.module.Repository || searcher.compared[1] != "bbb" {
+		t.Fatalf("unexpected comparison: %+v %+v %v", comparison, searcher, err)
 	}
 }
 

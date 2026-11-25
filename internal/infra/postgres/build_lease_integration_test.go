@@ -52,7 +52,8 @@ func TestIntegrationBuildLeaseFencing(t *testing.T) {
 		t.Fatalf("expected one running build on one worker, got %+v err=%v", stats, err)
 	}
 
-	completion := domain.BuildRecordCompletion{CommitSHA: "3a9e000000000000000000000000000000000000", RuntimeVersion: "1.0.0", ArtifactKey: "k/" + created.ID, ManifestKey: "k/" + created.ID + "/manifest.json", Platforms: []string{"android"}}
+	committedAt := time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)
+	completion := domain.BuildRecordCompletion{CommitSHA: "3a9e000000000000000000000000000000000000", CommitTitle: "新增登录页", CommitAuthorName: "Chen", CommittedAt: &committedAt, RuntimeVersion: "1.0.0", ArtifactKey: "k/" + created.ID, ManifestKey: "k/" + created.ID + "/manifest.json", Platforms: []string{"android"}}
 	if _, err := repository.CompleteBuildRecord(ctx, created.ID, "worker-a", completion); !errors.Is(err, domain.ErrBuildLeaseLost) {
 		t.Fatalf("expected stale complete rejected, got %v", err)
 	}
@@ -81,6 +82,9 @@ func TestIntegrationBuildLeaseFencing(t *testing.T) {
 	record, err := repository.CompleteBuildRecord(ctx, created.ID, "worker-c", completion)
 	if err != nil || record.Status != domain.BuildStatusSucceeded {
 		t.Fatalf("complete by holder: status=%s err=%v", record.Status, err)
+	}
+	if record.CommitTitle != "新增登录页" || record.CommitAuthorName != "Chen" || record.CommittedAt == nil || !record.CommittedAt.Equal(committedAt) {
+		t.Fatalf("expected commit details saved with completion, got title=%q author=%q at=%v", record.CommitTitle, record.CommitAuthorName, record.CommittedAt)
 	}
 	if err := repository.RenewBuildLease(ctx, created.ID, "worker-c", time.Minute); !errors.Is(err, domain.ErrBuildLeaseLost) {
 		t.Fatalf("expected renew after completion rejected, got %v", err)

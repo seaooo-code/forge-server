@@ -196,7 +196,7 @@ func addTestPlanOpenAPI(doc *openapi3.T) {
 		WithProperty("closedAt", stringSchema("Close time, or empty.")).
 		WithProperty("itemCount", int32Schema("Item count.")).
 		WithProperty("memberCount", int32Schema("Member count.")))
-	schemas["TestPlanItem"] = schemaValue(objectSchema("moduleId", "moduleName", "moduleKind", "branch", "mode", "buildRecordId", "buildNumber", "commitSha", "runtimeVersion", "platforms", "updatedBy", "updatedAt").
+	schemas["TestPlanItem"] = schemaValue(objectSchema("moduleId", "moduleName", "moduleKind", "branch", "mode", "buildRecordId", "buildNumber", "commitSha", "commitTitle", "commitAuthorName", "committedAt", "repositoryWebUrl", "runtimeVersion", "platforms", "updatedBy", "updatedAt").
 		WithProperty("moduleId", stringSchema("Module id.")).
 		WithProperty("moduleName", stringSchema("Module display name.")).
 		WithProperty("moduleKind", enumStringSchema("Module kind.", "Common", "Feature")).
@@ -205,6 +205,10 @@ func addTestPlanOpenAPI(doc *openapi3.T) {
 		WithProperty("buildRecordId", stringSchema("Current build record UUID.")).
 		WithProperty("buildNumber", int64Schema("Build number within the module.")).
 		WithProperty("commitSha", stringSchema("Commit SHA of the build.")).
+		WithProperty("commitTitle", stringSchema("First line of the commit message; empty for older builds.")).
+		WithProperty("commitAuthorName", stringSchema("Commit author name; empty for older builds.")).
+		WithProperty("committedAt", stringSchema("Commit time in RFC3339; empty when unknown.")).
+		WithProperty("repositoryWebUrl", stringSchema("Module repository web URL for building commit links.")).
 		WithProperty("runtimeVersion", stringSchema("runtimeVersion of the build. Clients with another runtimeVersion skip this item.")).
 		WithProperty("platforms", stringArraySchema("Platforms in the build.")).
 		WithProperty("updatedBy", stringSchema("Who last set the item; empty when updated by a followed build.")).

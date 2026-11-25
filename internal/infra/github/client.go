@@ -250,14 +250,39 @@ func (c *Client) latestCommit(ctx context.Context, token string, fullName string
 	if len(response) == 0 {
 		return domain.BranchCommit{}, fmt.Errorf("%w: %s", domain.ErrCodeSourceBranchNotFound, ref)
 	}
-	commit := response[0]
-	title, _, _ := strings.Cut(commit.Commit.Message, "\n")
-	return domain.BranchCommit{
-		SHA:         commit.SHA,
-		Title:       strings.TrimSpace(title),
-		AuthorName:  commit.Commit.Author.Name,
-		CommittedAt: commit.Commit.Committer.Date,
-		WebURL:      commit.HTMLURL,
+	return response[0].branchCommit(), nil
+}
+
+// compareCommits 调用 compare 接口。GitHub 返回的 commits 是 head 比 base 多出的提交，旧的在前，最多 250 条。
+func (c *Client) compareCommits(ctx context.Context, token string, fullName string, base string, head string) (domain.CommitComparison, error) {
+	req, err := c.newAPIRequest(ctx, http.MethodGet, "/repos/"+fullName+"/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head), nil, nil, token)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	var response compareResponse
+	if err := c.do(req, &response); err != nil {
+		if req.Response != nil && (req.Response.StatusCode == http.StatusNotFound || req.Response.StatusCode == http.StatusUnprocessableEntity) {
+			return domain.CommitComparison{}, fmt.Errorf("%w: %s...%s", domain.ErrCodeSourceBranchNotFound, base, head)
+		}
+		return domain.CommitComparison{}, err
+	}
+	commits := make([]domain.BranchCommit, 0, min(len(response.Commits), domain.MaxComparisonCommits))
+	for index := len(response.Commits) - 1; index >= 0 && len(commits) < domain.MaxComparisonCommits; index-- {
+		commits = append(commits, response.Commits[index].branchCommit())
+	}
+	status := domain.CommitComparisonStatus(response.Status)
+	switch status {
+	case domain.CommitComparisonAhead, domain.CommitComparisonBehind, domain.CommitComparisonDiverged, domain.CommitComparisonIdentical:
+	default:
+		return domain.CommitComparison{}, fmt.Errorf("%w: unknown github compare status %q", domain.ErrCodeSourceAuthorization, response.Status)
+	}
+	return domain.CommitComparison{
+		Status:       status,
+		Commits:      commits,
+		TotalCommits: response.AheadBy,
+		TotalExact:   true,
+		BehindBy:     response.BehindBy,
+		WebURL:       response.HTMLURL,
 	}, nil
 }
 
@@ -529,6 +554,25 @@ type accessTokenResponse struct {
 
 type branchResponse struct {
 	Name string `json:"name"`
+}
+
+type compareResponse struct {
+	Status   string           `json:"status"`
+	AheadBy  int              `json:"ahead_by"`
+	BehindBy int              `json:"behind_by"`
+	HTMLURL  string           `json:"html_url"`
+	Commits  []commitResponse `json:"commits"`
+}
+
+func (c commitResponse) branchCommit() domain.BranchCommit {
+	title, _, _ := strings.Cut(c.Commit.Message, "\n")
+	return domain.BranchCommit{
+		SHA:         c.SHA,
+		Title:       strings.TrimSpace(title),
+		AuthorName:  c.Commit.Author.Name,
+		CommittedAt: c.Commit.Committer.Date,
+		WebURL:      c.HTMLURL,
+	}
 }
 
 type commitResponse struct {

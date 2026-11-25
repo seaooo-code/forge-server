@@ -141,6 +141,33 @@ type BranchCommit struct {
 	WebURL      string
 }
 
+// CommitComparisonStatus 是 to 相对 from 的位置。
+type CommitComparisonStatus string
+
+const (
+	// CommitComparisonAhead：to 在 from 之后，Commits 是 to 比 from 多出的提交。
+	CommitComparisonAhead CommitComparisonStatus = "ahead"
+	// CommitComparisonBehind：to 在 from 之前（例如回退），Commits 是 from 比 to 多出、发布后会被撤掉的提交。
+	CommitComparisonBehind CommitComparisonStatus = "behind"
+	// CommitComparisonDiverged：两边各有对方没有的提交，Commits 是 to 这边多出的提交，BehindBy 是 from 那边多出的数量。
+	CommitComparisonDiverged  CommitComparisonStatus = "diverged"
+	CommitComparisonIdentical CommitComparisonStatus = "identical"
+)
+
+// CommitComparison 是两个提交之间的差异。Commits 按提交时间倒序，最多 MaxComparisonCommits 条，TotalCommits 是实际数量。
+type CommitComparison struct {
+	Status       CommitComparisonStatus
+	Commits      []BranchCommit
+	TotalCommits int
+	// TotalExact 为 false 时提交太多没有数完，TotalCommits 是已经数到的数量。
+	TotalExact bool
+	BehindBy   int
+	WebURL     string
+}
+
+// MaxComparisonCommits 是比较结果里最多返回的提交数。
+const MaxComparisonCommits = 50
+
 // ModuleRepository 是模块绑定的外部仓库。
 type ModuleRepository struct {
 	ConnectionID         string

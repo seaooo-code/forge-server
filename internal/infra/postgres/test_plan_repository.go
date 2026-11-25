@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -123,6 +124,10 @@ func (r *TestPlanRepository) GetTestPlanDetail(ctx context.Context, id string) (
 			item.build_record_id::text,
 			br.number,
 			br.commit_sha,
+			br.commit_title,
+			br.commit_author_name,
+			br.committed_at,
+			m.repository_web_url,
 			br.runtime_version,
 			br.platforms,
 			coalesce(item.updated_by_user_id, ''),
@@ -142,6 +147,7 @@ func (r *TestPlanRepository) GetTestPlanDetail(ctx context.Context, id string) (
 	detail.Items = []domain.TestPlanItem{}
 	for itemRows.Next() {
 		var item domain.TestPlanItem
+		var committedAt sql.NullTime
 		if err := itemRows.Scan(
 			&item.TestPlanID,
 			&item.ModuleID,
@@ -152,6 +158,10 @@ func (r *TestPlanRepository) GetTestPlanDetail(ctx context.Context, id string) (
 			&item.BuildRecordID,
 			&item.BuildNumber,
 			&item.CommitSHA,
+			&item.CommitTitle,
+			&item.CommitAuthorName,
+			&committedAt,
+			&item.RepositoryWebURL,
 			&item.RuntimeVersion,
 			&item.Platforms,
 			&item.UpdatedByUserID,
@@ -159,6 +169,9 @@ func (r *TestPlanRepository) GetTestPlanDetail(ctx context.Context, id string) (
 			&item.UpdatedAt,
 		); err != nil {
 			return domain.TestPlanDetail{}, fmt.Errorf("scan test plan item: %w", err)
+		}
+		if committedAt.Valid {
+			item.CommittedAt = &committedAt.Time
 		}
 		detail.Items = append(detail.Items, item)
 	}

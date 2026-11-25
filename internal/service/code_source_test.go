@@ -203,7 +203,7 @@ func TestCodeSourceServiceLatestBranchCommitTrimsBranch(t *testing.T) {
 	store.put(testGitLabConnection())
 	repository := domain.ModuleRepository{ConnectionID: "code-source-1", ExternalRepositoryID: "42"}
 
-	commit, err := service.LatestBranchCommit(context.Background(), repository, "  main  ")
+	commit, err := service.ResolveCommit(context.Background(), repository, "  main  ")
 	if err != nil {
 		t.Fatalf("latest branch commit: %v", err)
 	}
@@ -212,11 +212,32 @@ func TestCodeSourceServiceLatestBranchCommitTrimsBranch(t *testing.T) {
 	}
 	// 分支为空时不访问代码托管方。
 	provider.lastCommitRef = ""
-	if _, err := service.LatestBranchCommit(context.Background(), repository, "  "); !errors.Is(err, domain.ErrInvalidCodeSourceInput) {
+	if _, err := service.ResolveCommit(context.Background(), repository, "  "); !errors.Is(err, domain.ErrInvalidCodeSourceInput) {
 		t.Fatalf("expected invalid input for empty branch, got %v", err)
 	}
 	if provider.lastCommitRef != "" {
 		t.Fatalf("provider must not be called for empty branch, got %q", provider.lastCommitRef)
+	}
+}
+
+func TestCodeSourceServiceCompareCommits(t *testing.T) {
+	provider := &fakeCodeSourceProvider{provider: domain.CodeSourceProviderGitLab, comparison: domain.CommitComparison{Status: domain.CommitComparisonAhead, TotalCommits: 2}}
+	service, store := newTestCodeSourceService(provider)
+	store.put(testGitLabConnection())
+	repository := domain.ModuleRepository{ConnectionID: "code-source-1", ExternalRepositoryID: "42"}
+
+	comparison, err := service.CompareCommits(context.Background(), repository, " aaa ", " bbb ")
+	if err != nil || comparison.Status != domain.CommitComparisonAhead || provider.compareRefs[0] != "aaa" || provider.compareRefs[1] != "bbb" {
+		t.Fatalf("unexpected comparison: %+v %v %v", comparison, provider.compareRefs, err)
+	}
+	// 同一个提交不访问代码托管方，直接返回 identical。
+	provider.compareRefs = nil
+	comparison, err = service.CompareCommits(context.Background(), repository, "ABC", "abc")
+	if err != nil || comparison.Status != domain.CommitComparisonIdentical || comparison.Commits == nil || provider.compareRefs != nil {
+		t.Fatalf("expected identical without provider call, got %+v %v %v", comparison, provider.compareRefs, err)
+	}
+	if _, err := service.CompareCommits(context.Background(), repository, "", "bbb"); !errors.Is(err, domain.ErrInvalidCodeSourceInput) {
+		t.Fatalf("expected invalid input, got %v", err)
 	}
 }
 
@@ -500,6 +521,8 @@ type fakeCodeSourceProvider struct {
 	page        domain.RepositoryPage
 	branches    []string
 	commit      domain.BranchCommit
+	comparison  domain.CommitComparison
+	compareRefs []string
 	credentials domain.GitCredentials
 	event       domain.PushEvent
 	parseOK     bool
@@ -537,10 +560,15 @@ func (p *fakeCodeSourceProvider) SearchBranches(_ context.Context, _ domain.Code
 	return p.branches, nil
 }
 
-func (p *fakeCodeSourceProvider) LatestBranchCommit(_ context.Context, _ domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
+func (p *fakeCodeSourceProvider) ResolveCommit(_ context.Context, _ domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
 	p.lastBranchRepo = repo
 	p.lastCommitRef = branch
 	return p.commit, nil
+}
+
+func (p *fakeCodeSourceProvider) CompareCommits(_ context.Context, _ domain.CodeSourceConnection, _ domain.ModuleRepository, from string, to string) (domain.CommitComparison, error) {
+	p.compareRefs = []string{from, to}
+	return p.comparison, nil
 }
 
 func (p *fakeCodeSourceProvider) CloneCredentials(_ context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository) (domain.GitCredentials, error) {

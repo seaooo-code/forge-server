@@ -123,6 +123,19 @@ func (s *BuildService) RecordBuildCIPipeline(ctx context.Context, id string, wor
 	return s.repository.RecordBuildCIPipeline(ctx, strings.TrimSpace(id), strings.TrimSpace(workerID), pipelineID, strings.TrimSpace(pipelineURL))
 }
 
+const (
+	maxCommitTitleRunes  = 500
+	maxCommitAuthorRunes = 200
+)
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
 // CompleteBuildRecord 写入构建结果。构建已不归 workerID 所有时返回 ErrBuildLeaseLost。
 func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, workerID string, completion domain.BuildRecordCompletion) (domain.BuildRecord, error) {
 	normalizedID := strings.TrimSpace(id)
@@ -132,16 +145,20 @@ func (s *BuildService) CompleteBuildRecord(ctx context.Context, id string, worke
 
 	normalized := domain.BuildRecordCompletion{
 		// 签名原样保留：签名内容是被签名的字节，任何改动都会让签名失效。
-		Signature:      completion.Signature,
-		CommitSHA:      strings.TrimSpace(completion.CommitSHA),
-		RuntimeVersion: strings.TrimSpace(completion.RuntimeVersion),
-		Platforms:      []string{},
-		ArtifactKey:    strings.Trim(strings.TrimSpace(completion.ArtifactKey), "/"),
-		ArtifactURL:    strings.TrimSpace(completion.ArtifactURL),
-		ManifestKey:    strings.Trim(strings.TrimSpace(completion.ManifestKey), "/"),
-		FileCount:      completion.FileCount,
-		TotalSizeBytes: completion.TotalSizeBytes,
-		ErrorMessage:   strings.TrimSpace(completion.ErrorMessage),
+		Signature: completion.Signature,
+		CommitSHA: strings.TrimSpace(completion.CommitSHA),
+		// 提交标题限制长度，避免异常的提交说明撑大构建记录。
+		CommitTitle:      truncateRunes(strings.TrimSpace(completion.CommitTitle), maxCommitTitleRunes),
+		CommitAuthorName: truncateRunes(strings.TrimSpace(completion.CommitAuthorName), maxCommitAuthorRunes),
+		CommittedAt:      completion.CommittedAt,
+		RuntimeVersion:   strings.TrimSpace(completion.RuntimeVersion),
+		Platforms:        []string{},
+		ArtifactKey:      strings.Trim(strings.TrimSpace(completion.ArtifactKey), "/"),
+		ArtifactURL:      strings.TrimSpace(completion.ArtifactURL),
+		ManifestKey:      strings.Trim(strings.TrimSpace(completion.ManifestKey), "/"),
+		FileCount:        completion.FileCount,
+		TotalSizeBytes:   completion.TotalSizeBytes,
+		ErrorMessage:     strings.TrimSpace(completion.ErrorMessage),
 	}
 	if normalized.ArtifactKey == "" || normalized.FileCount < 0 || normalized.TotalSizeBytes < 0 {
 		return domain.BuildRecord{}, domain.ErrInvalidBuildInput

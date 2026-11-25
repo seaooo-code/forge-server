@@ -61,6 +61,9 @@ type buildRecordResponse struct {
 	QueuedAt                 string                    `json:"queuedAt"`
 	CodeSourceConnectionID   string                    `json:"codeSourceConnectionId"`
 	CommitSHA                string                    `json:"commitSha"`
+	CommitTitle              string                    `json:"commitTitle"`
+	CommitAuthorName         string                    `json:"commitAuthorName"`
+	CommittedAt              string                    `json:"committedAt"`
 	Platforms                []string                  `json:"platforms"`
 	RepositoryFullName       string                    `json:"repositoryFullName"`
 	RepositoryID             string                    `json:"repositoryId"`
@@ -264,6 +267,9 @@ func newBuildRecordResponseWithTree(record domain.BuildRecord, includeArtifactTr
 		QueuedAt:                 formatTime(record.QueuedAt),
 		CodeSourceConnectionID:   record.Repository.ConnectionID,
 		CommitSHA:                record.CommitSHA,
+		CommitTitle:              record.CommitTitle,
+		CommitAuthorName:         record.CommitAuthorName,
+		CommittedAt:              formatOptionalTime(record.CommittedAt),
 		Platforms:                nonNilStrings(record.Platforms),
 		RepositoryFullName:       record.Repository.FullName,
 		RepositoryID:             record.Repository.ExternalRepositoryID,

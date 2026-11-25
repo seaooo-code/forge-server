@@ -3,6 +3,7 @@ package gitlab
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/textproto"
@@ -157,7 +158,7 @@ func TestLatestBranchCommitUsesCommitsAPIWithRefName(t *testing.T) {
 		return jsonResponse(http.StatusOK, `[{"id":"da1560886d4f094c3e6c9ef40349f7d38b5d27d7","short_id":"da156088","title":"新增登录页","author_name":"Chen","committed_date":"2026-11-25T14:30:00.000+08:00","web_url":"https://gitlab.example.com/rn/home/-/commit/da15608"}]`, nil)
 	})
 
-	commit, err := provider.LatestBranchCommit(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, " feature/login ")
+	commit, err := provider.ResolveCommit(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, " feature/login ")
 	if err != nil {
 		t.Fatalf("latest branch commit: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestLatestBranchCommitMapsMissingBranch(t *testing.T) {
 		{"empty", jsonResponse(http.StatusOK, `[]`, nil)},
 	} {
 		provider := newTestProvider(t, func(*http.Request) *http.Response { return tc.response })
-		if _, err := provider.LatestBranchCommit(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, "gone"); !errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
+		if _, err := provider.ResolveCommit(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, "gone"); !errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
 			t.Fatalf("%s: expected branch not found, got %v", tc.name, err)
 		}
 	}
@@ -187,6 +188,79 @@ func TestLatestBranchCommitMapsMissingBranch(t *testing.T) {
 	_, err := provider.SearchBranches(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, domain.BranchSearchInput{Limit: 1})
 	if !errors.Is(err, domain.ErrCodeSourceAuthorization) || errors.Is(err, domain.ErrCodeSourceBranchNotFound) {
 		t.Fatalf("expected authorization error for other 404, got %v", err)
+	}
+}
+
+func gitlabCommitJSON(sha string, title string) string {
+	return `{"id":"` + sha + `","title":"` + title + `","author_name":"Chen","committed_date":"2026-11-25T14:30:00.000+08:00","web_url":"https://gitlab.example.com/c/` + sha + `"}`
+}
+
+func TestCompareCommitsUsesRevisionRanges(t *testing.T) {
+	cases := []struct {
+		name       string
+		ahead      string
+		behind     string
+		status     domain.CommitComparisonStatus
+		total      int
+		behindBy   int
+		firstTitle string
+		webSuffix  string
+	}{
+		{"ahead", `[` + gitlabCommitJSON("c2", "第二个") + `,` + gitlabCommitJSON("c1", "第一个") + `]`, `[]`, domain.CommitComparisonAhead, 2, 0, "第二个", "/-/compare/aaa...bbb"},
+		{"behind", `[]`, `[` + gitlabCommitJSON("c3", "被撤掉的") + `]`, domain.CommitComparisonBehind, 1, 1, "被撤掉的", "/-/compare/bbb...aaa"},
+		{"diverged", `[` + gitlabCommitJSON("c4", "新分支上的") + `]`, `[` + gitlabCommitJSON("c5", "线上独有的") + `]`, domain.CommitComparisonDiverged, 1, 1, "新分支上的", "/-/compare/aaa...bbb"},
+		{"identical", `[]`, `[]`, domain.CommitComparisonIdentical, 0, 0, "", "/-/compare/aaa...bbb"},
+	}
+	for _, tc := range cases {
+		provider := newTestProvider(t, func(r *http.Request) *http.Response {
+			if r.URL.EscapedPath() != "/sub/api/v4/projects/42/repository/commits" || r.URL.Query().Get("per_page") != "100" {
+				t.Fatalf("unexpected request %s?%s", r.URL.EscapedPath(), r.URL.RawQuery)
+			}
+			switch r.URL.Query().Get("ref_name") {
+			case "aaa..bbb":
+				return jsonResponse(http.StatusOK, tc.ahead, nil)
+			case "bbb..aaa":
+				return jsonResponse(http.StatusOK, tc.behind, nil)
+			}
+			t.Fatalf("unexpected range %q", r.URL.Query().Get("ref_name"))
+			return nil
+		})
+		comparison, err := provider.CompareCommits(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42", WebURL: "https://gitlab.example.com/rn/home"}, "aaa", "bbb")
+		if err != nil {
+			t.Fatalf("%s: compare: %v", tc.name, err)
+		}
+		if comparison.Status != tc.status || comparison.TotalCommits != tc.total || comparison.BehindBy != tc.behindBy || !comparison.TotalExact ||
+			comparison.WebURL != "https://gitlab.example.com/rn/home"+tc.webSuffix {
+			t.Fatalf("%s: unexpected comparison: %+v", tc.name, comparison)
+		}
+		if tc.firstTitle != "" && (len(comparison.Commits) == 0 || comparison.Commits[0].Title != tc.firstTitle) {
+			t.Fatalf("%s: unexpected commits: %+v", tc.name, comparison.Commits)
+		}
+	}
+}
+
+func TestCompareCommitsCapsPagesAndCommits(t *testing.T) {
+	page := make([]string, 100)
+	for index := range page {
+		page[index] = gitlabCommitJSON(fmt.Sprintf("c%d", index), "提交")
+	}
+	body := "[" + strings.Join(page, ",") + "]"
+	requests := 0
+	provider := newTestProvider(t, func(r *http.Request) *http.Response {
+		if r.URL.Query().Get("ref_name") == "bbb..aaa" {
+			return jsonResponse(http.StatusOK, `[]`, nil)
+		}
+		requests++
+		header := make(http.Header)
+		header.Set("X-Next-Page", "next")
+		return jsonResponse(http.StatusOK, body, header)
+	})
+	comparison, err := provider.CompareCommits(context.Background(), testConnection(), domain.ModuleRepository{ExternalRepositoryID: "42"}, "aaa", "bbb")
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if requests != commitRangeMaxPages || comparison.TotalCommits != commitRangeMaxPages*100 || comparison.TotalExact || len(comparison.Commits) != domain.MaxComparisonCommits || comparison.WebURL != "" {
+		t.Fatalf("unexpected capped comparison: requests=%d total=%d exact=%v commits=%d web=%q", requests, comparison.TotalCommits, comparison.TotalExact, len(comparison.Commits), comparison.WebURL)
 	}
 }
 

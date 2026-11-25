@@ -1471,7 +1471,7 @@
             "type": "string"
           },
           "branch": {
-            "description": "Branch name.",
+            "description": "Branch name; empty for commits in a comparison.",
             "type": "string"
           },
           "committedAt": {
@@ -2059,8 +2059,20 @@
             "description": "Code source connection id of the module repository.",
             "type": "string"
           },
+          "commitAuthorName": {
+            "description": "Commit author name, filled together with commitTitle.",
+            "type": "string"
+          },
           "commitSha": {
             "description": "Commit built by this record. Webhook builds record the pushed commit; manual builds fill it after checkout.",
+            "type": "string"
+          },
+          "commitTitle": {
+            "description": "First line of the commit message, filled when the build succeeds. Empty for older builds or when the code source lookup failed.",
+            "type": "string"
+          },
+          "committedAt": {
+            "description": "Commit time in RFC3339, filled together with commitTitle; empty when unknown.",
             "type": "string"
           },
           "createdAt": {
@@ -2258,6 +2270,9 @@
           "repositoryFullName",
           "codeSourceConnectionId",
           "commitSha",
+          "commitTitle",
+          "commitAuthorName",
+          "committedAt",
           "runtimeVersion",
           "signingKeyId",
           "providedCapabilities",
@@ -2856,6 +2871,53 @@
         },
         "required": [
           "apps"
+        ],
+        "type": "object"
+      },
+      "CommitComparison": {
+        "properties": {
+          "behindBy": {
+            "description": "For diverged, commits only in from.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "commits": {
+            "items": {
+              "$ref": "#/components/schemas/BranchCommit"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "ahead: to is after from, commits are new in to. behind: to is before from (rollback), commits are in from but not in to. diverged: both sides have their own commits, commits are new in to and behindBy counts the other side. identical: same commit.",
+            "enum": [
+              "ahead",
+              "behind",
+              "diverged",
+              "identical"
+            ],
+            "type": "string"
+          },
+          "totalCommits": {
+            "description": "Number of differing commits; commits holds at most the newest 50.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "totalExact": {
+            "description": "False when there were too many commits to count and totalCommits is a lower bound.",
+            "type": "boolean"
+          },
+          "webUrl": {
+            "description": "Compare page on the code source, or empty when unknown.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "commits",
+          "totalCommits",
+          "totalExact",
+          "behindBy",
+          "webUrl"
         ],
         "type": "object"
       },
@@ -4183,6 +4245,17 @@
         },
         "type": "object"
       },
+      "ModuleCommitComparisonResponse": {
+        "properties": {
+          "comparison": {
+            "$ref": "#/components/schemas/CommitComparison"
+          }
+        },
+        "required": [
+          "comparison"
+        ],
+        "type": "object"
+      },
       "ModuleCreateRequest": {
         "properties": {
           "applicationId": {
@@ -4481,6 +4554,49 @@
         },
         "required": [
           "status"
+        ],
+        "type": "object"
+      },
+      "ReleaseBuild": {
+        "properties": {
+          "branch": {
+            "description": "Branch of the build.",
+            "type": "string"
+          },
+          "commitAuthorName": {
+            "description": "Commit author name; empty for older builds.",
+            "type": "string"
+          },
+          "commitSha": {
+            "description": "Commit SHA of the build.",
+            "type": "string"
+          },
+          "commitTitle": {
+            "description": "First line of the commit message; empty for older builds.",
+            "type": "string"
+          },
+          "committedAt": {
+            "description": "Commit time in RFC3339; empty when unknown.",
+            "type": "string"
+          },
+          "number": {
+            "description": "Build number within the module; 0 when the build was deleted.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "repositoryWebUrl": {
+            "description": "Module repository web URL for building commit links.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "branch",
+          "commitSha",
+          "commitTitle",
+          "commitAuthorName",
+          "committedAt",
+          "repositoryWebUrl"
         ],
         "type": "object"
       },
@@ -4990,6 +5106,9 @@
             "description": "Released artifact public URL.",
             "type": "string"
           },
+          "build": {
+            "$ref": "#/components/schemas/ReleaseBuild"
+          },
           "buildRecordId": {
             "description": "Build record UUID used by this release.",
             "type": "string"
@@ -5097,6 +5216,7 @@
           "environment",
           "environmentName",
           "buildRecordId",
+          "build",
           "channel",
           "releaseType",
           "runtimeVersion",
@@ -6188,8 +6308,20 @@
             "description": "Current build record UUID.",
             "type": "string"
           },
+          "commitAuthorName": {
+            "description": "Commit author name; empty for older builds.",
+            "type": "string"
+          },
           "commitSha": {
             "description": "Commit SHA of the build.",
+            "type": "string"
+          },
+          "commitTitle": {
+            "description": "First line of the commit message; empty for older builds.",
+            "type": "string"
+          },
+          "committedAt": {
+            "description": "Commit time in RFC3339; empty when unknown.",
             "type": "string"
           },
           "mode": {
@@ -6223,6 +6355,10 @@
             },
             "type": "array"
           },
+          "repositoryWebUrl": {
+            "description": "Module repository web URL for building commit links.",
+            "type": "string"
+          },
           "runtimeVersion": {
             "description": "runtimeVersion of the build. Clients with another runtimeVersion skip this item.",
             "type": "string"
@@ -6246,6 +6382,10 @@
           "buildRecordId",
           "buildNumber",
           "commitSha",
+          "commitTitle",
+          "commitAuthorName",
+          "committedAt",
+          "repositoryWebUrl",
           "runtimeVersion",
           "platforms",
           "updatedBy",
@@ -13183,6 +13323,99 @@
           }
         },
         "summary": "Create or update a module build variable",
+        "tags": [
+          "Modules"
+        ]
+      }
+    },
+    "/api/v1/modules/{id}/compare": {
+      "get": {
+        "operationId": "compareModuleCommits",
+        "parameters": [
+          {
+            "description": "Module id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Module id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Base commit SHA, usually the build currently online.",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "description": "Base commit SHA.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Target commit SHA, usually the build to release.",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "description": "Target commit SHA.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleCommitComparisonResponse"
+                }
+              }
+            },
+            "description": "Direction and differing commits of to relative to from."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "from or to is empty, code source connection is inactive or request is invalid."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Module, code source connection or commit not found."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Code source provider request failed."
+          }
+        },
+        "summary": "Compare two commits of the module repository",
         "tags": [
           "Modules"
         ]

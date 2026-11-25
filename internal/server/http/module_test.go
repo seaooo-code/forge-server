@@ -285,18 +285,26 @@ func TestDeleteModuleNotFound(t *testing.T) {
 }
 
 type fakeModuleService struct {
-	modules   []domain.Module
-	module    domain.Module
-	listErr   error
-	getErr    error
-	createErr error
-	updateErr error
-	deleteErr error
-	lastInput *domain.ModuleInput
-	branches  []string
-	branchErr error
-	commit    domain.BranchCommit
-	commitErr error
+	modules    []domain.Module
+	module     domain.Module
+	listErr    error
+	getErr     error
+	createErr  error
+	updateErr  error
+	deleteErr  error
+	lastInput  *domain.ModuleInput
+	branches   []string
+	branchErr  error
+	commit     domain.BranchCommit
+	commitErr  error
+	comparison domain.CommitComparison
+}
+
+func (s fakeModuleService) CompareCommits(_ context.Context, _ string, from string, to string) (domain.CommitComparison, error) {
+	if from == "" || to == "" {
+		return domain.CommitComparison{}, domain.ErrInvalidCodeSourceInput
+	}
+	return s.comparison, nil
 }
 
 func (s fakeModuleService) LatestBranchCommit(_ context.Context, _ string, branch string) (domain.BranchCommit, error) {
@@ -536,6 +544,43 @@ func TestGetModuleBranchCommitMapsErrors(t *testing.T) {
 		if rec.Code != tc.status {
 			t.Fatalf("%v: expected status %d, got %d: %s", tc.err, tc.status, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestCompareModuleCommits(t *testing.T) {
+	e := newAuthorizedTestServer(Dependencies{
+		ModuleService: fakeModuleService{comparison: domain.CommitComparison{
+			Status:       domain.CommitComparisonAhead,
+			Commits:      []domain.BranchCommit{{SHA: "bbb", Title: "新增登录页", AuthorName: "Chen", CommittedAt: time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)}},
+			TotalCommits: 1,
+			TotalExact:   true,
+			WebURL:       "https://git.example.com/demo/-/compare/aaa...bbb",
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/compare?from=aaa&to=bbb", nil)
+	addTestConsoleSession(req)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var response moduleCommitComparisonResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got := response.Comparison
+	if got.Status != "ahead" || got.TotalCommits != 1 || !got.TotalExact || got.WebURL == "" || len(got.Commits) != 1 ||
+		got.Commits[0].Title != "新增登录页" || got.Commits[0].CommittedAt != "2026-11-25T06:30:00Z" {
+		t.Fatalf("unexpected comparison: %+v", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/modules/module-home/compare?from=aaa", nil)
+	addTestConsoleSession(req)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without to, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

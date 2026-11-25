@@ -481,6 +481,9 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, wo
 				total_size_bytes = $6,
 				error_message = $7,
 				commit_sha = coalesce(nullif($8, ''), br.commit_sha),
+				commit_title = $17,
+				commit_author_name = $18,
+				committed_at = $19,
 				runtime_version = $9,
 				platforms = $10,
 				provided_capabilities = $12::jsonb,
@@ -501,7 +504,8 @@ func (r *BuildRepository) CompleteBuildRecord(ctx context.Context, id string, wo
 		join storage_configurations s on s.id = br.storage_configuration_id
 	`), id, completion.ArtifactKey, completion.ArtifactURL, completion.ManifestKey, completion.FileCount, completion.TotalSizeBytes, completion.ErrorMessage, completion.CommitSHA, completion.RuntimeVersion, buildPlatforms(completion.Platforms), workerID,
 		capabilitiesJSON(completion.ProvidedCapabilities), capabilitiesJSON(completion.RequiredCapabilities),
-		completion.Signature.KeyID, completion.Signature.Payload, completion.Signature.Signature))
+		completion.Signature.KeyID, completion.Signature.Payload, completion.Signature.Signature,
+		completion.CommitTitle, completion.CommitAuthorName, completion.CommittedAt))
 	if errors.Is(err, domain.ErrBuildRecordNotFound) {
 		return domain.BuildRecord{}, domain.ErrBuildLeaseLost
 	}
@@ -650,6 +654,9 @@ func buildRecordSelectSQL(buildRecordSourceSQL string, extraJoinSQL string) stri
 			), '[]'::jsonb) as dependency_builds,
 			br.branch,
 			br.commit_sha,
+			br.commit_title,
+			br.commit_author_name,
+			br.committed_at,
 			br.runtime_version,
 			br.platforms,
 			br.provided_capabilities,
@@ -694,6 +701,7 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	var record domain.BuildRecord
 	var startedAt sql.NullTime
 	var finishedAt sql.NullTime
+	var committedAt sql.NullTime
 	var createdByName, createdByAvatarURL string
 	var moduleAdapterParams []byte
 	var dependencyBuilds []byte
@@ -730,6 +738,9 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 		&dependencyBuilds,
 		&record.Branch,
 		&record.CommitSHA,
+		&record.CommitTitle,
+		&record.CommitAuthorName,
+		&committedAt,
 		&record.RuntimeVersion,
 		&record.Platforms,
 		&providedCapabilities,
@@ -801,6 +812,9 @@ func scanBuildRecord(row buildRecordRow) (domain.BuildRecord, error) {
 	}
 	if startedAt.Valid {
 		record.StartedAt = &startedAt.Time
+	}
+	if committedAt.Valid {
+		record.CommittedAt = &committedAt.Time
 	}
 	if finishedAt.Valid {
 		record.FinishedAt = &finishedAt.Time

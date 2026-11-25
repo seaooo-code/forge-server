@@ -32,10 +32,11 @@ type ModuleCodeSourceStore interface {
 	GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error)
 }
 
-// ModuleBranchSearcher 按模块绑定的仓库搜索分支、查询分支最新提交，由 CodeSourceService 实现。
+// ModuleBranchSearcher 按模块绑定的仓库搜索分支、查询和比较提交，由 CodeSourceService 实现。
 type ModuleBranchSearcher interface {
 	SearchBranches(ctx context.Context, repository domain.ModuleRepository, query string) ([]string, error)
-	LatestBranchCommit(ctx context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error)
+	ResolveCommit(ctx context.Context, repository domain.ModuleRepository, ref string) (domain.BranchCommit, error)
+	CompareCommits(ctx context.Context, repository domain.ModuleRepository, from string, to string) (domain.CommitComparison, error)
 }
 
 // ModuleBuildVariablePreparer 校验并加密创建模块时一起提交的构建变量，由 BuildVariableService 实现。
@@ -109,7 +110,19 @@ func (s *ModuleService) LatestBranchCommit(ctx context.Context, id string, branc
 	if s.branches == nil {
 		return domain.BranchCommit{}, domain.ErrCodeSourceProviderNotFound
 	}
-	return s.branches.LatestBranchCommit(ctx, module.Repository, branch)
+	return s.branches.ResolveCommit(ctx, module.Repository, branch)
+}
+
+// CompareCommits 比较模块仓库里的两个提交，供发布和构建详情展示与线上版本相差的提交。
+func (s *ModuleService) CompareCommits(ctx context.Context, id string, from string, to string) (domain.CommitComparison, error) {
+	module, err := s.GetModule(ctx, id)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	if s.branches == nil {
+		return domain.CommitComparison{}, domain.ErrCodeSourceProviderNotFound
+	}
+	return s.branches.CompareCommits(ctx, module.Repository, from, to)
 }
 
 func (s *ModuleService) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {

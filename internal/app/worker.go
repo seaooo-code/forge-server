@@ -87,6 +87,8 @@ func NewWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Wo
 		CI:          codeSourceService,
 		CIPipelines: buildService,
 		Credentials: codeSourceService,
+		// 提交详情：构建成功后按 commit SHA 查标题、作者和时间写进构建记录，查不到只记 SHA。
+		Commits: codeSourceService,
 		// 依赖产物注入：Feature 模块构建时读取所属 Common 模块生效中的默认路由构建，产物按依赖构建自己的存储配置下载。
 		Dependencies: service.NewBuildDependencyService(buildRepository),
 		Logs:         service.NewBuildLogService(postgres.NewBuildLogRepository(postgresPool)),

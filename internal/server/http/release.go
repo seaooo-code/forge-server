@@ -48,29 +48,41 @@ type releaseResolveResponse struct {
 	Route releaseRouteResponse `json:"route"`
 }
 
+// releaseBuildResponse 是发布使用的构建摘要。
+type releaseBuildResponse struct {
+	Number           int64  `json:"number"`
+	Branch           string `json:"branch"`
+	CommitSHA        string `json:"commitSha"`
+	CommitTitle      string `json:"commitTitle"`
+	CommitAuthorName string `json:"commitAuthorName"`
+	CommittedAt      string `json:"committedAt"`
+	RepositoryWebURL string `json:"repositoryWebUrl"`
+}
+
 type releaseRecordResponse struct {
-	ApplicationName string `json:"applicationName"`
-	ArtifactKey     string `json:"artifactKey"`
-	ArtifactURL     string `json:"artifactUrl"`
-	BuildRecordID   string `json:"buildRecordId"`
-	Channel         string `json:"channel"`
-	CreatedAt       string `json:"createdAt"`
-	CreatedBy       string `json:"createdBy"`
-	CreatedByUserID string `json:"createdByUserId"`
-	Description     string `json:"description"`
-	Environment     string `json:"environment"`
-	EnvironmentName string `json:"environmentName"`
-	ID              string `json:"id"`
-	ModuleID        string `json:"moduleId"`
-	ModuleName      string `json:"moduleName"`
-	ReleaseType     string `json:"releaseType"`
-	RuntimeVersion  string `json:"runtimeVersion"`
-	GrayStrategy    string `json:"grayStrategy"`
-	GrayPercentage  int    `json:"grayPercentage"`
-	ExpiresAt       string `json:"expiresAt"`
-	Status          string `json:"status"`
-	HealthStatus    string `json:"healthStatus"`
-	UpdatedAt       string `json:"updatedAt"`
+	ApplicationName string               `json:"applicationName"`
+	ArtifactKey     string               `json:"artifactKey"`
+	ArtifactURL     string               `json:"artifactUrl"`
+	Build           releaseBuildResponse `json:"build"`
+	BuildRecordID   string               `json:"buildRecordId"`
+	Channel         string               `json:"channel"`
+	CreatedAt       string               `json:"createdAt"`
+	CreatedBy       string               `json:"createdBy"`
+	CreatedByUserID string               `json:"createdByUserId"`
+	Description     string               `json:"description"`
+	Environment     string               `json:"environment"`
+	EnvironmentName string               `json:"environmentName"`
+	ID              string               `json:"id"`
+	ModuleID        string               `json:"moduleId"`
+	ModuleName      string               `json:"moduleName"`
+	ReleaseType     string               `json:"releaseType"`
+	RuntimeVersion  string               `json:"runtimeVersion"`
+	GrayStrategy    string               `json:"grayStrategy"`
+	GrayPercentage  int                  `json:"grayPercentage"`
+	ExpiresAt       string               `json:"expiresAt"`
+	Status          string               `json:"status"`
+	HealthStatus    string               `json:"healthStatus"`
+	UpdatedAt       string               `json:"updatedAt"`
 }
 
 type releaseRouteResponse struct {
@@ -430,6 +442,15 @@ func newReleaseRecordResponse(record domain.ReleaseRecord) releaseRecordResponse
 		ApplicationName: record.ApplicationName,
 		ArtifactKey:     record.ArtifactKey,
 		ArtifactURL:     record.ArtifactURL,
+		Build: releaseBuildResponse{
+			Number:           record.Build.Number,
+			Branch:           record.Build.Branch,
+			CommitSHA:        record.Build.CommitSHA,
+			CommitTitle:      record.Build.CommitTitle,
+			CommitAuthorName: record.Build.CommitAuthorName,
+			CommittedAt:      formatOptionalTime(record.Build.CommittedAt),
+			RepositoryWebURL: record.Build.RepositoryWebURL,
+		},
 		BuildRecordID:   record.BuildRecordID,
 		Channel:         record.Channel,
 		CreatedAt:       formatTime(record.CreatedAt),

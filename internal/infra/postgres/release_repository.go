@@ -604,6 +604,13 @@ func releaseRecordSelectSQL() string {
 			rr.environment_code,
 			e.name as environment_name,
 			rr.build_record_id,
+			coalesce(build.number, 0),
+			coalesce(build.branch, ''),
+			coalesce(build.commit_sha, ''),
+			coalesce(build.commit_title, ''),
+			coalesce(build.commit_author_name, ''),
+			build.committed_at,
+			m.repository_web_url,
 			route.runtime_version,
 			rr.channel,
 			rr.release_type,
@@ -626,6 +633,7 @@ func releaseRecordSelectSQL() string {
 		join users u on u.id = rr.created_by_user_id
 		join release_routes route on route.release_id = rr.id
 		left join release_health health on health.release_id = rr.id
+		left join build_records build on build.id = rr.build_record_id
 	`
 }
 
@@ -663,7 +671,7 @@ func releaseRouteSelectSQL() string {
 
 func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 	var record domain.ReleaseRecord
-	var expiresAt sql.NullTime
+	var expiresAt, committedAt sql.NullTime
 	if err := row.Scan(
 		&record.ID,
 		&record.ApplicationName,
@@ -672,6 +680,13 @@ func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 		&record.Environment,
 		&record.EnvironmentName,
 		&record.BuildRecordID,
+		&record.Build.Number,
+		&record.Build.Branch,
+		&record.Build.CommitSHA,
+		&record.Build.CommitTitle,
+		&record.Build.CommitAuthorName,
+		&committedAt,
+		&record.Build.RepositoryWebURL,
 		&record.RuntimeVersion,
 		&record.Channel,
 		&record.ReleaseType,
@@ -695,6 +710,9 @@ func scanReleaseRecord(row releaseRecordRow) (domain.ReleaseRecord, error) {
 	}
 	if expiresAt.Valid {
 		record.ExpiresAt = &expiresAt.Time
+	}
+	if committedAt.Valid {
+		record.Build.CommittedAt = &committedAt.Time
 	}
 	return record, nil
 }

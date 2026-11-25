@@ -91,20 +91,24 @@ func (p TestPlan) Active(now time.Time) bool {
 }
 
 type TestPlanItem struct {
-	TestPlanID      string
-	ModuleID        string
-	ModuleName      string
-	ModuleKind      ModuleKind
-	Branch          string
-	Mode            TestPlanItemMode
-	BuildRecordID   string
-	BuildNumber     int64
-	CommitSHA       string
-	RuntimeVersion  string
-	Platforms       []string
-	UpdatedByUserID string
-	UpdatedBy       string
-	UpdatedAt       time.Time
+	TestPlanID       string
+	ModuleID         string
+	ModuleName       string
+	ModuleKind       ModuleKind
+	Branch           string
+	Mode             TestPlanItemMode
+	BuildRecordID    string
+	BuildNumber      int64
+	CommitSHA        string
+	CommitTitle      string
+	CommitAuthorName string
+	CommittedAt      *time.Time
+	RepositoryWebURL string
+	RuntimeVersion   string
+	Platforms        []string
+	UpdatedByUserID  string
+	UpdatedBy        string
+	UpdatedAt        time.Time
 }
 
 type TestPlanMember struct {

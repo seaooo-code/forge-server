@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"forge-server/internal/config"
 	"forge-server/internal/domain"
@@ -162,5 +163,45 @@ func TestExecuteFailsBeforeUploadWhenSigningFails(t *testing.T) {
 	}
 	if strings.Contains(store.content(), "上传 ") {
 		t.Fatalf("upload must not start after a signing failure: %q", store.content())
+	}
+}
+
+type fakeCommitResolver struct {
+	commit domain.BranchCommit
+	err    error
+	ref    string
+}
+
+func (r *fakeCommitResolver) ResolveCommit(_ context.Context, _ domain.ModuleRepository, ref string) (domain.BranchCommit, error) {
+	r.ref = ref
+	return r.commit, r.err
+}
+
+func TestResolveCommitFillsCompletionAndToleratesFailures(t *testing.T) {
+	committedAt := time.Date(2026, 11, 25, 14, 30, 0, 0, time.FixedZone("CST", 8*3600))
+	cases := []struct {
+		name      string
+		resolver  *fakeCommitResolver
+		wantTitle string
+		wantLog   string
+	}{
+		{"resolved", &fakeCommitResolver{commit: domain.BranchCommit{SHA: strings.ToUpper(testCommitSHA), Title: "新增登录页", AuthorName: "Chen", CommittedAt: committedAt}}, "新增登录页", "提交：新增登录页（Chen）"},
+		{"lookup failed", &fakeCommitResolver{err: errors.New("gitlab status=500")}, "", "读取提交详情失败，只记录 commit SHA"},
+		{"sha mismatch", &fakeCommitResolver{commit: domain.BranchCommit{SHA: "ffff", Title: "别的提交"}}, "", "和构建使用的"},
+	}
+	for _, tc := range cases {
+		store := &fakeBuildLogStore{}
+		executor := NewExecutor(config.WorkerConfig{WorkDir: t.TempDir(), LogMaxBytes: 1 << 20}, ExecutorDependencies{Commits: tc.resolver, Logs: store}, nil)
+		logs := newBuildLogStream(context.Background(), store, nil, "build-1", buildLogOptions{chunkBytes: buildLogChunkBytes, flushInterval: time.Hour, maxBytes: 1 << 20})
+		completion := domain.BuildRecordCompletion{CommitSHA: testCommitSHA}
+		executor.resolveCommit(context.Background(), executeTestRecord(), &completion, logs)
+		_ = logs.Close()
+
+		if tc.resolver.ref != testCommitSHA || completion.CommitTitle != tc.wantTitle || !strings.Contains(store.content(), tc.wantLog) {
+			t.Fatalf("%s: unexpected result ref=%q completion=%+v log=%q", tc.name, tc.resolver.ref, completion, store.content())
+		}
+		if tc.wantTitle != "" && (completion.CommitAuthorName != "Chen" || completion.CommittedAt == nil || !completion.CommittedAt.Equal(committedAt) || completion.CommittedAt.Location() != time.UTC) {
+			t.Fatalf("%s: unexpected author/time: %+v", tc.name, completion)
+		}
 	}
 }

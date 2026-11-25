@@ -82,6 +82,30 @@ type moduleBranchCommitResponse struct {
 	Commit branchCommitResponse `json:"commit"`
 }
 
+type commitComparisonResponse struct {
+	BehindBy     int                    `json:"behindBy"`
+	Commits      []branchCommitResponse `json:"commits"`
+	Status       string                 `json:"status"`
+	TotalCommits int                    `json:"totalCommits"`
+	TotalExact   bool                   `json:"totalExact"`
+	WebURL       string                 `json:"webUrl"`
+}
+
+type moduleCommitComparisonResponse struct {
+	Comparison commitComparisonResponse `json:"comparison"`
+}
+
+func newBranchCommitResponse(commit domain.BranchCommit) branchCommitResponse {
+	return branchCommitResponse{
+		AuthorName:  commit.AuthorName,
+		Branch:      commit.Branch,
+		CommittedAt: formatTime(commit.CommittedAt),
+		SHA:         commit.SHA,
+		Title:       commit.Title,
+		WebURL:      commit.WebURL,
+	}
+}
+
 type moduleSummaryResponse struct {
 	Common  int `json:"common"`
 	Feature int `json:"feature"`
@@ -133,6 +157,7 @@ func registerModuleRoutes(group *echo.Group, service ModuleService, authService 
 	group.GET("/modules/:id", handler.detail)
 	group.GET("/modules/:id/branches", handler.branches)
 	group.GET("/modules/:id/branch-commit", handler.branchCommit)
+	group.GET("/modules/:id/compare", handler.compare)
 	group.POST("/modules", handler.create)
 	group.PATCH("/modules/:id", handler.update)
 	group.DELETE("/modules/:id", handler.delete)
@@ -214,13 +239,34 @@ func (h moduleHandler) branchCommit(c echo.Context) error {
 		}
 		return codeSourceErrorResponse(c, err)
 	}
-	return c.JSON(http.StatusOK, moduleBranchCommitResponse{Commit: branchCommitResponse{
-		AuthorName:  commit.AuthorName,
-		Branch:      commit.Branch,
-		CommittedAt: formatTime(commit.CommittedAt),
-		SHA:         commit.SHA,
-		Title:       commit.Title,
-		WebURL:      commit.WebURL,
+	return c.JSON(http.StatusOK, moduleBranchCommitResponse{Commit: newBranchCommitResponse(commit)})
+}
+
+// compare 比较模块仓库里的两个提交，供发布和构建详情展示与线上版本相差的提交。
+// 和模块详情、构建列表一样只要求登录：比较的是已经出现在构建记录里的提交。
+func (h moduleHandler) compare(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "module service unavailable"})
+	}
+
+	comparison, err := h.service.CompareCommits(c.Request().Context(), c.Param("id"), c.QueryParam("from"), c.QueryParam("to"))
+	if err != nil {
+		if errors.Is(err, domain.ErrModuleNotFound) {
+			return moduleErrorResponse(c, err)
+		}
+		return codeSourceErrorResponse(c, err)
+	}
+	commits := make([]branchCommitResponse, 0, len(comparison.Commits))
+	for _, commit := range comparison.Commits {
+		commits = append(commits, newBranchCommitResponse(commit))
+	}
+	return c.JSON(http.StatusOK, moduleCommitComparisonResponse{Comparison: commitComparisonResponse{
+		BehindBy:     comparison.BehindBy,
+		Commits:      commits,
+		Status:       string(comparison.Status),
+		TotalCommits: comparison.TotalCommits,
+		TotalExact:   comparison.TotalExact,
+		WebURL:       comparison.WebURL,
 	}})
 }
 

@@ -408,6 +408,28 @@ func baseOpenAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
+			openapi3.WithPath("/api/v1/modules/{id}/compare", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("compareModuleCommits", "Compare two commits of the module repository", []string{"Modules"}, responses(
+						response(http.StatusOK, "Direction and differing commits of to relative to from.", schemaRef("ModuleCommitComparisonResponse")),
+						response(http.StatusBadRequest, "from or to is empty, code source connection is inactive or request is invalid.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Module, code source connection or commit not found.", schemaRef("ErrorResponse")),
+						response(http.StatusBadGateway, "Code source provider request failed.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = append(moduleIDParameters(),
+						&openapi3.ParameterRef{Value: openapi3.NewQueryParameter("from").
+							WithDescription("Base commit SHA, usually the build currently online.").
+							WithRequired(true).
+							WithSchema(stringSchema("Base commit SHA."))},
+						&openapi3.ParameterRef{Value: openapi3.NewQueryParameter("to").
+							WithDescription("Target commit SHA, usually the build to release.").
+							WithRequired(true).
+							WithSchema(stringSchema("Target commit SHA."))},
+					)
+					return op
+				}(),
+			}),
 			openapi3.WithPath("/api/v1/modules/{id}/build-variables", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("listModuleBuildVariables", "List module build variables", []string{"Modules"}, responses(
@@ -1208,35 +1230,52 @@ func baseOpenAPIDocument() *openapi3.T {
 				"ArtifactManifestFile":                  schemaValue(artifactManifestFileSchema()),
 				"ArtifactMissingModule":                 schemaValue(artifactMissingModuleSchema()),
 				"ReleaseRecord":                         schemaValue(releaseRecordSchema()),
-				"ReleaseRecordSummary":                  schemaValue(releaseRecordSummarySchema()),
-				"ReleaseRoute":                          schemaValue(releaseRouteSchema()),
-				"ReleaseCreateRequest":                  schemaValue(releaseCreateRequestSchema()),
-				"ReleaseGrayPercentageUpdateRequest":    schemaValue(releaseGrayPercentageUpdateRequestSchema()),
-				"ReleaseDetailResponse":                 schemaValue(releaseDetailResponseSchema()),
-				"ReleaseResolveResponse":                schemaValue(releaseResolveResponseSchema()),
-				"ReleasesResponse":                      schemaValue(releasesResponseSchema()),
-				"CodeSourceApp":                         schemaValue(codeSourceAppSchema()),
-				"CodeSourceAppManifest":                 schemaValue(codeSourceAppManifestSchema()),
-				"CodeSourceInstallURL":                  schemaValue(codeSourceInstallURLSchema()),
-				"CodeSourceConnection":                  schemaValue(codeSourceConnectionSchema()),
-				"CodeSourceConnectionsResponse":         schemaValue(codeSourceConnectionsResponseSchema()),
-				"CodeSourceConnectionDetailResponse":    schemaValue(codeSourceConnectionDetailResponseSchema()),
-				"CodeSourceConnectionCreateRequest":     schemaValue(codeSourceConnectionCreateRequestSchema()),
-				"CodeSourceConnectionUpdateRequest":     schemaValue(codeSourceConnectionUpdateRequestSchema()),
-				"CodeSourceConnectionWebhook":           schemaValue(codeSourceConnectionWebhookSchema()),
-				"CodeSourceRepository":                  schemaValue(codeSourceRepositorySchema()),
-				"CodeSourceRepositorySearchResponse":    schemaValue(codeSourceRepositorySearchResponseSchema()),
+				"ReleaseBuild": schemaValue(objectSchema("number", "branch", "commitSha", "commitTitle", "commitAuthorName", "committedAt", "repositoryWebUrl").
+					WithProperty("number", int64Schema("Build number within the module; 0 when the build was deleted.")).
+					WithProperty("branch", stringSchema("Branch of the build.")).
+					WithProperty("commitSha", stringSchema("Commit SHA of the build.")).
+					WithProperty("commitTitle", stringSchema("First line of the commit message; empty for older builds.")).
+					WithProperty("commitAuthorName", stringSchema("Commit author name; empty for older builds.")).
+					WithProperty("committedAt", stringSchema("Commit time in RFC3339; empty when unknown.")).
+					WithProperty("repositoryWebUrl", stringSchema("Module repository web URL for building commit links."))),
+				"ReleaseRecordSummary":               schemaValue(releaseRecordSummarySchema()),
+				"ReleaseRoute":                       schemaValue(releaseRouteSchema()),
+				"ReleaseCreateRequest":               schemaValue(releaseCreateRequestSchema()),
+				"ReleaseGrayPercentageUpdateRequest": schemaValue(releaseGrayPercentageUpdateRequestSchema()),
+				"ReleaseDetailResponse":              schemaValue(releaseDetailResponseSchema()),
+				"ReleaseResolveResponse":             schemaValue(releaseResolveResponseSchema()),
+				"ReleasesResponse":                   schemaValue(releasesResponseSchema()),
+				"CodeSourceApp":                      schemaValue(codeSourceAppSchema()),
+				"CodeSourceAppManifest":              schemaValue(codeSourceAppManifestSchema()),
+				"CodeSourceInstallURL":               schemaValue(codeSourceInstallURLSchema()),
+				"CodeSourceConnection":               schemaValue(codeSourceConnectionSchema()),
+				"CodeSourceConnectionsResponse":      schemaValue(codeSourceConnectionsResponseSchema()),
+				"CodeSourceConnectionDetailResponse": schemaValue(codeSourceConnectionDetailResponseSchema()),
+				"CodeSourceConnectionCreateRequest":  schemaValue(codeSourceConnectionCreateRequestSchema()),
+				"CodeSourceConnectionUpdateRequest":  schemaValue(codeSourceConnectionUpdateRequestSchema()),
+				"CodeSourceConnectionWebhook":        schemaValue(codeSourceConnectionWebhookSchema()),
+				"CodeSourceRepository":               schemaValue(codeSourceRepositorySchema()),
+				"CodeSourceRepositorySearchResponse": schemaValue(codeSourceRepositorySearchResponseSchema()),
 				"ModuleBranchesResponse": schemaValue(objectSchema("branches").
 					WithProperty("branches", stringArraySchema("Matched branch names."))),
 				"BranchCommit": schemaValue(objectSchema("authorName", "branch", "committedAt", "sha", "title", "webUrl").
 					WithProperty("authorName", stringSchema("Commit author name.")).
-					WithProperty("branch", stringSchema("Branch name.")).
+					WithProperty("branch", stringSchema("Branch name; empty for commits in a comparison.")).
 					WithProperty("committedAt", stringSchema("Commit time in RFC3339, or empty when unknown.")).
 					WithProperty("sha", stringSchema("Full commit SHA.")).
 					WithProperty("title", stringSchema("First line of the commit message.")).
 					WithProperty("webUrl", stringSchema("Commit page on the code source, or empty when unknown."))),
 				"ModuleBranchCommitResponse": schemaValue(objectSchema("commit").
 					WithPropertyRef("commit", schemaRef("BranchCommit"))),
+				"CommitComparison": schemaValue(objectSchema("status", "commits", "totalCommits", "totalExact", "behindBy", "webUrl").
+					WithProperty("status", enumStringSchema("ahead: to is after from, commits are new in to. behind: to is before from (rollback), commits are in from but not in to. diverged: both sides have their own commits, commits are new in to and behindBy counts the other side. identical: same commit.", "ahead", "behind", "diverged", "identical")).
+					WithPropertyRef("commits", arraySchemaRef("BranchCommit")).
+					WithProperty("totalCommits", int64Schema("Number of differing commits; commits holds at most the newest 50.")).
+					WithProperty("totalExact", boolSchema("False when there were too many commits to count and totalCommits is a lower bound.")).
+					WithProperty("behindBy", int64Schema("For diverged, commits only in from.")).
+					WithProperty("webUrl", stringSchema("Compare page on the code source, or empty when unknown."))),
+				"ModuleCommitComparisonResponse": schemaValue(objectSchema("comparison").
+					WithPropertyRef("comparison", schemaRef("CommitComparison"))),
 				"CodeSourcesResponse":                    schemaValue(codeSourcesResponseSchema()),
 				"ArtifactAccessToken":                    schemaValue(artifactAccessTokenSchema()),
 				"ArtifactAccessTokensResponse":           schemaValue(artifactAccessTokensResponseSchema()),
@@ -2329,6 +2368,9 @@ func buildRecordSchema() *openapi3.Schema {
 		"repositoryFullName",
 		"codeSourceConnectionId",
 		"commitSha",
+		"commitTitle",
+		"commitAuthorName",
+		"committedAt",
 		"runtimeVersion",
 		"signingKeyId",
 		"providedCapabilities",
@@ -2350,6 +2392,9 @@ func buildRecordSchema() *openapi3.Schema {
 		WithProperty("branch", stringSchema("Git branch selected for this build record.")).
 		WithProperty("codeSourceConnectionId", stringSchema("Code source connection id of the module repository.")).
 		WithProperty("commitSha", stringSchema("Commit built by this record. Webhook builds record the pushed commit; manual builds fill it after checkout.")).
+		WithProperty("commitTitle", stringSchema("First line of the commit message, filled when the build succeeds. Empty for older builds or when the code source lookup failed.")).
+		WithProperty("commitAuthorName", stringSchema("Commit author name, filled together with commitTitle.")).
+		WithProperty("committedAt", stringSchema("Commit time in RFC3339, filled together with commitTitle; empty when unknown.")).
 		WithProperty("createdAt", dateTimeSchema("Build record creation time.")).
 		WithProperty("defaultBranch", stringSchema("Repository branch used by the worker when configured on the module.")).
 		WithPropertyRef("dependencyBuilds", arraySchemaRef("BuildDependency")).
@@ -2550,6 +2595,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		"environment",
 		"environmentName",
 		"buildRecordId",
+		"build",
 		"channel",
 		"releaseType",
 		"runtimeVersion",
@@ -2565,6 +2611,7 @@ func releaseRecordSchema() *openapi3.Schema {
 		WithProperty("artifactKey", stringSchema("Released artifact object key root.")).
 		WithProperty("artifactUrl", stringSchema("Released artifact public URL.")).
 		WithProperty("buildRecordId", stringSchema("Build record UUID used by this release.")).
+		WithPropertyRef("build", schemaRef("ReleaseBuild")).
 		WithProperty("channel", stringSchema("Release channel code; empty string is the default channel.")).
 		WithProperty("createdAt", dateTimeSchema("Release creation time.")).
 		WithProperty("createdBy", stringSchema("Release creator display name.")).

@@ -29,8 +29,10 @@ type CodeSourceProvider interface {
 	SearchRepositories(ctx context.Context, conn domain.CodeSourceConnection, input domain.RepositorySearchInput) (domain.RepositoryPage, error)
 	// SearchBranches 按关键词搜索仓库分支名，最多返回 input.Limit 条。
 	SearchBranches(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, input domain.BranchSearchInput) ([]string, error)
-	// LatestBranchCommit 返回分支当前最新的提交；分支不存在时返回 ErrCodeSourceBranchNotFound。
-	LatestBranchCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, branch string) (domain.BranchCommit, error)
+	// ResolveCommit 返回 ref（分支名或 commit SHA）当前指向的提交；ref 不存在时返回 ErrCodeSourceBranchNotFound。
+	ResolveCommit(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, ref string) (domain.BranchCommit, error)
+	// CompareCommits 比较两个提交，返回 to 相对 from 的方向和差异提交，见 domain.CommitComparison。
+	CompareCommits(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository, from string, to string) (domain.CommitComparison, error)
 	// CloneCredentials 提供 clone 凭证，worker 通过 GIT_ASKPASS 使用。
 	CloneCredentials(ctx context.Context, conn domain.CodeSourceConnection, repo domain.ModuleRepository) (domain.GitCredentials, error)
 	// ParseWebhook 校验 webhook 来源并解析出统一事件；不需要处理的事件返回 ok=false。
@@ -320,17 +322,33 @@ func (s *CodeSourceService) SearchBranches(ctx context.Context, repository domai
 	return branches, nil
 }
 
-// LatestBranchCommit 通过模块绑定仓库所在的连接查询分支最新提交。
-func (s *CodeSourceService) LatestBranchCommit(ctx context.Context, repository domain.ModuleRepository, branch string) (domain.BranchCommit, error) {
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
+// ResolveCommit 通过模块绑定仓库所在的连接查询 ref（分支名或 commit SHA）指向的提交。
+func (s *CodeSourceService) ResolveCommit(ctx context.Context, repository domain.ModuleRepository, ref string) (domain.BranchCommit, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
 		return domain.BranchCommit{}, domain.ErrInvalidCodeSourceInput
 	}
 	conn, provider, err := s.openConnection(ctx, repository.ConnectionID, true)
 	if err != nil {
 		return domain.BranchCommit{}, err
 	}
-	return provider.LatestBranchCommit(ctx, conn, repository, branch)
+	return provider.ResolveCommit(ctx, conn, repository, ref)
+}
+
+// CompareCommits 比较模块仓库里的两个提交，from、to 一般是线上构建和待发布构建的 commit SHA。
+func (s *CodeSourceService) CompareCommits(ctx context.Context, repository domain.ModuleRepository, from string, to string) (domain.CommitComparison, error) {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" || to == "" {
+		return domain.CommitComparison{}, domain.ErrInvalidCodeSourceInput
+	}
+	if strings.EqualFold(from, to) {
+		return domain.CommitComparison{Status: domain.CommitComparisonIdentical, Commits: []domain.BranchCommit{}}, nil
+	}
+	conn, provider, err := s.openConnection(ctx, repository.ConnectionID, true)
+	if err != nil {
+		return domain.CommitComparison{}, err
+	}
+	return provider.CompareCommits(ctx, conn, repository, from, to)
 }
 
 // CloneCredentials 供 worker 获取仓库 clone 凭证。

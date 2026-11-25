@@ -60,6 +60,7 @@ type Executor struct {
 	cfg          config.WorkerConfig
 	ci           CIClientProvider
 	ciPipelines  CIPipelineRecorder
+	commits      CommitResolver
 	credentials  RepositoryCredentialsProvider
 	dependencies BuildDependencyProvider
 	// dependencyArtifacts 读取依赖构建的清单和文件，为空时使用 infra/s3。
@@ -80,6 +81,8 @@ type ExecutorDependencies struct {
 	// CI 和 CIPipelines 为空时不能执行 gitlab_ci 构建。
 	CI          CIClientProvider
 	CIPipelines CIPipelineRecorder
+	// Commits 为空时构建记录只有 commit SHA，没有标题和作者。
+	Commits     CommitResolver
 	Credentials RepositoryCredentialsProvider
 	// Dependencies 为空时不注入依赖产物。
 	Dependencies BuildDependencyProvider
@@ -90,6 +93,14 @@ type ExecutorDependencies struct {
 	Signer    ArtifactSigner
 	Variables BuildVariableResolver
 }
+
+// CommitResolver 按 commit SHA 查提交详情，由 service.CodeSourceService 实现。
+type CommitResolver interface {
+	ResolveCommit(ctx context.Context, repository domain.ModuleRepository, ref string) (domain.BranchCommit, error)
+}
+
+// commitResolveTimeout 是查询提交详情的上限，超时只影响展示，不影响构建结果。
+const commitResolveTimeout = 15 * time.Second
 
 // ArtifactSigner 用构建所属应用的 active 签名密钥签名产物文件列表，由 service.ArtifactSigningService 实现。
 // 应用没有 active 密钥时返回 ok=false。
@@ -113,6 +124,7 @@ func NewExecutor(cfg config.WorkerConfig, deps ExecutorDependencies, logger *slo
 		cfg:                 cfg,
 		ci:                  deps.CI,
 		ciPipelines:         deps.CIPipelines,
+		commits:             deps.Commits,
 		credentials:         deps.Credentials,
 		dependencies:        deps.Dependencies,
 		dependencyArtifacts: dependencyArtifacts,
@@ -142,11 +154,38 @@ func (e *Executor) Execute(ctx context.Context, record domain.BuildRecord) (doma
 	if err != nil {
 		logs.Linef("构建失败：%v", err)
 	} else {
+		e.resolveCommit(ctx, record, &completion, logs)
 		logs.Linef("构建成功：commit %s，runtimeVersion %s，平台 %s，共 %d 个文件", completion.CommitSHA, completion.RuntimeVersion, strings.Join(completion.Platforms, ","), completion.FileCount)
 	}
 	// 必须先写完日志再返回：worker 随后才把构建标记为结束，日志接口据此判断 finished。
 	_ = logs.Close()
 	return completion, err
+}
+
+// resolveCommit 查询构建使用的提交详情写进 completion。查询失败只记日志，构建仍然成功。
+func (e *Executor) resolveCommit(ctx context.Context, record domain.BuildRecord, completion *domain.BuildRecordCompletion, logs *buildLogStream) {
+	sha := strings.TrimSpace(completion.CommitSHA)
+	if e.commits == nil || sha == "" {
+		return
+	}
+	resolveCtx, cancel := context.WithTimeout(ctx, commitResolveTimeout)
+	defer cancel()
+	commit, err := e.commits.ResolveCommit(resolveCtx, record.Repository, sha)
+	if err != nil {
+		logs.Linef("读取提交详情失败，只记录 commit SHA：%v", err)
+		return
+	}
+	if !strings.EqualFold(commit.SHA, sha) {
+		logs.Linef("代码源返回的提交 %s 和构建使用的 %s 不一致，只记录 commit SHA", commit.SHA, sha)
+		return
+	}
+	completion.CommitTitle = commit.Title
+	completion.CommitAuthorName = commit.AuthorName
+	if !commit.CommittedAt.IsZero() {
+		committedAt := commit.CommittedAt.UTC()
+		completion.CommittedAt = &committedAt
+	}
+	logs.Linef("提交：%s（%s）", commit.Title, commit.AuthorName)
 }
 
 // execute 按检出、docker 构建、产物校验、生成清单、上传的顺序串行执行，每一步的输出都进入构建日志。

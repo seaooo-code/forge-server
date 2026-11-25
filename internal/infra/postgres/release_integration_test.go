@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"forge-server/internal/domain"
 )
@@ -244,5 +245,50 @@ func TestIntegrationReleaseEventsDeactivateAndPreviousFull(t *testing.T) {
 	}
 	if module := f.manifestBuild(t, "1001", "rt-1", f.feature); module.BuildRecordID != "" {
 		t.Fatalf("expected no release after deactivating the only full release, got %+v", module)
+	}
+}
+
+// 发布记录带上所用构建的构建号、分支和提交详情，没有提交详情的旧构建对应字段为空。
+func TestIntegrationReleaseRecordIncludesBuildCommit(t *testing.T) {
+	f := newTestPlanFixture(t)
+	ctx := context.Background()
+	releases := NewReleaseRepository(f.pool)
+
+	legacyBuild, _ := f.build(t, f.feature, "main", "rt-1")
+	detailedBuild, detailedNumber := f.build(t, f.feature, "feature/login", "rt-1")
+	if _, err := f.pool.Exec(ctx, `
+		update build_records set commit_title = '新增登录页', commit_author_name = 'Chen', committed_at = '2026-11-25T06:30:00Z' where id = $1
+	`, detailedBuild); err != nil {
+		t.Fatalf("set commit details: %v", err)
+	}
+
+	legacy, _, err := releases.CreateRelease(ctx, domain.ReleaseCreateInput{BuildRecordID: legacyBuild, ReleaseType: domain.ReleaseTypeFull, CreatedByUserID: f.userID})
+	if err != nil {
+		t.Fatalf("create legacy release: %v", err)
+	}
+	if legacy.Build.CommitSHA == "" || legacy.Build.CommitTitle != "" || legacy.Build.CommittedAt != nil {
+		t.Fatalf("unexpected legacy build summary: %+v", legacy.Build)
+	}
+	detailed, _, err := releases.CreateRelease(ctx, domain.ReleaseCreateInput{BuildRecordID: detailedBuild, ReleaseType: domain.ReleaseTypeFull, CreatedByUserID: f.userID})
+	if err != nil {
+		t.Fatalf("create detailed release: %v", err)
+	}
+	listed, _, err := releases.ListReleases(ctx, domain.ReleaseRecordFilters{ModuleID: f.feature, Pagination: domain.Pagination{Page: 1, PageSize: 20}})
+	if err != nil {
+		t.Fatalf("list releases: %v", err)
+	}
+	var found *domain.ReleaseRecord
+	for index := range listed {
+		if listed[index].ID == detailed.ID {
+			found = &listed[index]
+		}
+	}
+	if found == nil {
+		t.Fatalf("detailed release missing from list: %+v", listed)
+	}
+	build := found.Build
+	if build.Number != detailedNumber || build.Branch != "feature/login" || build.CommitTitle != "新增登录页" || build.CommitAuthorName != "Chen" ||
+		build.CommittedAt == nil || !build.CommittedAt.Equal(time.Date(2026, 11, 25, 6, 30, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected build summary: %+v", build)
 	}
 }

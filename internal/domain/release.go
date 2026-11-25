@@ -55,7 +55,9 @@ type ReleaseRecord struct {
 	Environment     string
 	EnvironmentName string
 	BuildRecordID   string
-	RuntimeVersion  string
+	// Build 是发布使用的构建及其代码版本，构建被删除时为空。
+	Build          ReleaseBuild
+	RuntimeVersion string
 	// Channel 是发布所属的渠道，默认渠道为空字符串。
 	Channel        string
 	ReleaseType    ReleaseType
@@ -72,6 +74,18 @@ type ReleaseRecord struct {
 	CreatedBy       string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// ReleaseBuild 是发布记录关联的构建摘要，用于在发布列表里看出各次发布的代码差异。
+type ReleaseBuild struct {
+	Number           int64
+	Branch           string
+	CommitSHA        string
+	CommitTitle      string
+	CommitAuthorName string
+	CommittedAt      *time.Time
+	// RepositoryWebURL 是模块仓库的网页地址，用于拼提交页链接。
+	RepositoryWebURL string
 }
 
 type ReleaseRoute struct {

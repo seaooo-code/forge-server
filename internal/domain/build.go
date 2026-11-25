@@ -63,6 +63,10 @@ type BuildRecord struct {
 	DependencyBuilds []BuildDependency
 	Branch           string
 	CommitSHA        string
+	// CommitTitle、CommitAuthorName、CommittedAt 是构建成功时向代码源查到的提交详情，查不到或旧构建为空。
+	CommitTitle      string
+	CommitAuthorName string
+	CommittedAt      *time.Time
 	RuntimeVersion   string
 	Platforms        []string
 	// ProvidedCapabilities、RequiredCapabilities 来自产物的 forge.json，没有声明时为空。
@@ -167,6 +171,9 @@ type BuildRecordCompletion struct {
 	// Signature 是产物文件列表的签名，应用没有 active 签名密钥时为空。
 	Signature            ArtifactSignature
 	CommitSHA            string
+	CommitTitle          string
+	CommitAuthorName     string
+	CommittedAt          *time.Time
 	RuntimeVersion       string
 	Platforms            []string
 	ProvidedCapabilities Capabilities
