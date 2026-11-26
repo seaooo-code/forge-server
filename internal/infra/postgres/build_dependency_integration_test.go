@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -15,7 +14,7 @@ import (
 // 定向、百分比、已失效的路由和其他环境都不返回。
 func TestIntegrationListActiveDefaultReleaseBuildsAndRecordDependencies(t *testing.T) {
 	pool := newIntegrationPool(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	commonID, environment := seedIntegrationModule(t, pool)
 	repository := NewBuildRepository(pool)
 
@@ -30,14 +29,14 @@ func TestIntegrationListActiveDefaultReleaseBuildsAndRecordDependencies(t *testi
 	otherEnvironment := environment + "-other"
 	featureID := commonID + "-feature"
 	if _, err := pool.Exec(ctx, `
-		insert into environments (code, name, status, tone, description, storage_configuration_id, sort_order)
-		values ($1, 'other', 'healthy', 'blue', '', $2, 2)
+		insert into environments (id, tenant_id, code, name, status, tone, description, storage_configuration_id, sort_order)
+		select 'envid-' || $1, tenant_id, $1, 'other', 'healthy', 'blue', '', $2, 2 from storage_configurations where id = $2
 	`, otherEnvironment, storageID); err != nil {
 		t.Fatalf("seed environment: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		insert into modules (id, name, kind, common_module_id, application_id, owner_user_id, code_source_connection_id, external_repository_id, repository_full_name, sort_order)
-		values ($1, 'feature', 'Feature', $2, $3, $4, $5, 'repo-feature-' || $1, 'demo/feature', 2)
+		insert into modules (id, tenant_id, name, kind, common_module_id, application_id, owner_user_id, code_source_connection_id, external_repository_id, repository_full_name, sort_order)
+		select $1, tenant_id, 'feature', 'Feature', $2, $3, $4, $5, 'repo-feature-' || $1, 'demo/feature', 2 from applications where id = $3
 	`, featureID, commonID, applicationID, userID, connectionID); err != nil {
 		t.Fatalf("seed feature module: %v", err)
 	}
@@ -67,14 +66,16 @@ func TestIntegrationListActiveDefaultReleaseBuildsAndRecordDependencies(t *testi
 			releaseType, grayStrategy = "gray", "percentage"
 		}
 		if _, err := pool.Exec(ctx, `
-			insert into release_records (id, module_id, environment_code, build_record_id, release_type, gray_strategy, expires_at, status, artifact_key, created_by_user_id)
-			values ($1, $2, $3, $4, $5, $6, `+expiresAt+`, $7, 'k', $8)
+			insert into release_records (id, module_id, environment_id, build_record_id, release_type, gray_strategy, expires_at, status, artifact_key, created_by_user_id)
+			select $1, $2, e.id, $4, $5, $6, `+expiresAt+`, $7, 'k', $8
+			from environments e join modules m on m.tenant_id = e.tenant_id where m.id = $2 and e.code = $3
 		`, releaseID, commonID, env, record.ID, releaseType, grayStrategy, status, userID); err != nil {
 			t.Fatalf("insert release: %v", err)
 		}
 		if _, err := pool.Exec(ctx, `
-			insert into release_routes (id, module_id, environment_code, release_id, runtime_version, route_type, identifier, status, created_by_user_id)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			insert into release_routes (id, module_id, environment_id, release_id, runtime_version, route_type, identifier, status, created_by_user_id)
+			select $1, $2, e.id, $4, $5, $6, $7, $8, $9
+			from environments e join modules m on m.tenant_id = e.tenant_id where m.id = $2 and e.code = $3
 		`, uuid.NewString(), commonID, env, releaseID, runtimeVersion, routeType, identifier, status, userID); err != nil {
 			t.Fatalf("insert route: %v", err)
 		}

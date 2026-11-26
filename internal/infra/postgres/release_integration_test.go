@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -13,7 +12,7 @@ import (
 // 发布全量会结束同一运行时版本下进行中的比例灰度，其他运行时版本的灰度不受影响。
 func TestIntegrationFullReleaseEndsPercentageGray(t *testing.T) {
 	f := newTestPlanFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	releases := NewReleaseRepository(f.pool)
 	create := func(buildID string, releaseType domain.ReleaseType, percentage int) domain.ReleaseRecord {
 		t.Helper()
@@ -93,7 +92,7 @@ func TestIntegrationFullReleaseEndsPercentageGray(t *testing.T) {
 // Feature 声明要求但 Common 没有生效发布，都会被拒绝；没有声明能力的旧构建不受影响。
 func TestIntegrationReleaseCapabilityConstraint(t *testing.T) {
 	f := newTestPlanFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	releases := NewReleaseRepository(f.pool)
 	build := func(moduleID string, provides string, requires string) string {
 		t.Helper()
@@ -172,7 +171,7 @@ func TestIntegrationReleaseCapabilityConstraint(t *testing.T) {
 // 发布的每次状态变化都写操作记录；停用后路由失效；上一次全量按同一运行时版本、不同构建查找。
 func TestIntegrationReleaseEventsDeactivateAndPreviousFull(t *testing.T) {
 	f := newTestPlanFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	releases := NewReleaseRepository(f.pool)
 	create := func(buildID string, gray int) domain.ReleaseRecord {
 		t.Helper()
@@ -251,7 +250,7 @@ func TestIntegrationReleaseEventsDeactivateAndPreviousFull(t *testing.T) {
 // 发布记录带上所用构建的构建号、分支和提交详情，没有提交详情的旧构建对应字段为空。
 func TestIntegrationReleaseRecordIncludesBuildCommit(t *testing.T) {
 	f := newTestPlanFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	releases := NewReleaseRepository(f.pool)
 
 	legacyBuild, _ := f.build(t, f.feature, "main", "rt-1")

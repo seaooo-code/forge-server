@@ -24,8 +24,14 @@ func NewStorageRepository(pool *pgxpool.Pool) *StorageRepository {
 }
 
 func (r *StorageRepository) ListStorageConfigurations(ctx context.Context, pagination domain.Pagination) ([]domain.StorageConfiguration, int, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total int
-	if err := r.pool.QueryRow(ctx, `select count(*)::integer from storage_configurations`).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `
+		select count(*)::integer from storage_configurations where $1::text = '' or tenant_id = $1
+	`, tenantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count storage configurations: %w", err)
 	}
 
@@ -49,9 +55,10 @@ func (r *StorageRepository) ListStorageConfigurations(ctx context.Context, pagin
 			c.updated_at
 		from storage_configurations c
 		join users u on u.id = c.owner_user_id
-			order by c.sort_order asc, c.created_at asc
-			limit nullif($1, 0) offset $2
-		`, pagination.Limit(), pagination.Offset())
+		where $3::text = '' or c.tenant_id = $3
+		order by c.sort_order asc, c.created_at asc
+		limit nullif($1, 0) offset $2
+	`, pagination.Limit(), pagination.Offset(), tenantID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query storage configurations: %w", err)
 	}
@@ -74,6 +81,10 @@ func (r *StorageRepository) ListStorageConfigurations(ctx context.Context, pagin
 }
 
 func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.StorageConfiguration{}, err
+	}
 	configuration, err := scanStorageConfiguration(r.pool.QueryRow(ctx, `
 		select
 			c.id,
@@ -94,8 +105,8 @@ func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id stri
 			c.updated_at
 		from storage_configurations c
 		join users u on u.id = c.owner_user_id
-		where c.id = $1
-	`, id))
+		where c.id = $1 and ($2::text = '' or c.tenant_id = $2)
+	`, id, tenantID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
@@ -106,12 +117,16 @@ func (r *StorageRepository) GetStorageConfiguration(ctx context.Context, id stri
 }
 
 func (r *StorageRepository) GetStorageCredentials(ctx context.Context, id string) (domain.StorageCredentials, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.StorageCredentials{}, err
+	}
 	var credentials domain.StorageCredentials
 	if err := r.pool.QueryRow(ctx, `
 		select access_key_id, secret_access_key
 		from storage_configurations
-		where id = $1
-	`, id).Scan(&credentials.AccessKeyID, &credentials.SecretAccessKey); err != nil {
+		where id = $1 and ($2::text = '' or tenant_id = $2)
+	`, id, tenantID).Scan(&credentials.AccessKeyID, &credentials.SecretAccessKey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StorageCredentials{}, domain.ErrStorageConfigurationNotFound
 		}
@@ -142,13 +157,14 @@ func (r *StorageRepository) createStorageConfiguration(ctx context.Context, id s
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := upsertUser(ctx, tx, storageOwnerUser(input)); err != nil {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
 		return domain.StorageConfiguration{}, err
 	}
-
 	var configurationID string
 	if err := tx.QueryRow(ctx, `
 		insert into storage_configurations (
+			tenant_id,
 			id,
 			name,
 			adapter,
@@ -175,10 +191,12 @@ func (r *StorageRepository) createStorageConfiguration(ctx context.Context, id s
 			$10,
 			$11,
 			$12,
-			coalesce((select max(sort_order) + 10 from storage_configurations), 10)
+			$13,
+			coalesce((select max(sort_order) + 10 from storage_configurations where tenant_id = $1), 10)
 		)
 		returning id
 	`,
+		tenantID,
 		id,
 		input.Name,
 		input.Adapter,
@@ -195,6 +213,10 @@ func (r *StorageRepository) createStorageConfiguration(ctx context.Context, id s
 		if isUniqueViolation(err) {
 			return domain.StorageConfiguration{}, err
 		}
+		if isForeignKeyViolation(err) {
+			// 负责人不存在或不属于当前租户。
+			return domain.StorageConfiguration{}, domain.ErrInvalidStorageConfigurationInput
+		}
 		return domain.StorageConfiguration{}, fmt.Errorf("insert storage configuration: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -210,10 +232,10 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := upsertUser(ctx, tx, storageOwnerUser(input)); err != nil {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
 		return domain.StorageConfiguration{}, err
 	}
-
 	var configurationID string
 	if err := tx.QueryRow(ctx, `
 		update storage_configurations set
@@ -229,7 +251,7 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 			status = $11,
 			force_path_style = $12,
 			updated_at = now()
-		where id = $1
+		where id = $1 and ($13::text = '' or tenant_id = $13)
 		returning id
 	`,
 		id,
@@ -244,9 +266,13 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 		input.SecretAccessKey,
 		input.Status,
 		input.ForcePathStyle,
+		tenantID,
 	).Scan(&configurationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
+		}
+		if isForeignKeyViolation(err) {
+			return domain.StorageConfiguration{}, domain.ErrInvalidStorageConfigurationInput
 		}
 		return domain.StorageConfiguration{}, fmt.Errorf("update storage configuration: %w", err)
 	}
@@ -257,6 +283,10 @@ func (r *StorageRepository) UpdateStorageConfiguration(ctx context.Context, id s
 }
 
 func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id string) (domain.StorageConfiguration, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.StorageConfiguration{}, err
+	}
 	var hasEnvironmentDependencies bool
 	if err := r.pool.QueryRow(ctx, `
 		select exists (
@@ -274,7 +304,7 @@ func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id s
 	configuration, err := scanStorageConfiguration(r.pool.QueryRow(ctx, `
 		with deleted as (
 			delete from storage_configurations
-			where id = $1
+			where id = $1 and ($2::text = '' or tenant_id = $2)
 			returning
 				id,
 				name,
@@ -309,7 +339,7 @@ func (r *StorageRepository) DeleteStorageConfiguration(ctx context.Context, id s
 			d.updated_at
 		from deleted d
 		join users u on u.id = d.owner_user_id
-	`, id))
+	`, id, tenantID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StorageConfiguration{}, domain.ErrStorageConfigurationNotFound
@@ -353,18 +383,6 @@ func scanStorageConfiguration(row storageConfigurationRow) (domain.StorageConfig
 		configuration.LastVerifiedAt = &lastVerifiedAt.Time
 	}
 	return configuration, nil
-}
-
-func storageOwnerUser(input domain.StorageConfigurationInput) domain.UserInput {
-	return domain.UserInput{
-		ID:            input.OwnerUserID,
-		Name:          input.Owner,
-		Email:         input.OwnerEmail,
-		AvatarURL:     input.OwnerAvatarURL,
-		FeishuUnionID: input.OwnerFeishuUnionID,
-		FeishuOpenID:  input.OwnerFeishuOpenID,
-		FeishuUserID:  input.OwnerFeishuUserID,
-	}
 }
 
 func newStorageConfigurationID() string {

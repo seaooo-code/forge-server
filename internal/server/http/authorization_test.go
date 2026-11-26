@@ -13,7 +13,7 @@ import (
 type fakeAuthorizationService struct {
 	err          error
 	capabilities domain.ApplicationCapabilities
-	roles        []domain.GlobalRole
+	roles        []domain.Role
 }
 
 func newAuthorizedTestServer(deps Dependencies) *echo.Echo {
@@ -27,22 +27,22 @@ func newAuthorizedTestServerWithConfig(cfg config.Config, deps Dependencies) *ec
 	if deps.AuthorizationService == nil {
 		deps.AuthorizationService = fakeAuthorizationService{
 			capabilities: domain.ApplicationCapabilitiesFor(
-				[]domain.GlobalRole{domain.GlobalRoleSuperAdmin},
+				[]domain.Role{domain.RoleSuperAdmin},
 				domain.ApplicationMemberRoleOwner,
 			),
-			roles: []domain.GlobalRole{domain.GlobalRoleSuperAdmin},
+			roles: []domain.Role{domain.RoleSuperAdmin},
 		}
 	}
 	return New(cfg, deps)
 }
 
 func testConsoleAuthService() *fakeFeishuAuthService {
-	return &fakeFeishuAuthService{result: domain.FeishuAuthResult{
-		SessionExpiresAt: time.Now().Add(time.Hour),
-		SessionToken:     "session-token",
-		User: domain.FeishuUser{
-			OpenID: "ou-test-user",
-			Name:   "测试用户",
+	return &fakeFeishuAuthService{result: domain.ConsoleSession{
+		ExpiresAt:    time.Now().Add(time.Hour),
+		SessionToken: "session-token",
+		User: domain.User{
+			ID:   "ou-test-user",
+			Name: "测试用户",
 		},
 	}}
 }
@@ -58,13 +58,13 @@ func (s fakeAuthorizationService) Authorize(context.Context, string, domain.Auth
 	return s.err
 }
 
-func (s fakeAuthorizationService) GlobalCapabilities(context.Context, string) (domain.GlobalCapabilities, []domain.GlobalRole, error) {
+func (s fakeAuthorizationService) TenantCapabilities(context.Context, string) (domain.TenantCapabilities, []domain.Role, error) {
 	if s.err != nil {
-		return domain.GlobalCapabilities{}, nil, s.err
+		return domain.TenantCapabilities{}, nil, s.err
 	}
 	roles := s.roles
 	if len(roles) == 0 {
-		roles = []domain.GlobalRole{domain.GlobalRoleSuperAdmin}
+		roles = []domain.Role{domain.RoleSuperAdmin}
 	}
-	return domain.GlobalCapabilitiesForRoles(roles), roles, nil
+	return domain.TenantCapabilitiesForRoles(roles), roles, nil
 }

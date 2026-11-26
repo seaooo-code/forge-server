@@ -23,7 +23,12 @@ func NewCodeSourceRepository(pool *pgxpool.Pool) *CodeSourceRepository {
 	return &CodeSourceRepository{pool: pool}
 }
 
+// GitHub App 等平台应用配置归租户，读写都要求当前 context 里有具体租户。
 func (r *CodeSourceRepository) GetCodeSourceAppConfig(ctx context.Context, provider domain.CodeSourceProvider) (domain.CodeSourceAppConfig, error) {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.CodeSourceAppConfig{}, err
+	}
 	return scanCodeSourceAppConfig(r.pool.QueryRow(ctx, `
 		select
 			provider,
@@ -34,13 +39,18 @@ func (r *CodeSourceRepository) GetCodeSourceAppConfig(ctx context.Context, provi
 			private_key,
 			webhook_secret
 		from code_source_app_configs
-		where provider = $1
-	`, provider))
+		where provider = $1 and tenant_id = $2
+	`, provider, tenantID))
 }
 
 func (r *CodeSourceRepository) UpsertCodeSourceAppConfig(ctx context.Context, config domain.CodeSourceAppConfig) (domain.CodeSourceAppConfig, error) {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.CodeSourceAppConfig{}, err
+	}
 	saved, err := scanCodeSourceAppConfig(r.pool.QueryRow(ctx, `
 		insert into code_source_app_configs (
+			tenant_id,
 			provider,
 			provider_app_id,
 			app_slug,
@@ -49,9 +59,9 @@ func (r *CodeSourceRepository) UpsertCodeSourceAppConfig(ctx context.Context, co
 			private_key,
 			webhook_secret
 		) values (
-			$1, $2, $3, $4, $5, $6, $7
+			$8, $1, $2, $3, $4, $5, $6, $7
 		)
-		on conflict (provider) do update set
+		on conflict (tenant_id, provider) do update set
 			provider_app_id = excluded.provider_app_id,
 			app_slug = excluded.app_slug,
 			name = excluded.name,
@@ -75,6 +85,7 @@ func (r *CodeSourceRepository) UpsertCodeSourceAppConfig(ctx context.Context, co
 		config.HTMLURL,
 		config.PrivateKey,
 		config.WebhookSecret,
+		tenantID,
 	))
 	if err != nil {
 		return domain.CodeSourceAppConfig{}, fmt.Errorf("upsert code source app config: %w", err)
@@ -83,10 +94,14 @@ func (r *CodeSourceRepository) UpsertCodeSourceAppConfig(ctx context.Context, co
 }
 
 func (r *CodeSourceRepository) DeleteCodeSourceAppConfig(ctx context.Context, provider domain.CodeSourceProvider) error {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return err
+	}
 	commandTag, err := r.pool.Exec(ctx, `
 		delete from code_source_app_configs
-		where provider = $1
-	`, provider)
+		where provider = $1 and tenant_id = $2
+	`, provider, tenantID)
 	if err != nil {
 		return fmt.Errorf("delete code source app config: %w", err)
 	}
@@ -97,12 +112,17 @@ func (r *CodeSourceRepository) DeleteCodeSourceAppConfig(ctx context.Context, pr
 }
 
 func (r *CodeSourceRepository) ListCodeSourceConnections(ctx context.Context, filters domain.CodeSourceConnectionFilters) ([]domain.CodeSourceConnection, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, codeSourceConnectionSelectSQL()+`
 		where c.status <> 'deleted'
 			and ($1 = '' or c.provider = $1)
 			and ($2 = '' or c.status = $2)
+			and ($3::text = '' or c.tenant_id = $3)
 		order by c.created_at desc, c.id desc
-	`, string(filters.Provider), string(filters.Status))
+	`, string(filters.Provider), string(filters.Status), tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query code source connections: %w", err)
 	}
@@ -123,26 +143,40 @@ func (r *CodeSourceRepository) ListCodeSourceConnections(ctx context.Context, fi
 }
 
 func (r *CodeSourceRepository) GetCodeSourceConnection(ctx context.Context, id string) (domain.CodeSourceConnection, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.CodeSourceConnection{}, err
+	}
 	return scanCodeSourceConnection(r.pool.QueryRow(ctx, codeSourceConnectionSelectSQL()+`
-		where c.id = $1 and c.status <> 'deleted'
-	`, id))
+		where c.id = $1 and c.status <> 'deleted' and ($2::text = '' or c.tenant_id = $2)
+	`, id, tenantID))
 }
 
 func (r *CodeSourceRepository) FindCodeSourceConnectionByExternalID(ctx context.Context, provider domain.CodeSourceProvider, externalID string) (domain.CodeSourceConnection, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.CodeSourceConnection{}, err
+	}
 	return scanCodeSourceConnection(r.pool.QueryRow(ctx, codeSourceConnectionSelectSQL()+`
 		where c.provider = $1
 			and c.external_id = $2
 			and c.external_id <> ''
 			and c.status <> 'deleted'
+			and ($3::text = '' or c.tenant_id = $3)
 		order by c.created_at desc
 		limit 1
-	`, provider, externalID))
+	`, provider, externalID, tenantID))
 }
 
 func (r *CodeSourceRepository) CreateCodeSourceConnection(ctx context.Context, conn domain.CodeSourceConnection) (domain.CodeSourceConnection, error) {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.CodeSourceConnection{}, err
+	}
 	id := newCodeSourceConnectionID()
 	if _, err := r.pool.Exec(ctx, `
 		insert into code_source_connections (
+			tenant_id,
 			id,
 			provider,
 			name,
@@ -158,7 +192,7 @@ func (r *CodeSourceRepository) CreateCodeSourceConnection(ctx context.Context, c
 			created_by_user_id,
 			last_verified_at
 		) values (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+			$15, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
 	`,
 		id,
@@ -175,6 +209,7 @@ func (r *CodeSourceRepository) CreateCodeSourceConnection(ctx context.Context, c
 		conn.Status,
 		conn.CreatedByUserID,
 		conn.LastVerifiedAt,
+		tenantID,
 	); err != nil {
 		switch {
 		case isUniqueViolation(err):
@@ -188,6 +223,10 @@ func (r *CodeSourceRepository) CreateCodeSourceConnection(ctx context.Context, c
 }
 
 func (r *CodeSourceRepository) UpdateCodeSourceConnection(ctx context.Context, conn domain.CodeSourceConnection) (domain.CodeSourceConnection, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.CodeSourceConnection{}, err
+	}
 	commandTag, err := r.pool.Exec(ctx, `
 		update code_source_connections set
 			name = $2,
@@ -199,7 +238,7 @@ func (r *CodeSourceRepository) UpdateCodeSourceConnection(ctx context.Context, c
 			status = $8,
 			last_verified_at = $9,
 			updated_at = now()
-		where id = $1 and status <> 'deleted'
+		where id = $1 and status <> 'deleted' and ($10::text = '' or tenant_id = $10)
 	`,
 		conn.ID,
 		conn.Name,
@@ -210,6 +249,7 @@ func (r *CodeSourceRepository) UpdateCodeSourceConnection(ctx context.Context, c
 		conn.WebhookSecretEncrypted,
 		conn.Status,
 		conn.LastVerifiedAt,
+		tenantID,
 	)
 	if err != nil {
 		if isCheckViolation(err) {
@@ -230,10 +270,14 @@ func (r *CodeSourceRepository) DeleteCodeSourceConnection(ctx context.Context, i
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	var status string
 	if err := tx.QueryRow(ctx, `
-		select status from code_source_connections where id = $1 for update
-	`, id).Scan(&status); err != nil {
+		select status from code_source_connections where id = $1 and ($2::text = '' or tenant_id = $2) for update
+	`, id, tenantID).Scan(&status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrCodeSourceConnectionNotFound
 		}
@@ -353,21 +397,26 @@ func (r *CodeSourceRepository) UpsertCodeSourceRepositories(ctx context.Context,
 }
 
 func (r *CodeSourceRepository) GetCodeSourceRepository(ctx context.Context, connectionID string, externalRepositoryID string) (domain.CodeSourceRepository, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.CodeSourceRepository{}, err
+	}
 	var repository domain.CodeSourceRepository
 	if err := r.pool.QueryRow(ctx, `
 		select
-			connection_id,
-			external_repository_id,
-			full_name,
-			web_url,
-			clone_url,
-			default_branch,
-			private,
-			description,
-			last_synced_at
-		from code_source_repositories
-		where connection_id = $1 and external_repository_id = $2
-	`, connectionID, externalRepositoryID).Scan(
+			r.connection_id,
+			r.external_repository_id,
+			r.full_name,
+			r.web_url,
+			r.clone_url,
+			r.default_branch,
+			r.private,
+			r.description,
+			r.last_synced_at
+		from code_source_repositories r
+		join code_source_connections c on c.id = r.connection_id
+		where r.connection_id = $1 and r.external_repository_id = $2 and ($3::text = '' or c.tenant_id = $3)
+	`, connectionID, externalRepositoryID, tenantID).Scan(
 		&repository.ConnectionID,
 		&repository.ExternalRepositoryID,
 		&repository.FullName,

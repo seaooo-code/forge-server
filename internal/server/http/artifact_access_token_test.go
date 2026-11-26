@@ -171,12 +171,12 @@ func TestDeleteArtifactAccessToken(t *testing.T) {
 }
 
 func testArtifactAccessTokenAuthService() *fakeFeishuAuthService {
-	return &fakeFeishuAuthService{result: domain.FeishuAuthResult{
-		SessionExpiresAt: time.Now().Add(time.Hour),
-		SessionToken:     "session-token",
-		User: domain.FeishuUser{
-			OpenID: "ou-user-1",
-			Name:   "海鸥",
+	return &fakeFeishuAuthService{result: domain.ConsoleSession{
+		ExpiresAt:    time.Now().Add(time.Hour),
+		SessionToken: "session-token",
+		User: domain.User{
+			ID:   "ou-user-1",
+			Name: "海鸥",
 		},
 	}}
 }

@@ -79,7 +79,7 @@ func NewDashboardService(deps DashboardDependencies) *DashboardService {
 	}
 }
 
-func (s *DashboardService) GetDashboardSnapshot(ctx context.Context, ownerUnionID string) (domain.DashboardSnapshot, error) {
+func (s *DashboardService) GetDashboardSnapshot(ctx context.Context) (domain.DashboardSnapshot, error) {
 	now := s.currentTime()
 	_, applicationSummary, err := s.listApplications(ctx)
 	if err != nil {

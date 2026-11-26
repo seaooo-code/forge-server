@@ -69,7 +69,7 @@ func TestApplicationServiceDoesNotCreateImplicitOwnerMember(t *testing.T) {
 	if len(repository.lastCreateInput.Members) != 0 {
 		t.Fatalf("expected no implicit members, got %#v", repository.lastCreateInput.Members)
 	}
-	if repository.lastCreateInput.OwnerUserID != "ou-li-ming" || repository.lastCreateInput.OwnerEmail == "" || repository.lastCreateInput.OwnerAvatarURL == "" {
+	if repository.lastCreateInput.OwnerUserID != "ou-li-ming" {
 		t.Fatalf("expected owner profile, got %#v", repository.lastCreateInput)
 	}
 }
@@ -356,16 +356,12 @@ func (r *fakeApplicationRepository) DeleteApplicationMember(context.Context, str
 
 func validApplicationInput(slug string) domain.ApplicationInput {
 	return domain.ApplicationInput{
-		Slug:               slug,
-		Name:               "小米汽车海外版",
-		Platform:           "iOS / Android",
-		OwnerUserID:        "ou-li-ming",
-		Owner:              "li.ming",
-		OwnerEmail:         "li.ming@xiaomi.com",
-		OwnerAvatarURL:     "https://example.com/li.ming.png",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
-		Description:        "海外版宿主应用",
-		Status:             domain.ApplicationStatusRunning,
+		Slug:        slug,
+		Name:        "小米汽车海外版",
+		Platform:    "iOS / Android",
+		OwnerUserID: "ou-li-ming",
+		Description: "海外版宿主应用",
+		Status:      domain.ApplicationStatusRunning,
 		Environments: []domain.ApplicationEnvironmentInput{
 			{
 				Environment: "dev",
@@ -385,27 +381,25 @@ func validApplicationInput(slug string) domain.ApplicationInput {
 
 func testApplication(slug string, status domain.ApplicationStatus) domain.Application {
 	return domain.Application{
-		ID:                 "app-" + slug,
-		Name:               slug,
-		Slug:               slug,
-		Platform:           "iOS / Android",
-		OwnerUserID:        "ou-li-ming",
-		Owner:              "li.ming",
-		OwnerEmail:         "li.ming@xiaomi.com",
-		OwnerAvatarURL:     "https://example.com/li.ming.png",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
-		ModuleCount:        12,
-		EnvironmentCount:   5,
-		CreatedAt:          time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
-		Status:             status,
+		ID:               "app-" + slug,
+		Name:             slug,
+		Slug:             slug,
+		Platform:         "iOS / Android",
+		OwnerUserID:      "ou-li-ming",
+		Owner:            "li.ming",
+		OwnerEmail:       "li.ming@xiaomi.com",
+		OwnerAvatarURL:   "https://example.com/li.ming.png",
+		ModuleCount:      12,
+		EnvironmentCount: 5,
+		CreatedAt:        time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
+		Status:           status,
 	}
 }
 
 func testApplicationDetail(slug string, status domain.ApplicationStatus) domain.ApplicationDetail {
 	return domain.ApplicationDetail{
-		Application:        testApplication(slug, status),
-		Description:        "应用详情",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
+		Application: testApplication(slug, status),
+		Description: "应用详情",
 		Environments: []domain.ApplicationEnvironmentBinding{
 			{
 				ID:          "dev",

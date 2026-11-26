@@ -117,7 +117,7 @@ func (h artifactSigningHandler) signingActor(c echo.Context) (string, error) {
 	if !ok {
 		return "", c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
-	actor := domain.ConsoleUserIDFromFeishu(session.User)
+	actor := session.User.ID
 	if actor == "" {
 		return "", c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}

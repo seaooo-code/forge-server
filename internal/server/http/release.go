@@ -174,7 +174,7 @@ func (h releaseHandler) create(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
-	createdByUserID := domain.ConsoleUserIDFromFeishu(session.User)
+	createdByUserID := session.User.ID
 	if createdByUserID == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
@@ -215,7 +215,7 @@ func (h releaseHandler) updateGrayPercentage(c echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
-	updatedByUserID := domain.ConsoleUserIDFromFeishu(session.User)
+	updatedByUserID := session.User.ID
 	if updatedByUserID == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
@@ -269,7 +269,7 @@ func (h releaseHandler) releaseActor(c echo.Context) (string, error) {
 	if !ok {
 		return "", c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
-	actor := domain.ConsoleUserIDFromFeishu(session.User)
+	actor := session.User.ID
 	if actor == "" {
 		return "", c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}

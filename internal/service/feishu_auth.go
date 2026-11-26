@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"slices"
+	"strings"
 	"time"
 
 	"forge-server/internal/domain"
@@ -20,30 +22,31 @@ type FeishuOAuthClient interface {
 	RefreshAccessToken(ctx context.Context, app domain.FeishuApp, refreshToken string) (domain.FeishuToken, error)
 }
 
-// FeishuTenantResolver 解析登录租户与其应用凭证，实现见 FeishuTenantService。
+// FeishuTenantResolver 解析登录租户与其飞书应用凭证，实现见 TenantService。
 type FeishuTenantResolver interface {
-	ResolveApp(ctx context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error)
-	ResolveLoginTenant(ctx context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error)
+	ResolveApp(ctx context.Context, id string) (domain.Tenant, domain.FeishuApp, error)
+	ResolveLoginTenant(ctx context.Context, id string) (domain.Tenant, domain.FeishuApp, error)
 }
 
-type FeishuUserRepository interface {
-	BootstrapFirstSuperAdmin(ctx context.Context, userID string) error
-	CreateFeishuAuthSession(ctx context.Context, session domain.FeishuAuthSession) error
-	DeleteFeishuAuthSession(ctx context.Context, sessionTokenHash string) error
-	FindFeishuAuthSession(ctx context.Context, sessionTokenHash string) (domain.FeishuAuthSession, error)
-	ListGlobalRoles(ctx context.Context, userID string) ([]domain.GlobalRole, error)
-	UpdateFeishuAuthSessionToken(ctx context.Context, session domain.FeishuAuthSession) error
-	UpsertFeishuUser(ctx context.Context, user domain.FeishuUser) (domain.FeishuUser, error)
-	UpsertUser(ctx context.Context, user domain.UserInput) error
+type AuthUserRepository interface {
+	BootstrapUserRoles(ctx context.Context, user domain.User) error
+	CreateSession(ctx context.Context, session domain.AuthSession) error
+	DeleteSession(ctx context.Context, tokenHash string) error
+	FindSession(ctx context.Context, tokenHash string) (domain.AuthSession, error)
+	ListUserRoles(ctx context.Context, userID string) ([]domain.Role, error)
+	ResolveExternalUser(ctx context.Context, tenantID string, external domain.ExternalUser, login bool) (domain.User, domain.UserIdentity, error)
+	SetSessionActiveTenant(ctx context.Context, tokenHash string, tenantID string) error
+	UpdateSessionToken(ctx context.Context, session domain.AuthSession) error
 }
 
+// FeishuAuthService 负责飞书登录和控制台会话：登录时按飞书身份找到或新建用户，会话记录当前所在租户。
 type FeishuAuthService struct {
 	client     FeishuOAuthClient
-	repository FeishuUserRepository
+	repository AuthUserRepository
 	tenants    FeishuTenantResolver
 }
 
-func NewFeishuAuthService(client FeishuOAuthClient, repository FeishuUserRepository, tenants FeishuTenantResolver) *FeishuAuthService {
+func NewFeishuAuthService(client FeishuOAuthClient, repository AuthUserRepository, tenants FeishuTenantResolver) *FeishuAuthService {
 	return &FeishuAuthService{
 		client:     client,
 		repository: repository,
@@ -68,213 +71,192 @@ func (s *FeishuAuthService) AuthorizationURL(ctx context.Context, tenantID strin
 	return authURL, tenant.ID, nil
 }
 
-// CompleteAuthorization 用发起授权时的租户应用和回调地址换取 token，并创建归属该租户的会话。
-func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, tenantID string, redirectURI string, code string) (domain.FeishuAuthResult, error) {
+// CompleteAuthorization 用发起授权时的租户应用和回调地址换取 token，找到或新建该租户的用户，并创建会话。
+func (s *FeishuAuthService) CompleteAuthorization(ctx context.Context, tenantID string, redirectURI string, code string) (domain.ConsoleSession, error) {
 	if !domain.IsValidFeishuRedirectURI(redirectURI) {
-		return domain.FeishuAuthResult{}, domain.ErrInvalidFeishuRedirectURI
+		return domain.ConsoleSession{}, domain.ErrInvalidFeishuRedirectURI
 	}
 	tenant, app, err := s.tenants.ResolveApp(ctx, tenantID)
 	if err != nil {
-		return domain.FeishuAuthResult{}, err
+		return domain.ConsoleSession{}, err
 	}
 	token, err := s.client.ExchangeCode(ctx, app, redirectURI, code)
 	if err != nil {
-		return domain.FeishuAuthResult{}, err
+		return domain.ConsoleSession{}, err
+	}
+	feishuUser, err := s.client.GetUserInfo(ctx, token.AccessToken)
+	if err != nil {
+		return domain.ConsoleSession{}, err
+	}
+	if strings.TrimSpace(feishuUser.OpenID) == "" {
+		return domain.ConsoleSession{}, domain.ErrFeishuAuthorization
 	}
 
-	user, err := s.client.GetUserInfo(ctx, token.AccessToken)
+	user, identity, err := s.repository.ResolveExternalUser(ctx, tenant.ID, feishuUser.ExternalUser(app.AppID), true)
 	if err != nil {
-		return domain.FeishuAuthResult{}, err
+		return domain.ConsoleSession{}, err
 	}
-
-	savedUser, err := s.repository.UpsertFeishuUser(ctx, user)
-	if err != nil {
-		return domain.FeishuAuthResult{}, err
-	}
-	userID, err := s.syncConsoleUser(ctx, savedUser)
-	if err != nil {
-		return domain.FeishuAuthResult{}, err
+	if err := s.repository.BootstrapUserRoles(ctx, user); err != nil {
+		return domain.ConsoleSession{}, err
 	}
 
 	sessionToken, err := randomSessionToken()
 	if err != nil {
-		return domain.FeishuAuthResult{}, err
+		return domain.ConsoleSession{}, err
 	}
-
 	now := time.Now()
-	session := newAuthSession(sessionTokenHash(sessionToken), savedUser.UnionID, token, now)
-	session.TenantID = tenant.ID
-	if err := s.repository.CreateFeishuAuthSession(ctx, session); err != nil {
-		return domain.FeishuAuthResult{}, err
+	session := domain.AuthSession{
+		TokenHash:      sessionTokenHash(sessionToken),
+		UserID:         user.ID,
+		IdentityID:     identity.ID,
+		ActiveTenantID: tenant.ID,
+	}
+	applyProviderToken(&session, token, now)
+	if err := s.repository.CreateSession(ctx, session); err != nil {
+		return domain.ConsoleSession{}, err
 	}
 
-	roles, err := s.repository.ListGlobalRoles(ctx, userID)
-	if err != nil {
-		return domain.FeishuAuthResult{}, err
-	}
-	token.ExpiresIn = secondsUntil(session.AccessTokenExpiresAt, now)
-	return domain.FeishuAuthResult{
-		Capabilities:     domain.GlobalCapabilitiesForRoles(roles),
-		Roles:            roles,
-		SessionExpiresAt: sessionExpiresAt(session),
-		SessionToken:     sessionToken,
-		Tenant:           domain.FeishuTenantSummary{ID: tenant.ID, Name: tenant.Name},
-		Token:            token,
-		User:             savedUser,
-	}, nil
+	session.User = user
+	session.Identity = identity
+	session.HomeTenant = domain.TenantSummary{ID: tenant.ID, Name: tenant.Name}
+	session.ActiveTenant = session.HomeTenant
+	return s.consoleSession(ctx, session, sessionToken, now)
 }
 
-func (s *FeishuAuthService) GetSession(ctx context.Context, sessionToken string) (domain.FeishuAuthResult, error) {
-	session, err := s.repository.FindFeishuAuthSession(ctx, sessionTokenHash(sessionToken))
+// GetSession 校验会话并在 token 快过期时刷新。用户所属租户或当前租户停用后，会话失效。
+func (s *FeishuAuthService) GetSession(ctx context.Context, sessionToken string) (domain.ConsoleSession, error) {
+	session, err := s.repository.FindSession(ctx, sessionTokenHash(sessionToken))
 	if err != nil {
-		return domain.FeishuAuthResult{}, err
+		return domain.ConsoleSession{}, err
 	}
 
 	now := time.Now()
-	// 租户停用后，该租户签发的会话一律失效。
-	sessionExpired := session.TenantStatus != domain.FeishuTenantStatusActive || !now.Before(session.AccessTokenExpiresAt)
-	if session.RefreshToken != "" && session.TenantStatus == domain.FeishuTenantStatusActive {
-		sessionExpired = refreshTokenExpired(session, now)
+	tenantsActive := session.HomeTenantStatus == domain.TenantStatusActive && session.ActiveTenantStatus == domain.TenantStatusActive
+	expired := !tenantsActive || !now.Before(session.ProviderAccessTokenExpiresAt)
+	if session.ProviderRefreshToken != "" && tenantsActive {
+		expired = refreshTokenExpired(session, now)
 	}
-	if sessionExpired {
-		_ = s.repository.DeleteFeishuAuthSession(ctx, session.SessionTokenHash)
-		return domain.FeishuAuthResult{}, domain.ErrFeishuSessionExpired
+	if expired {
+		_ = s.repository.DeleteSession(ctx, session.TokenHash)
+		return domain.ConsoleSession{}, domain.ErrSessionExpired
 	}
 
-	if !session.AccessTokenExpiresAt.After(now.Add(feishuSessionRefreshWindow)) {
-		refreshedSession, err := s.refreshSession(ctx, session, now)
+	if !session.ProviderAccessTokenExpiresAt.After(now.Add(feishuSessionRefreshWindow)) {
+		refreshed, err := s.refreshSession(ctx, session, now)
 		if err != nil {
-			if now.Before(session.AccessTokenExpiresAt) {
-				return s.authResultWithRoles(ctx, session, sessionToken, now)
+			if !now.Before(session.ProviderAccessTokenExpiresAt) {
+				return domain.ConsoleSession{}, err
 			}
-			return domain.FeishuAuthResult{}, err
+		} else {
+			session = refreshed
 		}
-		session = refreshedSession
 	}
-	if _, err := s.syncConsoleUser(ctx, session.User); err != nil {
-		return domain.FeishuAuthResult{}, err
-	}
+	return s.consoleSession(ctx, session, sessionToken, now)
+}
 
-	return s.authResultWithRoles(ctx, session, sessionToken, now)
+// SwitchTenant 把会话切换到另一个租户，只有 SuperAdmin 可以切换到所属租户以外的租户。
+func (s *FeishuAuthService) SwitchTenant(ctx context.Context, sessionToken string, tenantID string) (domain.ConsoleSession, error) {
+	current, err := s.GetSession(ctx, sessionToken)
+	if err != nil {
+		return domain.ConsoleSession{}, err
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID != current.HomeTenant.ID && !slices.Contains(current.Roles, domain.RoleSuperAdmin) {
+		return domain.ConsoleSession{}, domain.ErrTenantSwitchForbidden
+	}
+	if err := s.repository.SetSessionActiveTenant(ctx, sessionTokenHash(sessionToken), tenantID); err != nil {
+		return domain.ConsoleSession{}, err
+	}
+	return s.GetSession(ctx, sessionToken)
 }
 
 func (s *FeishuAuthService) Logout(ctx context.Context, sessionToken string) error {
 	if sessionToken == "" {
 		return nil
 	}
-	return s.repository.DeleteFeishuAuthSession(ctx, sessionTokenHash(sessionToken))
+	return s.repository.DeleteSession(ctx, sessionTokenHash(sessionToken))
 }
 
-func (s *FeishuAuthService) syncConsoleUser(ctx context.Context, user domain.FeishuUser) (string, error) {
-	id := domain.ConsoleUserIDFromFeishu(user)
-	if id == "" {
-		return "", domain.ErrFeishuAuthorization
+// consoleSession 补上角色和能力。普通用户的会话始终在所属租户；不是 SuperAdmin 却位于其他租户的会话
+// （例如 SuperAdmin 角色被收回）切回所属租户。
+func (s *FeishuAuthService) consoleSession(ctx context.Context, session domain.AuthSession, sessionToken string, now time.Time) (domain.ConsoleSession, error) {
+	roles, err := s.repository.ListUserRoles(ctx, session.UserID)
+	if err != nil {
+		return domain.ConsoleSession{}, err
 	}
-	if err := s.repository.UpsertUser(ctx, domain.UserInput{
-		ID:            id,
-		Name:          firstNonEmpty(user.Name, user.EnName, id),
-		Email:         firstNonEmpty(user.EnterpriseEmail, user.Email),
-		AvatarURL:     firstNonEmpty(user.AvatarURL, user.AvatarMiddle, user.AvatarThumb, user.AvatarBig),
-		DepartmentIDs: []string{},
-		FeishuUnionID: user.UnionID,
-		FeishuOpenID:  user.OpenID,
-		FeishuUserID:  user.UserID,
-	}); err != nil {
-		return "", err
+	if session.ActiveTenant.ID != session.HomeTenant.ID && !slices.Contains(roles, domain.RoleSuperAdmin) {
+		if err := s.repository.SetSessionActiveTenant(ctx, session.TokenHash, session.HomeTenant.ID); err != nil {
+			return domain.ConsoleSession{}, err
+		}
+		session.ActiveTenant = session.HomeTenant
 	}
-	if err := s.repository.BootstrapFirstSuperAdmin(ctx, id); err != nil {
-		return "", err
+
+	expiresAt := session.ProviderAccessTokenExpiresAt
+	if session.ProviderRefreshToken != "" && !session.ProviderRefreshTokenExpiresAt.IsZero() {
+		expiresAt = session.ProviderRefreshTokenExpiresAt
 	}
-	return id, nil
+	return domain.ConsoleSession{
+		SessionToken:        sessionToken,
+		ExpiresAt:           expiresAt,
+		User:                session.User,
+		Identity:            session.Identity,
+		HomeTenant:          session.HomeTenant,
+		ActiveTenant:        session.ActiveTenant,
+		Roles:               roles,
+		Capabilities:        domain.TenantCapabilitiesForRoles(roles),
+		ProviderAccessToken: session.ProviderAccessToken,
+		ProviderToken: domain.FeishuToken{
+			ExpiresIn:             secondsUntil(session.ProviderAccessTokenExpiresAt, now),
+			RefreshToken:          session.ProviderRefreshToken,
+			RefreshTokenExpiresIn: secondsUntil(session.ProviderRefreshTokenExpiresAt, now),
+			TokenType:             session.ProviderTokenType,
+			Scope:                 session.ProviderScope,
+		},
+	}, nil
 }
 
-func (s *FeishuAuthService) refreshSession(ctx context.Context, session domain.FeishuAuthSession, now time.Time) (domain.FeishuAuthSession, error) {
-	if session.RefreshToken == "" || refreshTokenExpired(session, now) {
-		_ = s.repository.DeleteFeishuAuthSession(ctx, session.SessionTokenHash)
-		return domain.FeishuAuthSession{}, domain.ErrFeishuSessionExpired
+// refreshSession 用用户所属租户的飞书应用刷新 token。
+func (s *FeishuAuthService) refreshSession(ctx context.Context, session domain.AuthSession, now time.Time) (domain.AuthSession, error) {
+	if session.ProviderRefreshToken == "" || refreshTokenExpired(session, now) {
+		_ = s.repository.DeleteSession(ctx, session.TokenHash)
+		return domain.AuthSession{}, domain.ErrSessionExpired
 	}
-
-	_, app, err := s.tenants.ResolveApp(ctx, session.TenantID)
+	_, app, err := s.tenants.ResolveApp(ctx, session.HomeTenant.ID)
 	if err != nil {
-		return domain.FeishuAuthSession{}, err
+		return domain.AuthSession{}, err
 	}
-	token, err := s.client.RefreshAccessToken(ctx, app, session.RefreshToken)
+	token, err := s.client.RefreshAccessToken(ctx, app, session.ProviderRefreshToken)
 	if err != nil {
-		return domain.FeishuAuthSession{}, err
+		return domain.AuthSession{}, err
 	}
-
-	session.AccessToken = token.AccessToken
-	session.AccessTokenExpiresAt = tokenExpiresAt(token.ExpiresIn, now)
-	if token.RefreshToken != "" {
-		session.RefreshToken = token.RefreshToken
+	refreshToken, refreshExpiresAt := session.ProviderRefreshToken, session.ProviderRefreshTokenExpiresAt
+	applyProviderToken(&session, token, now)
+	if token.RefreshToken == "" {
+		session.ProviderRefreshToken = refreshToken
 	}
-	if token.RefreshTokenExpiresIn > 0 {
-		session.RefreshTokenExpiresAt = tokenExpiresAt(token.RefreshTokenExpiresIn, now)
+	if token.RefreshTokenExpiresIn <= 0 {
+		session.ProviderRefreshTokenExpiresAt = refreshExpiresAt
 	}
-	session.TokenType = token.TokenType
-	session.Scope = token.Scope
-
-	if err := s.repository.UpdateFeishuAuthSessionToken(ctx, session); err != nil {
-		return domain.FeishuAuthSession{}, err
+	if err := s.repository.UpdateSessionToken(ctx, session); err != nil {
+		return domain.AuthSession{}, err
 	}
-
 	return session, nil
 }
 
-func newAuthSession(sessionTokenHash string, unionID string, token domain.FeishuToken, now time.Time) domain.FeishuAuthSession {
-	session := domain.FeishuAuthSession{
-		SessionTokenHash:     sessionTokenHash,
-		UnionID:              unionID,
-		AccessToken:          token.AccessToken,
-		AccessTokenExpiresAt: tokenExpiresAt(token.ExpiresIn, now),
-		RefreshToken:         token.RefreshToken,
-		TokenType:            token.TokenType,
-		Scope:                token.Scope,
-	}
+func applyProviderToken(session *domain.AuthSession, token domain.FeishuToken, now time.Time) {
+	session.ProviderAccessToken = token.AccessToken
+	session.ProviderAccessTokenExpiresAt = tokenExpiresAt(token.ExpiresIn, now)
+	session.ProviderRefreshToken = token.RefreshToken
+	session.ProviderRefreshTokenExpiresAt = time.Time{}
 	if token.RefreshTokenExpiresIn > 0 {
-		session.RefreshTokenExpiresAt = tokenExpiresAt(token.RefreshTokenExpiresIn, now)
+		session.ProviderRefreshTokenExpiresAt = tokenExpiresAt(token.RefreshTokenExpiresIn, now)
 	}
-	return session
+	session.ProviderTokenType = token.TokenType
+	session.ProviderScope = token.Scope
 }
 
-func authResultFromSession(session domain.FeishuAuthSession, sessionToken string, now time.Time) domain.FeishuAuthResult {
-	return domain.FeishuAuthResult{
-		SessionExpiresAt: sessionExpiresAt(session),
-		SessionToken:     sessionToken,
-		Tenant:           domain.FeishuTenantSummary{ID: session.TenantID, Name: session.TenantName},
-		Token: domain.FeishuToken{
-			AccessToken:           session.AccessToken,
-			ExpiresIn:             secondsUntil(session.AccessTokenExpiresAt, now),
-			RefreshToken:          session.RefreshToken,
-			RefreshTokenExpiresIn: secondsUntil(session.RefreshTokenExpiresAt, now),
-			TokenType:             session.TokenType,
-			Scope:                 session.Scope,
-		},
-		User: session.User,
-	}
-}
-
-func (s *FeishuAuthService) authResultWithRoles(ctx context.Context, session domain.FeishuAuthSession, sessionToken string, now time.Time) (domain.FeishuAuthResult, error) {
-	result := authResultFromSession(session, sessionToken, now)
-	userID := domain.ConsoleUserIDFromFeishu(session.User)
-	roles, err := s.repository.ListGlobalRoles(ctx, userID)
-	if err != nil {
-		return domain.FeishuAuthResult{}, err
-	}
-	result.Roles = roles
-	result.Capabilities = domain.GlobalCapabilitiesForRoles(roles)
-	return result, nil
-}
-
-func refreshTokenExpired(session domain.FeishuAuthSession, now time.Time) bool {
-	return session.RefreshTokenExpiresAt.IsZero() || !now.Before(session.RefreshTokenExpiresAt)
-}
-
-func sessionExpiresAt(session domain.FeishuAuthSession) time.Time {
-	if session.RefreshToken != "" && !session.RefreshTokenExpiresAt.IsZero() {
-		return session.RefreshTokenExpiresAt
-	}
-	return session.AccessTokenExpiresAt
+func refreshTokenExpired(session domain.AuthSession, now time.Time) bool {
+	return session.ProviderRefreshTokenExpiresAt.IsZero() || !now.Before(session.ProviderRefreshTokenExpiresAt)
 }
 
 func tokenExpiresAt(expiresIn int, now time.Time) time.Time {
@@ -288,10 +270,7 @@ func secondsUntil(value time.Time, now time.Time) int {
 	if value.IsZero() {
 		return 0
 	}
-	seconds := int(time.Until(value).Seconds())
-	if !now.IsZero() {
-		seconds = int(value.Sub(now).Seconds())
-	}
+	seconds := int(value.Sub(now).Seconds())
 	if seconds < 0 {
 		return 0
 	}

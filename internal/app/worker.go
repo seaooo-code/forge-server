@@ -124,7 +124,8 @@ func workerBuildModes(values []string) []domain.BuildMode {
 }
 
 func (a *WorkerApp) Run(ctx context.Context) error {
-	return a.worker.Run(ctx)
+	// worker 领取所有租户的构建，查询不按租户过滤。
+	return a.worker.Run(domain.WithSystemScope(ctx))
 }
 
 func (a *WorkerApp) Shutdown(ctx context.Context) error {

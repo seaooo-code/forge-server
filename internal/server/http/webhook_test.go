@@ -33,7 +33,7 @@ func TestWebhookRoutesDispatchWithoutConsoleSession(t *testing.T) {
 		t.Fatalf("expected canonical headers, got %+v", got.Headers)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", strings.NewReader(`{}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/acme", strings.NewReader(`{}`))
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || service.lastRequest.Provider != domain.CodeSourceProviderGitHub || service.lastRequest.ConnectionID != "" {
@@ -57,7 +57,7 @@ func TestWebhookRoutesMapResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := New(config.Config{}, Dependencies{WebhookService: &fakeWebhookService{result: tt.result, err: tt.err}})
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", strings.NewReader(`{}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/acme", strings.NewReader(`{}`))
 			rec := httptest.NewRecorder()
 			e.ServeHTTP(rec, req)
 			if rec.Code != tt.status {
@@ -71,7 +71,7 @@ func TestWebhookRoutesRejectOversizedPayload(t *testing.T) {
 	service := &fakeWebhookService{}
 	e := New(config.Config{}, Dependencies{WebhookService: service})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", strings.NewReader(strings.Repeat("a", maxWebhookBodyBytes+1)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github/acme", strings.NewReader(strings.Repeat("a", maxWebhookBodyBytes+1)))
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge || service.calls != 0 {

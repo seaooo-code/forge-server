@@ -97,7 +97,7 @@ func (s *ArtifactAccessTokenService) ValidateArtifactAccessToken(ctx context.Con
 		return domain.ArtifactAccessTokenValidationResult{}, err
 	}
 
-	result := domain.ArtifactAccessTokenValidationResult{Matched: true}
+	result := domain.ArtifactAccessTokenValidationResult{Matched: true, TenantID: record.TenantID}
 	if record.Status != domain.ArtifactAccessTokenStatusActive {
 		return result, nil
 	}

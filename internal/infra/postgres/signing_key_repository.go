@@ -23,9 +23,15 @@ func NewSigningKeyRepository(pool *pgxpool.Pool) *SigningKeyRepository {
 }
 
 func (r *SigningKeyRepository) GetApplicationSigning(ctx context.Context, applicationSlug string) (domain.ApplicationSigning, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ApplicationSigning{}, err
+	}
 	var applicationID string
 	var signing domain.ApplicationSigning
-	if err := r.pool.QueryRow(ctx, `select id, require_signed_releases from applications where slug = $1`, applicationSlug).
+	if err := r.pool.QueryRow(ctx, `
+		select id, require_signed_releases from applications where slug = $1 and ($2::text = '' or tenant_id = $2)
+	`, applicationSlug, tenantID).
 		Scan(&applicationID, &signing.RequireSignedReleases); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ApplicationSigning{}, domain.ErrApplicationNotFound
@@ -62,9 +68,15 @@ func (r *SigningKeyRepository) CreateSigningKey(ctx context.Context, input domai
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.SigningKey{}, err
+	}
 	var applicationID string
 	// 锁住应用行，两个人同时生成密钥时串行执行，保证只剩一把 active。
-	if err := tx.QueryRow(ctx, `select id from applications where slug = $1 for update`, input.ApplicationSlug).Scan(&applicationID); err != nil {
+	if err := tx.QueryRow(ctx, `
+		select id from applications where slug = $1 and ($2::text = '' or tenant_id = $2) for update
+	`, input.ApplicationSlug, tenantID).Scan(&applicationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.SigningKey{}, domain.ErrApplicationNotFound
 		}
@@ -95,6 +107,9 @@ func (r *SigningKeyRepository) CreateSigningKey(ctx context.Context, input domai
 
 // DeleteSigningKey 只删除 retired 密钥。
 func (r *SigningKeyRepository) DeleteSigningKey(ctx context.Context, applicationSlug string, keyID string) error {
+	if _, err := applicationIDBySlug(ctx, r.pool, applicationSlug); err != nil {
+		return err
+	}
 	var status domain.SigningKeyStatus
 	if err := r.pool.QueryRow(ctx, `
 		select k.status
@@ -127,14 +142,18 @@ func (r *SigningKeyRepository) SetRequireSignedReleases(ctx context.Context, app
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	var applicationID string
 	var hasActiveKey bool
 	if err := tx.QueryRow(ctx, `
 		select a.id, exists(select 1 from application_signing_keys k where k.application_id = a.id and k.status = 'active')
 		from applications a
-		where a.slug = $1
+		where a.slug = $1 and ($2::text = '' or a.tenant_id = $2)
 		for update of a
-	`, applicationSlug).Scan(&applicationID, &hasActiveKey); err != nil {
+	`, applicationSlug, tenantID).Scan(&applicationID, &hasActiveKey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrApplicationNotFound
 		}
@@ -154,13 +173,17 @@ func (r *SigningKeyRepository) SetRequireSignedReleases(ctx context.Context, app
 
 // ActiveSigningKey 返回应用的 active 密钥和私钥密文；应用没有 active 密钥时 ok 为 false。
 func (r *SigningKeyRepository) ActiveSigningKey(ctx context.Context, applicationSlug string) (domain.ActiveSigningKey, bool, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ActiveSigningKey{}, false, err
+	}
 	var key domain.ActiveSigningKey
-	err := r.pool.QueryRow(ctx, `
+	err = r.pool.QueryRow(ctx, `
 		select k.key_id, k.private_key_ciphertext
 		from application_signing_keys k
 		join applications a on a.id = k.application_id
-		where a.slug = $1 and k.status = 'active'
-	`, applicationSlug).Scan(&key.KeyID, &key.PrivateKeyCiphertext)
+		where a.slug = $1 and k.status = 'active' and ($2::text = '' or a.tenant_id = $2)
+	`, applicationSlug, tenantID).Scan(&key.KeyID, &key.PrivateKeyCiphertext)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ActiveSigningKey{}, false, nil
 	}

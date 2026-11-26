@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -12,7 +11,7 @@ import (
 // 租约归属：只有当前持有者能续租、写回结果或放回队列；租约过期被接管后，原持有者的写入一律返回 ErrBuildLeaseLost。
 func TestIntegrationBuildLeaseFencing(t *testing.T) {
 	pool := newIntegrationPool(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	moduleID, environment := seedIntegrationModule(t, pool)
 	repository := NewBuildRepository(pool)
 

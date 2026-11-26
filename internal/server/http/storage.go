@@ -46,23 +46,17 @@ type storageConfigurationResponse struct {
 }
 
 type storageConfigurationRequest struct {
-	AccessKeyID        string `json:"accessKeyId"`
-	Adapter            string `json:"adapter"`
-	Bucket             string `json:"bucket"`
-	Endpoint           string `json:"endpoint"`
-	ForcePathStyle     bool   `json:"forcePathStyle"`
-	Name               string `json:"name"`
-	OwnerUserID        string `json:"ownerUserId"`
-	Owner              string `json:"owner"`
-	OwnerEmail         string `json:"ownerEmail"`
-	OwnerAvatarURL     string `json:"ownerAvatarUrl"`
-	OwnerFeishuUnionID string `json:"ownerFeishuUnionId"`
-	OwnerFeishuOpenID  string `json:"ownerFeishuOpenId"`
-	OwnerFeishuUserID  string `json:"ownerFeishuUserId"`
-	PublicBaseURL      string `json:"publicBaseUrl"`
-	Region             string `json:"region"`
-	SecretAccessKey    string `json:"secretAccessKey"`
-	Status             string `json:"status"`
+	AccessKeyID     string `json:"accessKeyId"`
+	Adapter         string `json:"adapter"`
+	Bucket          string `json:"bucket"`
+	Endpoint        string `json:"endpoint"`
+	ForcePathStyle  bool   `json:"forcePathStyle"`
+	Name            string `json:"name"`
+	OwnerUserID     string `json:"ownerUserId"`
+	PublicBaseURL   string `json:"publicBaseUrl"`
+	Region          string `json:"region"`
+	SecretAccessKey string `json:"secretAccessKey"`
+	Status          string `json:"status"`
 }
 
 type storageConfigurationTestRequest struct {
@@ -232,23 +226,17 @@ func newStorageConfigurationInput(request storageConfigurationRequest) (domain.S
 	}
 
 	return domain.StorageConfigurationInput{
-		AccessKeyID:        request.AccessKeyID,
-		Adapter:            domain.StorageAdapter(request.Adapter),
-		Bucket:             request.Bucket,
-		Endpoint:           request.Endpoint,
-		ForcePathStyle:     request.ForcePathStyle,
-		Name:               request.Name,
-		OwnerUserID:        request.OwnerUserID,
-		Owner:              request.Owner,
-		OwnerEmail:         request.OwnerEmail,
-		OwnerAvatarURL:     request.OwnerAvatarURL,
-		OwnerFeishuUnionID: request.OwnerFeishuUnionID,
-		OwnerFeishuOpenID:  request.OwnerFeishuOpenID,
-		OwnerFeishuUserID:  request.OwnerFeishuUserID,
-		PublicBaseURL:      request.PublicBaseURL,
-		Region:             request.Region,
-		SecretAccessKey:    request.SecretAccessKey,
-		Status:             status,
+		AccessKeyID:     request.AccessKeyID,
+		Adapter:         domain.StorageAdapter(request.Adapter),
+		Bucket:          request.Bucket,
+		Endpoint:        request.Endpoint,
+		ForcePathStyle:  request.ForcePathStyle,
+		Name:            request.Name,
+		OwnerUserID:     request.OwnerUserID,
+		PublicBaseURL:   request.PublicBaseURL,
+		Region:          request.Region,
+		SecretAccessKey: request.SecretAccessKey,
+		Status:          status,
 	}, true
 }
 

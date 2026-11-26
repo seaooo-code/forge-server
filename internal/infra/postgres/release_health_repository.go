@@ -24,13 +24,18 @@ func NewReleaseHealthRepository(pool *pgxpool.Pool) *ReleaseHealthRepository {
 
 // ApplicationIDForEnvironment 返回绑定了该环境的应用 id，应用不存在或没有绑定该环境时返回 ErrArtifactNotFound。
 func (r *ReleaseHealthRepository) ApplicationIDForEnvironment(ctx context.Context, applicationSlug string, environment string) (string, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return "", err
+	}
 	var id string
-	err := r.pool.QueryRow(ctx, `
+	err = r.pool.QueryRow(ctx, `
 		select a.id
 		from applications a
 		join application_environment_bindings b on b.application_id = a.id
-		where a.slug = $1 and b.environment_code = $2
-	`, applicationSlug, environment).Scan(&id)
+		join environments e on e.id = b.environment_id
+		where a.slug = $1 and e.code = $2 and ($3::text = '' or a.tenant_id = $3)
+	`, applicationSlug, environment, tenantID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", domain.ErrArtifactNotFound
 	}
@@ -59,9 +64,14 @@ func (r *ReleaseHealthRepository) IncrementReleaseHealthBuckets(ctx context.Cont
 		events = append(events, item.Events)
 	}
 	if _, err := r.pool.Exec(ctx, `
-		insert into release_health_buckets (bucket_start, application_id, environment_code, module_id, build_record_id, release_id, channel, platform, outcome, reason, users, events)
-		select * from unnest($1::timestamptz[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::bigint[], $12::bigint[])
-		on conflict (bucket_start, application_id, environment_code, module_id, build_record_id, release_id, channel, platform, outcome, reason)
+		insert into release_health_buckets (bucket_start, application_id, environment_id, module_id, build_record_id, release_id, channel, platform, outcome, reason, users, events)
+		-- 上报里带的是环境编码，按应用所属租户换成环境 ID。
+		select u.bucket_start, u.application_id, e.id, u.module_id, u.build_record_id, u.release_id, u.channel, u.platform, u.outcome, u.reason, u.users, u.events
+		from unnest($1::timestamptz[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::bigint[], $12::bigint[])
+			as u(bucket_start, application_id, environment_code, module_id, build_record_id, release_id, channel, platform, outcome, reason, users, events)
+		join applications a on a.id = u.application_id
+		join environments e on e.tenant_id = a.tenant_id and e.code = u.environment_code
+		on conflict (bucket_start, application_id, environment_id, module_id, build_record_id, release_id, channel, platform, outcome, reason)
 		do update set users = release_health_buckets.users + excluded.users,
 			events = release_health_buckets.events + excluded.events,
 			updated_at = now()
@@ -91,8 +101,8 @@ func (r *ReleaseHealthRepository) ListReleaseHealthPolicies(ctx context.Context,
 			coalesce(p.max_failure_rate, $4), coalesce(p.min_delta, $5), coalesce(p.auto_stop_gray, $6),
 			coalesce(p.updated_by_user_id, ''), p.updated_at
 		from application_environment_bindings b
-		join environments e on e.code = b.environment_code
-		left join release_health_policies p on p.application_id = b.application_id and p.environment_code = b.environment_code
+		join environments e on e.id = b.environment_id
+		left join release_health_policies p on p.application_id = b.application_id and p.environment_id = b.environment_id
 		where b.application_id = $1
 		order by b.sort_order, e.code
 	`, applicationID, defaultPolicy.WindowMinutes, defaultPolicy.MinUsers, defaultPolicy.MaxFailureRate, defaultPolicy.MinDelta, defaultPolicy.AutoStopGray)
@@ -123,13 +133,18 @@ var defaultPolicy = domain.DefaultReleaseHealthPolicy()
 
 // UpsertReleaseHealthPolicy 保存应用在一个环境的策略，环境必须已绑定到应用。
 func (r *ReleaseHealthRepository) UpsertReleaseHealthPolicy(ctx context.Context, applicationSlug string, policy domain.ReleaseHealthPolicy) error {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	tag, err := r.pool.Exec(ctx, `
-		insert into release_health_policies (application_id, environment_code, enabled, window_minutes, min_users, max_failure_rate, min_delta, auto_stop_gray, updated_by_user_id)
-		select a.id, b.environment_code, $3, $4, $5, $6, $7, $8, nullif($9, '')
+		insert into release_health_policies (application_id, environment_id, enabled, window_minutes, min_users, max_failure_rate, min_delta, auto_stop_gray, updated_by_user_id)
+		select a.id, b.environment_id, $3, $4, $5, $6, $7, $8, nullif($9, '')
 		from applications a
-		join application_environment_bindings b on b.application_id = a.id and b.environment_code = $2
-		where a.slug = $1
-		on conflict (application_id, environment_code) do update set
+		join application_environment_bindings b on b.application_id = a.id
+		join environments e on e.id = b.environment_id and e.code = $2
+		where a.slug = $1 and ($10::text = '' or a.tenant_id = $10)
+		on conflict (application_id, environment_id) do update set
 			enabled = excluded.enabled,
 			window_minutes = excluded.window_minutes,
 			min_users = excluded.min_users,
@@ -138,7 +153,7 @@ func (r *ReleaseHealthRepository) UpsertReleaseHealthPolicy(ctx context.Context,
 			auto_stop_gray = excluded.auto_stop_gray,
 			updated_by_user_id = excluded.updated_by_user_id,
 			updated_at = now()
-	`, applicationSlug, policy.Environment, policy.Enabled, policy.WindowMinutes, policy.MinUsers, policy.MaxFailureRate, policy.MinDelta, policy.AutoStopGray, policy.UpdatedByUserID)
+	`, applicationSlug, policy.Environment, policy.Enabled, policy.WindowMinutes, policy.MinUsers, policy.MaxFailureRate, policy.MinDelta, policy.AutoStopGray, policy.UpdatedByUserID, tenantID)
 	if err != nil {
 		if isCheckViolation(err) || isForeignKeyViolation(err) {
 			return domain.ErrInvalidReleaseHealthInput
@@ -157,7 +172,7 @@ func (r *ReleaseHealthRepository) UpsertReleaseHealthPolicy(ctx context.Context,
 // releaseHealthTargetSQL 选出生效中的发布、所属应用和环境的策略（没有时取默认值）、基线全量和上一次判定状态。
 // 基线只给比例灰度找：同一模块、环境、渠道、运行时版本下生效中的全量。
 const releaseHealthTargetSQL = `
-	select rr.id::text, m.application_id, rr.module_id, rr.environment_code, route.runtime_version, rr.channel,
+	select rr.id::text, m.application_id, rr.module_id, e.code, route.runtime_version, rr.channel,
 		rr.release_type, rr.gray_strategy, rr.created_at,
 		p.application_id is not null, coalesce(p.enabled, false), coalesce(p.window_minutes, $1), coalesce(p.min_users, $2),
 		coalesce(p.max_failure_rate, $3), coalesce(p.min_delta, $4), coalesce(p.auto_stop_gray, $5),
@@ -167,7 +182,7 @@ const releaseHealthTargetSQL = `
 			join release_records full_rr on full_rr.id = full_route.release_id
 			where rr.release_type = 'gray'
 				and full_route.module_id = rr.module_id
-				and full_route.environment_code = rr.environment_code
+				and full_route.environment_id = rr.environment_id
 				and full_route.runtime_version = route.runtime_version
 				and full_route.channel = rr.channel
 				and full_route.route_type = 'default'
@@ -179,7 +194,8 @@ const releaseHealthTargetSQL = `
 	from release_records rr
 	join release_routes route on route.release_id = rr.id
 	join modules m on m.id = rr.module_id
-	left join release_health_policies p on p.application_id = m.application_id and p.environment_code = rr.environment_code
+	join environments e on e.id = rr.environment_id
+	left join release_health_policies p on p.application_id = m.application_id and p.environment_id = rr.environment_id
 	left join release_health h on h.release_id = rr.id
 `
 

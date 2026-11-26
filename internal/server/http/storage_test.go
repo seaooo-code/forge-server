@@ -103,7 +103,7 @@ func TestCreateStorageConfiguration(t *testing.T) {
 	if service.lastCreateInput.SecretAccessKey != "secret-key" {
 		t.Fatalf("expected secret to be bound")
 	}
-	if service.lastCreateInput.OwnerUserID != "ou-rn-platform" || service.lastCreateInput.OwnerEmail == "" || service.lastCreateInput.OwnerAvatarURL == "" {
+	if service.lastCreateInput.OwnerUserID != "ou-rn-platform" {
 		t.Fatalf("expected owner profile input, got %#v", service.lastCreateInput)
 	}
 }

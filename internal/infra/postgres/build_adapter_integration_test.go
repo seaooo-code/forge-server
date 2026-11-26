@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -23,7 +22,7 @@ func newIntegrationPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("FORGE_TEST_POSTGRES_DSN not set")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(integrationCtx(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -33,22 +32,23 @@ func newIntegrationPool(t *testing.T) *pgxpool.Pool {
 
 func seedIntegrationModule(t *testing.T, pool *pgxpool.Pool) (string, string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := integrationCtx()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	userID := "user-" + suffix
 	moduleID := "module-" + suffix
 	for _, statement := range []string{
-		`insert into users (id, name) select $1, 'tester' || $2`,
-		`insert into storage_configurations (id, name, adapter, bucket, endpoint, region, owner_user_id, access_key_id, secret_access_key, status, sort_order)
-			values ('storage-' || $2, 's', 'S3', 'b', 'http://s3.example.com', 'r', $1, 'k', 's', 'healthy', 1)`,
-		`insert into environments (code, name, status, tone, description, storage_configuration_id, sort_order)
-			select 'env-' || $2, 'e', 'healthy', 'blue', '', 'storage-' || $2, 1 where $1::text <> ''`,
-		`insert into applications (id, slug, name, status, platform, owner_user_id, description, sort_order)
-			values ('app-' || $2, 'app-' || $2, 'a', 'running', 'rn', $1, '', 1)`,
-		`insert into code_source_connections (id, provider, name, web_base_url, api_base_url, status, created_by_user_id)
-			values ('conn-' || $2, 'gitlab', 'c', 'https://git.example.com', 'https://git.example.com/api/v4', 'active', $1)`,
-		`insert into modules (id, name, kind, application_id, owner_user_id, code_source_connection_id, external_repository_id, repository_full_name, sort_order)
-			values ('module-' || $2, 'm', 'Common', 'app-' || $2, $1, 'conn-' || $2, 'repo-' || $2, 'demo/repo', 1)`,
+		`insert into tenants (id, name, status, sort_order) select 'tnt-' || $2::text, 't', 'active', 1 where $1::text <> ''`,
+		`insert into users (id, tenant_id, name) select $1::text, 'tnt-' || $2::text, 'tester' || $2::text`,
+		`insert into storage_configurations (id, tenant_id, name, adapter, bucket, endpoint, region, owner_user_id, access_key_id, secret_access_key, status, sort_order)
+			values ('storage-' || $2::text, 'tnt-' || $2, 's', 'S3', 'b', 'http://s3.example.com', 'r', $1, 'k', 's', 'healthy', 1)`,
+		`insert into environments (id, tenant_id, code, name, status, tone, description, storage_configuration_id, sort_order)
+			select 'envid-' || $2::text, 'tnt-' || $2, 'env-' || $2::text, 'e', 'healthy', 'blue', '', 'storage-' || $2::text, 1 where $1::text <> ''`,
+		`insert into applications (id, tenant_id, slug, name, status, platform, owner_user_id, description, sort_order)
+			values ('app-' || $2::text, 'tnt-' || $2, 'app-' || $2::text, 'a', 'running', 'rn', $1, '', 1)`,
+		`insert into code_source_connections (id, tenant_id, provider, name, web_base_url, api_base_url, status, created_by_user_id)
+			values ('conn-' || $2::text, 'tnt-' || $2, 'gitlab', 'c', 'https://git.example.com', 'https://git.example.com/api/v4', 'active', $1)`,
+		`insert into modules (id, tenant_id, name, kind, application_id, owner_user_id, code_source_connection_id, external_repository_id, repository_full_name, sort_order)
+			values ('module-' || $2::text, 'tnt-' || $2, 'm', 'Common', 'app-' || $2::text, $1, 'conn-' || $2::text, 'repo-' || $2, 'demo/repo', 1)`,
 	} {
 		if _, err := pool.Exec(ctx, statement, userID, suffix); err != nil {
 			t.Fatalf("seed: %v\n%s", err, statement)
@@ -77,9 +77,9 @@ func TestIntegrationBuildNumberConcurrentAllocation(t *testing.T) {
 				input.TriggerType = domain.BuildTriggerTypeWebhook
 				input.Branch = "main"
 				input.CommitSHA = fmt.Sprintf("%040d", index)
-				record, _, errs[index] = repository.CreateBuildRecordUnlessActive(context.Background(), input)
+				record, _, errs[index] = repository.CreateBuildRecordUnlessActive(integrationCtx(), input)
 			} else {
-				record, errs[index] = repository.CreateBuildRecord(context.Background(), input)
+				record, errs[index] = repository.CreateBuildRecord(integrationCtx(), input)
 			}
 			numbers[index] = record.Number
 		}(index)
@@ -102,7 +102,7 @@ func TestIntegrationBuildNumberConcurrentAllocation(t *testing.T) {
 func TestIntegrationBuildAdapterLifecycle(t *testing.T) {
 	pool := newIntegrationPool(t)
 	moduleID, environment := seedIntegrationModule(t, pool)
-	ctx := context.Background()
+	ctx := moduleTenantCtx(t, pool, moduleID)
 	var userID string
 	if err := pool.QueryRow(ctx, `select owner_user_id from modules where id = $1`, moduleID).Scan(&userID); err != nil {
 		t.Fatal(err)
@@ -183,7 +183,7 @@ func TestIntegrationBuildAdapterLifecycle(t *testing.T) {
 func TestIntegrationModuleRepositoryUniqueOnlyForDockerfileMode(t *testing.T) {
 	pool := newIntegrationPool(t)
 	commonModuleID, _ := seedIntegrationModule(t, pool)
-	ctx := context.Background()
+	ctx := moduleTenantCtx(t, pool, commonModuleID)
 
 	var applicationID, ownerUserID, connectionID, repositoryID string
 	if err := pool.QueryRow(ctx, `
@@ -212,7 +212,6 @@ func TestIntegrationModuleRepositoryUniqueOnlyForDockerfileMode(t *testing.T) {
 			ID:             id,
 			Kind:           domain.ModuleKindFeature,
 			Name:           id,
-			Owner:          "tester",
 			OwnerUserID:    ownerUserID,
 			Repository:     domain.ModuleRepository{ConnectionID: connectionID, ExternalRepositoryID: repositoryID, FullName: "demo/repo"},
 			BuildConfig:    config,

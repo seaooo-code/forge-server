@@ -3,15 +3,12 @@ package domain
 import (
 	"errors"
 	"fmt"
-	"time"
 )
 
 var (
 	ErrFeishuAuthNotConfigured = errors.New("feishu auth not configured")
 	ErrFeishuAuthorization     = errors.New("feishu authorization failed")
 	ErrInvalidFeishuSearch     = errors.New("invalid feishu search request")
-	ErrFeishuSessionExpired    = errors.New("feishu session expired")
-	ErrFeishuSessionNotFound   = errors.New("feishu session not found")
 )
 
 type FeishuToken struct {
@@ -52,9 +49,6 @@ type FeishuUser struct {
 	Mobile          string
 	TenantKey       string
 	EmployeeNo      string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastLoginAt     time.Time
 }
 
 type FeishuUserSearchResult struct {
@@ -75,37 +69,56 @@ type FeishuUserSearchPage struct {
 	PageToken string
 }
 
-// FeishuTenantSummary 是会话所属租户的展示信息。
-type FeishuTenantSummary struct {
-	ID   string
-	Name string
+// ExternalUser 把飞书登录拿到的用户信息转换成登录身份，issuer 是登录所用的飞书 App ID。
+func (u FeishuUser) ExternalUser(appID string) ExternalUser {
+	return ExternalUser{
+		Provider:  IdentityProviderFeishu,
+		Issuer:    appID,
+		Subject:   u.OpenID,
+		Name:      firstNonEmptyString(u.Name, u.EnName, u.OpenID),
+		Email:     firstNonEmptyString(u.EnterpriseEmail, u.Email),
+		AvatarURL: firstNonEmptyString(u.AvatarURL, u.AvatarMiddle, u.AvatarThumb, u.AvatarBig),
+		Profile: compactProfile(map[string]string{
+			"unionId":    u.UnionID,
+			"userId":     u.UserID,
+			"enName":     u.EnName,
+			"employeeNo": u.EmployeeNo,
+			"tenantKey":  u.TenantKey,
+		}),
+	}
 }
 
-type FeishuAuthResult struct {
-	Capabilities     GlobalCapabilities
-	Roles            []GlobalRole
-	SessionExpiresAt time.Time
-	SessionToken     string
-	Tenant           FeishuTenantSummary
-	Token            FeishuToken
-	User             FeishuUser
+// ExternalUser 把通讯录搜索结果转换成登录身份。open_id 按应用隔离，所以 issuer 必须是搜索所用的同一个飞书 App ID。
+func (r FeishuUserSearchResult) ExternalUser(appID string) ExternalUser {
+	return ExternalUser{
+		Provider:  IdentityProviderFeishu,
+		Issuer:    appID,
+		Subject:   r.OpenID,
+		Name:      firstNonEmptyString(r.Name, r.EnName, r.OpenID),
+		Email:     r.Email,
+		AvatarURL: r.AvatarURL,
+		Profile: compactProfile(map[string]string{
+			"unionId": r.UnionID,
+			"userId":  r.UserID,
+			"enName":  r.EnName,
+		}),
+	}
 }
 
-type FeishuAuthSession struct {
-	SessionTokenHash string
-	UnionID          string
-	TenantID         string
-	// TenantName / TenantStatus 读取会话时从 feishu_tenants 关联得到，租户停用后会话失效。
-	TenantName            string
-	TenantStatus          FeishuTenantStatus
-	AccessToken           string
-	AccessTokenExpiresAt  time.Time
-	RefreshToken          string
-	RefreshTokenExpiresAt time.Time
-	TokenType             string
-	Scope                 string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	LastSeenAt            time.Time
-	User                  FeishuUser
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func compactProfile(profile map[string]string) map[string]string {
+	for key, value := range profile {
+		if value == "" {
+			delete(profile, key)
+		}
+	}
+	return profile
 }

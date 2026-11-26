@@ -25,46 +25,37 @@ const (
 
 type feishuAuthHandler struct {
 	service FeishuAuthService
-	tenants FeishuTenantService
+	tenants TenantService
 }
 
-type feishuAuthResponse struct {
-	Capabilities domain.GlobalCapabilities `json:"capabilities"`
-	Roles        []domain.GlobalRole       `json:"roles"`
-	Tenant       feishuLoginTenantResponse `json:"tenant"`
-	User         feishuUserResponse        `json:"user"`
-	Token        feishuTokenResponse       `json:"token"`
+type authSessionResponse struct {
+	Capabilities domain.TenantCapabilities `json:"capabilities"`
+	Roles        []domain.Role             `json:"roles"`
+	User         sessionUserResponse       `json:"user"`
+	// HomeTenant 是用户所属租户，ActiveTenant 是当前所在租户；只有 SuperAdmin 切换后两者才不同。
+	HomeTenant   tenantSummaryResponse `json:"homeTenant"`
+	ActiveTenant tenantSummaryResponse `json:"activeTenant"`
+	Token        sessionTokenResponse  `json:"token"`
 }
 
-// feishuLoginTenantResponse 是登录页可见的租户信息，不含 App ID 和密钥。
-type feishuLoginTenantResponse struct {
+// tenantSummaryResponse 是登录页和会话里可见的租户信息，不含飞书应用凭证。
+type tenantSummaryResponse struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-type feishuLoginTenantsResponse struct {
-	Tenants []feishuLoginTenantResponse `json:"tenants"`
+type loginTenantsResponse struct {
+	Tenants []tenantSummaryResponse `json:"tenants"`
 }
 
-type feishuUserResponse struct {
-	ID              string `json:"id"`
-	UnionID         string `json:"unionId"`
-	OpenID          string `json:"openId"`
-	UserID          string `json:"userId"`
-	Name            string `json:"name"`
-	EnName          string `json:"enName"`
-	AvatarURL       string `json:"avatarUrl"`
-	AvatarThumb     string `json:"avatarThumb"`
-	AvatarMiddle    string `json:"avatarMiddle"`
-	AvatarBig       string `json:"avatarBig"`
-	Email           string `json:"email"`
-	EnterpriseEmail string `json:"enterpriseEmail"`
-	Mobile          string `json:"mobile"`
-	TenantKey       string `json:"tenantKey"`
-	EmployeeNo      string `json:"employeeNo"`
+type sessionUserResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	AvatarURL string `json:"avatarUrl"`
 }
 
-type feishuTokenResponse struct {
+type sessionTokenResponse struct {
 	ExpiresIn             int    `json:"expiresIn"`
 	RefreshTokenExpiresIn int    `json:"refreshTokenExpiresIn,omitempty"`
 	TokenType             string `json:"tokenType"`
@@ -72,13 +63,18 @@ type feishuTokenResponse struct {
 	HasRefreshToken       bool   `json:"hasRefreshToken"`
 }
 
-func registerFeishuAuthRoutes(group *echo.Group, service FeishuAuthService, tenants FeishuTenantService) {
+type switchTenantRequest struct {
+	TenantID string `json:"tenantId"`
+}
+
+func registerFeishuAuthRoutes(group *echo.Group, service FeishuAuthService, tenants TenantService) {
 	handler := feishuAuthHandler{service: service, tenants: tenants}
 
-	group.GET("/auth/feishu/tenants", handler.loginTenants)
+	group.GET("/auth/tenants", handler.loginTenants)
 	group.GET("/auth/feishu/authorize", handler.authorize)
 	group.GET("/auth/feishu/callback", handler.callback)
 	group.GET("/auth/session", handler.session)
+	group.PUT("/auth/session/tenant", handler.switchTenant)
 	group.POST("/auth/logout", handler.logout)
 }
 
@@ -87,13 +83,13 @@ func (h feishuAuthHandler) loginTenants(c echo.Context) error {
 	if h.tenants == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
 	}
-	tenants, err := h.tenants.ListActiveFeishuTenants(c.Request().Context())
+	tenants, err := h.tenants.ListActiveTenants(c.Request().Context())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
-	response := feishuLoginTenantsResponse{Tenants: make([]feishuLoginTenantResponse, 0, len(tenants))}
+	response := loginTenantsResponse{Tenants: make([]tenantSummaryResponse, 0, len(tenants))}
 	for _, tenant := range tenants {
-		response.Tenants = append(response.Tenants, feishuLoginTenantResponse{ID: tenant.ID, Name: tenant.Name})
+		response.Tenants = append(response.Tenants, tenantSummaryResponse{ID: tenant.ID, Name: tenant.Name})
 	}
 	return c.JSON(http.StatusOK, response)
 }
@@ -116,10 +112,10 @@ func (h feishuAuthHandler) authorize(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid redirect uri"})
 		case errors.Is(err, domain.ErrFeishuAuthNotConfigured):
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
-		case errors.Is(err, domain.ErrFeishuTenantRequired):
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "feishu tenant required"})
-		case errors.Is(err, domain.ErrFeishuTenantNotFound):
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "feishu tenant not found"})
+		case errors.Is(err, domain.ErrTenantRequired):
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "tenant required"})
+		case errors.Is(err, domain.ErrTenantNotFound):
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		}
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "feishu authorization failed"})
 	}
@@ -161,8 +157,8 @@ func (h feishuAuthHandler) callback(c echo.Context) error {
 
 	result, err := h.service.CompleteAuthorization(c.Request().Context(), tenantID, redirectURI, code)
 	if err != nil {
-		if errors.Is(err, domain.ErrFeishuTenantNotFound) {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "feishu tenant not found"})
+		if errors.Is(err, domain.ErrTenantNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		}
 		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
@@ -174,7 +170,7 @@ func (h feishuAuthHandler) callback(c echo.Context) error {
 	}
 
 	setFeishuSessionCookie(c, result)
-	return c.JSON(http.StatusOK, newFeishuAuthResponse(result))
+	return c.JSON(http.StatusOK, newAuthSessionResponse(result))
 }
 
 func (h feishuAuthHandler) session(c echo.Context) error {
@@ -189,8 +185,8 @@ func (h feishuAuthHandler) session(c echo.Context) error {
 
 	result, err := h.service.GetSession(c.Request().Context(), sessionToken)
 	if err != nil {
-		if errors.Is(err, domain.ErrFeishuSessionNotFound) ||
-			errors.Is(err, domain.ErrFeishuSessionExpired) ||
+		if errors.Is(err, domain.ErrSessionNotFound) ||
+			errors.Is(err, domain.ErrSessionExpired) ||
 			errors.Is(err, domain.ErrFeishuAuthorization) {
 			clearFeishuSessionCookie(c)
 			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -202,7 +198,7 @@ func (h feishuAuthHandler) session(c echo.Context) error {
 	}
 
 	setFeishuSessionCookie(c, result)
-	return c.JSON(http.StatusOK, newFeishuAuthResponse(result))
+	return c.JSON(http.StatusOK, newAuthSessionResponse(result))
 }
 
 func (h feishuAuthHandler) logout(c echo.Context) error {
@@ -219,34 +215,51 @@ func (h feishuAuthHandler) logout(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-func newFeishuAuthResponse(result domain.FeishuAuthResult) feishuAuthResponse {
-	return feishuAuthResponse{
+// switchTenant 把当前会话切换到另一个租户，只有 SuperAdmin 可以切到所属租户以外的租户。
+func (h feishuAuthHandler) switchTenant(c echo.Context) error {
+	if h.service == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
+	}
+	sessionToken, ok := feishuSessionToken(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	var request switchTenantRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+
+	result, err := h.service.SwitchTenant(c.Request().Context(), sessionToken, request.TenantID)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrTenantSwitchForbidden):
+			return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden"})
+		case errors.Is(err, domain.ErrTenantNotFound):
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		}
+		return consoleSessionErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, newAuthSessionResponse(result))
+}
+
+func newAuthSessionResponse(result domain.ConsoleSession) authSessionResponse {
+	return authSessionResponse{
 		Capabilities: result.Capabilities,
 		Roles:        result.Roles,
-		Tenant:       feishuLoginTenantResponse{ID: result.Tenant.ID, Name: result.Tenant.Name},
-		User: feishuUserResponse{
-			ID:              domain.ConsoleUserIDFromFeishu(result.User),
-			UnionID:         result.User.UnionID,
-			OpenID:          result.User.OpenID,
-			UserID:          result.User.UserID,
-			Name:            result.User.Name,
-			EnName:          result.User.EnName,
-			AvatarURL:       result.User.AvatarURL,
-			AvatarThumb:     result.User.AvatarThumb,
-			AvatarMiddle:    result.User.AvatarMiddle,
-			AvatarBig:       result.User.AvatarBig,
-			Email:           result.User.Email,
-			EnterpriseEmail: result.User.EnterpriseEmail,
-			Mobile:          result.User.Mobile,
-			TenantKey:       result.User.TenantKey,
-			EmployeeNo:      result.User.EmployeeNo,
+		User: sessionUserResponse{
+			ID:        result.User.ID,
+			Name:      result.User.Name,
+			Email:     result.User.Email,
+			AvatarURL: result.User.AvatarURL,
 		},
-		Token: feishuTokenResponse{
-			ExpiresIn:             result.Token.ExpiresIn,
-			RefreshTokenExpiresIn: result.Token.RefreshTokenExpiresIn,
-			TokenType:             result.Token.TokenType,
-			Scope:                 result.Token.Scope,
-			HasRefreshToken:       result.Token.RefreshToken != "",
+		HomeTenant:   tenantSummaryResponse{ID: result.HomeTenant.ID, Name: result.HomeTenant.Name},
+		ActiveTenant: tenantSummaryResponse{ID: result.ActiveTenant.ID, Name: result.ActiveTenant.Name},
+		Token: sessionTokenResponse{
+			ExpiresIn:             result.ProviderToken.ExpiresIn,
+			RefreshTokenExpiresIn: result.ProviderToken.RefreshTokenExpiresIn,
+			TokenType:             result.ProviderToken.TokenType,
+			Scope:                 result.ProviderToken.Scope,
+			HasRefreshToken:       result.ProviderToken.RefreshToken != "",
 		},
 	}
 }
@@ -281,12 +294,12 @@ func clearFeishuStateCookie(c echo.Context, name string) {
 	})
 }
 
-func setFeishuSessionCookie(c echo.Context, result domain.FeishuAuthResult) {
+func setFeishuSessionCookie(c echo.Context, result domain.ConsoleSession) {
 	if result.SessionToken == "" {
 		return
 	}
 
-	maxAge := int(time.Until(result.SessionExpiresAt).Seconds())
+	maxAge := int(time.Until(result.ExpiresAt).Seconds())
 	if maxAge <= 0 {
 		return
 	}

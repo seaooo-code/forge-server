@@ -24,9 +24,14 @@ func NewArtifactAccessTokenRepository(pool *pgxpool.Pool) *ArtifactAccessTokenRe
 }
 
 func (r *ArtifactAccessTokenRepository) ListArtifactAccessTokens(ctx context.Context) ([]domain.ArtifactAccessToken, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, `
 		select
 			t.id,
+			t.tenant_id,
 			t.name,
 			t.token_hash,
 			t.token_preview,
@@ -39,8 +44,9 @@ func (r *ArtifactAccessTokenRepository) ListArtifactAccessTokens(ctx context.Con
 			t.expires_at
 		from artifact_access_tokens t
 		join users u on u.id = t.created_by_user_id
+		where $1::text = '' or t.tenant_id = $1
 		order by t.created_at desc
-	`)
+	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query artifact access tokens: %w", err)
 	}
@@ -78,9 +84,14 @@ func (r *ArtifactAccessTokenRepository) CreateArtifactAccessToken(ctx context.Co
 }
 
 func (r *ArtifactAccessTokenRepository) createArtifactAccessToken(ctx context.Context, id string, input domain.ArtifactAccessTokenStoredInput) (domain.ArtifactAccessToken, error) {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.ArtifactAccessToken{}, err
+	}
 	var tokenID string
 	if err := r.pool.QueryRow(ctx, `
 		insert into artifact_access_tokens (
+			tenant_id,
 			id,
 			name,
 			token_hash,
@@ -88,9 +99,9 @@ func (r *ArtifactAccessTokenRepository) createArtifactAccessToken(ctx context.Co
 			status,
 			created_by_user_id,
 			expires_at
-		) values ($1, $2, $3, $4, $5, $6, $7)
+		) values ($8, $1, $2, $3, $4, $5, $6, $7)
 		returning id
-	`, id, input.Name, input.TokenHash, input.TokenPreview, input.Status, input.CreatedByUserID, input.ExpiresAt).Scan(&tokenID); err != nil {
+	`, id, input.Name, input.TokenHash, input.TokenPreview, input.Status, input.CreatedByUserID, input.ExpiresAt, tenantID).Scan(&tokenID); err != nil {
 		if isUniqueViolation(err) {
 			return domain.ArtifactAccessToken{}, err
 		}
@@ -100,14 +111,18 @@ func (r *ArtifactAccessTokenRepository) createArtifactAccessToken(ctx context.Co
 }
 
 func (r *ArtifactAccessTokenRepository) UpdateArtifactAccessToken(ctx context.Context, id string, input domain.ArtifactAccessTokenUpdateInput) (domain.ArtifactAccessToken, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ArtifactAccessToken{}, err
+	}
 	var tokenID string
 	if err := r.pool.QueryRow(ctx, `
 		update artifact_access_tokens set
 			status = $2,
 			updated_at = now()
-		where id = $1
+		where id = $1 and ($3::text = '' or tenant_id = $3)
 		returning id
-	`, id, input.Status).Scan(&tokenID); err != nil {
+	`, id, input.Status, tenantID).Scan(&tokenID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ArtifactAccessToken{}, domain.ErrArtifactAccessTokenNotFound
 		}
@@ -117,7 +132,13 @@ func (r *ArtifactAccessTokenRepository) UpdateArtifactAccessToken(ctx context.Co
 }
 
 func (r *ArtifactAccessTokenRepository) DeleteArtifactAccessToken(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `delete from artifact_access_tokens where id = $1`, id)
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
+	tag, err := r.pool.Exec(ctx, `
+		delete from artifact_access_tokens where id = $1 and ($2::text = '' or tenant_id = $2)
+	`, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("delete artifact access token: %w", err)
 	}
@@ -131,6 +152,7 @@ func (r *ArtifactAccessTokenRepository) FindArtifactAccessTokenByHash(ctx contex
 	token, err := scanArtifactAccessToken(r.pool.QueryRow(ctx, `
 		select
 			t.id,
+			t.tenant_id,
 			t.name,
 			t.token_hash,
 			t.token_preview,
@@ -166,6 +188,7 @@ func (r *ArtifactAccessTokenRepository) getArtifactAccessToken(ctx context.Conte
 	token, err := scanArtifactAccessToken(r.pool.QueryRow(ctx, `
 		select
 			t.id,
+			t.tenant_id,
 			t.name,
 			t.token_hash,
 			t.token_preview,
@@ -199,6 +222,7 @@ func scanArtifactAccessToken(row artifactAccessTokenScanner) (domain.ArtifactAcc
 	var expiresAt sql.NullTime
 	if err := row.Scan(
 		&token.ID,
+		&token.TenantID,
 		&token.Name,
 		&token.TokenHash,
 		&token.TokenPreview,

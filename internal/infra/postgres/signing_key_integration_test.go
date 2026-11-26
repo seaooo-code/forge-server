@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 // 打开后未签名构建不能发布，签名写回构建记录后可以发布，manifest 来源构建带上签名。
 func TestIntegrationSigningKeysAndSignedReleases(t *testing.T) {
 	f := newChannelFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	keys := NewSigningKeyRepository(f.pool)
 	builds := NewBuildRepository(f.pool)
 

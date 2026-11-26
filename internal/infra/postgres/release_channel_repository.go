@@ -88,6 +88,10 @@ func (r *ReleaseChannelRepository) CreateReleaseChannel(ctx context.Context, app
 }
 
 func (r *ReleaseChannelRepository) UpdateReleaseChannel(ctx context.Context, applicationSlug string, code string, input domain.ReleaseChannelInput) (domain.ReleaseChannel, error) {
+	// slug 全平台唯一，先在当前租户内确认应用存在，后面的语句就可以直接按 slug 操作。
+	if _, err := applicationIDBySlug(ctx, r.pool, applicationSlug); err != nil {
+		return domain.ReleaseChannel{}, err
+	}
 	tag, err := r.pool.Exec(ctx, `
 		update application_channels ch
 		set name = $3, description = $4, updated_at = now()
@@ -119,6 +123,9 @@ func (r *ReleaseChannelRepository) DeleteReleaseChannel(ctx context.Context, app
 	}
 	defer rollbackMigration(ctx, tx)
 
+	if _, err := applicationIDBySlug(ctx, tx, applicationSlug); err != nil {
+		return err
+	}
 	var applicationID string
 	if err := tx.QueryRow(ctx, `
 		select ch.application_id
@@ -194,9 +201,16 @@ type rowQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// applicationIDBySlug 在当前租户范围内按 slug 查应用 ID。
 func applicationIDBySlug(ctx context.Context, querier rowQuerier, slug string) (string, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return "", err
+	}
 	var id string
-	if err := querier.QueryRow(ctx, `select id from applications where slug = $1`, slug).Scan(&id); err != nil {
+	if err := querier.QueryRow(ctx, `
+		select id from applications where slug = $1 and ($2::text = '' or tenant_id = $2)
+	`, slug, tenantID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", domain.ErrApplicationNotFound
 		}

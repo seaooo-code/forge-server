@@ -34,9 +34,14 @@ func (r *ArtifactPullStatsRepository) IncrementArtifactPullStats(ctx context.Con
 		requests = append(requests, stat.Requests)
 	}
 	if _, err := r.pool.Exec(ctx, `
-		insert into artifact_pull_daily_stats (day, application_id, environment_code, module_id, runtime_version, platform, channel, outcome, build_record_id, requests)
-		select * from unnest($1::date[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::bigint[])
-		on conflict (day, application_id, environment_code, module_id, runtime_version, platform, channel, outcome, build_record_id)
+		insert into artifact_pull_daily_stats (day, application_id, environment_id, module_id, runtime_version, platform, channel, outcome, build_record_id, requests)
+		-- 统计里带的是环境编码，按应用所属租户换成环境 ID；应用或环境已不存在的计数丢弃。
+		select u.day, u.application_id, e.id, u.module_id, u.runtime_version, u.platform, u.channel, u.outcome, u.build_record_id, u.requests
+		from unnest($1::date[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::bigint[])
+			as u(day, application_id, environment_code, module_id, runtime_version, platform, channel, outcome, build_record_id, requests)
+		join applications a on a.id = u.application_id
+		join environments e on e.tenant_id = a.tenant_id and e.code = u.environment_code
+		on conflict (day, application_id, environment_id, module_id, runtime_version, platform, channel, outcome, build_record_id)
 		do update set requests = artifact_pull_daily_stats.requests + excluded.requests, updated_at = now()
 	`, days, columns[0], columns[1], columns[2], columns[3], columns[4], columns[5], columns[6], columns[7], requests); err != nil {
 		return fmt.Errorf("increment artifact pull stats: %w", err)
@@ -45,21 +50,28 @@ func (r *ArtifactPullStatsRepository) IncrementArtifactPullStats(ctx context.Con
 }
 
 func (r *ArtifactPullStatsRepository) ListArtifactPullStats(ctx context.Context, filters domain.ArtifactPullStatsFilters) ([]domain.ArtifactPullStatsRow, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, `
-		select s.day, s.application_id, s.environment_code, s.module_id, s.runtime_version, s.platform, s.channel, s.outcome, s.build_record_id, s.requests,
+		select s.day, s.application_id, e.code, s.module_id, s.runtime_version, s.platform, s.channel, s.outcome, s.build_record_id, s.requests,
 			coalesce(m.name, ''), coalesce(br.number, 0)
 		from artifact_pull_daily_stats s
+		join applications a on a.id = s.application_id
+		join environments e on e.id = s.environment_id
 		left join modules m on m.id = s.module_id
 		-- 按文本比较，避免对缺包行的空字符串做 uuid 转换。
 		left join build_records br on br.id::text = s.build_record_id
 		where ($1 = '' or s.application_id = $1)
 			and s.day >= $2
-			and ($3 = '' or s.environment_code = $3)
+			and ($3 = '' or e.code = $3)
 			and ($4 = '' or s.module_id = $4)
 			and ($5 = '' or s.build_record_id = $5)
-		order by s.day desc, m.sort_order nulls last, s.module_id, s.environment_code, s.runtime_version, s.platform, s.channel, s.outcome, s.build_record_id
+			and ($6::text = '' or a.tenant_id = $6)
+		order by s.day desc, m.sort_order nulls last, s.module_id, e.code, s.runtime_version, s.platform, s.channel, s.outcome, s.build_record_id
 		limit 5000
-	`, filters.ApplicationID, filters.From, filters.Environment, filters.ModuleID, filters.BuildRecordID)
+	`, filters.ApplicationID, filters.From, filters.Environment, filters.ModuleID, filters.BuildRecordID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query artifact pull stats: %w", err)
 	}

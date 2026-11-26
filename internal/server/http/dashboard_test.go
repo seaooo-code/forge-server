@@ -70,7 +70,7 @@ type fakeDashboardService struct {
 	err      error
 }
 
-func (s fakeDashboardService) GetDashboardSnapshot(context.Context, string) (domain.DashboardSnapshot, error) {
+func (s fakeDashboardService) GetDashboardSnapshot(context.Context) (domain.DashboardSnapshot, error) {
 	if s.err != nil {
 		return domain.DashboardSnapshot{}, s.err
 	}

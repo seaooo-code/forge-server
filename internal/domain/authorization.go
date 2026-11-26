@@ -2,15 +2,19 @@ package domain
 
 import "errors"
 
-var ErrForbidden = errors.New("forbidden")
+var (
+	ErrForbidden = errors.New("forbidden")
+	// ErrNotFound 表示鉴权时资源不存在，或者属于其他租户。
+	ErrNotFound = errors.New("not found")
+)
 
-type GlobalRole string
+type Role string
 
 const (
-	GlobalRoleSuperAdmin    GlobalRole = "SuperAdmin"
-	GlobalRolePlatformAdmin GlobalRole = "PlatformAdmin"
-	GlobalRoleReleaseAdmin  GlobalRole = "ReleaseAdmin"
-	GlobalRoleAuditor       GlobalRole = "Auditor"
+	RoleSuperAdmin   Role = "SuperAdmin"
+	RoleTenantAdmin  Role = "TenantAdmin"
+	RoleReleaseAdmin Role = "ReleaseAdmin"
+	RoleAuditor      Role = "Auditor"
 )
 
 type AuthorizationAction string
@@ -33,14 +37,14 @@ const (
 	ActionStorageManage     AuthorizationAction = "storage:manage"
 	ActionEnvironmentManage AuthorizationAction = "environment:manage"
 	ActionAccessTokenManage AuthorizationAction = "access_token:manage"
-	// ActionBuildAdapterManage 表示新增、编辑、停用构建适配器，只授予 PlatformAdmin 与 SuperAdmin。
+	// ActionBuildAdapterManage 表示新增、编辑、停用构建适配器，只授予 TenantAdmin 与 SuperAdmin。
 	ActionBuildAdapterManage AuthorizationAction = "build_adapter:manage"
 	// ActionBuildAdapterUse 表示读取、预览并为模块选用构建适配器，授予能管理模块的人。
 	ActionBuildAdapterUse AuthorizationAction = "build_adapter:use"
-	// ActionFeishuTenantManage 表示新增、编辑、停用飞书登录租户，只授予 SuperAdmin：租户凭证决定谁能登录平台。
-	ActionFeishuTenantManage AuthorizationAction = "feishu_tenant:manage"
+	// ActionTenantManage 表示新增、编辑、停用租户，只授予 SuperAdmin：租户配置决定谁能登录平台。
+	ActionTenantManage AuthorizationAction = "tenant:manage"
 	// ActionTestPlanManage 表示新建、编辑、关闭提测单，增删条目和任意成员。授予应用的 Owner、Developer、QA
-	// 和 PlatformAdmin、SuperAdmin。用自己的测试账号加入、退出提测单不需要这个权限。
+	// 和 TenantAdmin、SuperAdmin。用自己的测试账号加入、退出提测单不需要这个权限。
 	ActionTestPlanManage AuthorizationAction = "test_plan:manage"
 )
 
@@ -53,7 +57,7 @@ type AuthorizationResource struct {
 	TestPlanID      string
 }
 
-type GlobalCapabilities struct {
+type TenantCapabilities struct {
 	CanCreateApplication   bool `json:"canCreateApplication"`
 	CanManageApplications  bool `json:"canManageApplications"`
 	CanManageModules       bool `json:"canManageModules"`
@@ -64,7 +68,7 @@ type GlobalCapabilities struct {
 	CanManageEnvironments  bool `json:"canManageEnvironments"`
 	CanManageAccessTokens  bool `json:"canManageAccessTokens"`
 	CanManageBuildAdapters bool `json:"canManageBuildAdapters"`
-	CanManageFeishuTenants bool `json:"canManageFeishuTenants"`
+	CanManageTenants       bool `json:"canManageTenants"`
 	CanManageTestPlans     bool `json:"canManageTestPlans"`
 }
 
@@ -77,21 +81,21 @@ type ApplicationCapabilities struct {
 	CanManageTestPlans bool `json:"canManageTestPlans"`
 }
 
-func IsValidGlobalRole(role GlobalRole) bool {
+func IsValidRole(role Role) bool {
 	switch role {
-	case GlobalRoleSuperAdmin, GlobalRolePlatformAdmin, GlobalRoleReleaseAdmin, GlobalRoleAuditor:
+	case RoleSuperAdmin, RoleTenantAdmin, RoleReleaseAdmin, RoleAuditor:
 		return true
 	default:
 		return false
 	}
 }
 
-func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
-	var capabilities GlobalCapabilities
+func TenantCapabilitiesForRoles(roles []Role) TenantCapabilities {
+	var capabilities TenantCapabilities
 	for _, role := range roles {
 		switch role {
-		case GlobalRoleSuperAdmin:
-			return GlobalCapabilities{
+		case RoleSuperAdmin:
+			return TenantCapabilities{
 				CanCreateApplication:   true,
 				CanManageApplications:  true,
 				CanManageModules:       true,
@@ -102,10 +106,10 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 				CanManageEnvironments:  true,
 				CanManageAccessTokens:  true,
 				CanManageBuildAdapters: true,
-				CanManageFeishuTenants: true,
+				CanManageTenants:       true,
 				CanManageTestPlans:     true,
 			}
-		case GlobalRolePlatformAdmin:
+		case RoleTenantAdmin:
 			capabilities.CanCreateApplication = true
 			capabilities.CanManageApplications = true
 			capabilities.CanManageModules = true
@@ -116,7 +120,7 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 			capabilities.CanManageAccessTokens = true
 			capabilities.CanManageBuildAdapters = true
 			capabilities.CanManageTestPlans = true
-		case GlobalRoleReleaseAdmin:
+		case RoleReleaseAdmin:
 			capabilities.CanCreateBuild = true
 			capabilities.CanCreateRelease = true
 		}
@@ -124,8 +128,8 @@ func GlobalCapabilitiesForRoles(roles []GlobalRole) GlobalCapabilities {
 	return capabilities
 }
 
-func ApplicationCapabilitiesFor(globalRoles []GlobalRole, appRole ApplicationMemberRole) ApplicationCapabilities {
-	global := GlobalCapabilitiesForRoles(globalRoles)
+func ApplicationCapabilitiesFor(globalRoles []Role, appRole ApplicationMemberRole) ApplicationCapabilities {
+	global := TenantCapabilitiesForRoles(globalRoles)
 	capabilities := ApplicationCapabilities{
 		CanEditApplication: global.CanManageApplications,
 		CanManageMembers:   global.CanManageApplications,

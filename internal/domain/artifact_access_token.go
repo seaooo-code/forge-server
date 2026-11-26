@@ -19,7 +19,9 @@ const (
 )
 
 type ArtifactAccessToken struct {
-	ID              string
+	ID string
+	// TenantID 是令牌所属租户，令牌只能访问这个租户的应用。
+	TenantID        string
 	Name            string
 	TokenHash       string
 	TokenPreview    string
@@ -61,8 +63,9 @@ type ArtifactAccessTokenStoredInput struct {
 }
 
 type ArtifactAccessTokenValidationResult struct {
-	Matched bool
-	Allowed bool
+	Matched  bool
+	Allowed  bool
+	TenantID string
 }
 
 func IsValidArtifactAccessTokenStatus(status ArtifactAccessTokenStatus) bool {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"forge-server/internal/domain"
@@ -15,7 +16,7 @@ type AuthorizationRepository interface {
 	ApplicationIDBySlug(ctx context.Context, slug string) (string, error)
 	GetApplicationRole(ctx context.Context, userID string, applicationID string) (domain.ApplicationMemberRole, error)
 	ListApplicationRoles(ctx context.Context, userID string) ([]domain.ApplicationMemberRole, error)
-	ListGlobalRoles(ctx context.Context, userID string) ([]domain.GlobalRole, error)
+	ListUserRoles(ctx context.Context, userID string) ([]domain.Role, error)
 }
 
 type AuthorizationService struct {
@@ -26,19 +27,19 @@ func NewAuthorizationService(repository AuthorizationRepository) *AuthorizationS
 	return &AuthorizationService{repository: repository}
 }
 
-func (s *AuthorizationService) ListGlobalRoles(ctx context.Context, userID string) ([]domain.GlobalRole, error) {
+func (s *AuthorizationService) ListUserRoles(ctx context.Context, userID string) ([]domain.Role, error) {
 	if s == nil || s.repository == nil {
 		return nil, nil
 	}
-	return s.repository.ListGlobalRoles(ctx, strings.TrimSpace(userID))
+	return s.repository.ListUserRoles(ctx, strings.TrimSpace(userID))
 }
 
-func (s *AuthorizationService) GlobalCapabilities(ctx context.Context, userID string) (domain.GlobalCapabilities, []domain.GlobalRole, error) {
-	roles, err := s.ListGlobalRoles(ctx, userID)
+func (s *AuthorizationService) TenantCapabilities(ctx context.Context, userID string) (domain.TenantCapabilities, []domain.Role, error) {
+	roles, err := s.ListUserRoles(ctx, userID)
 	if err != nil {
-		return domain.GlobalCapabilities{}, nil, err
+		return domain.TenantCapabilities{}, nil, err
 	}
-	return domain.GlobalCapabilitiesForRoles(roles), roles, nil
+	return domain.TenantCapabilitiesForRoles(roles), roles, nil
 }
 
 func (s *AuthorizationService) ApplicationCapabilities(ctx context.Context, userID string, applicationID string) (domain.ApplicationCapabilities, error) {
@@ -46,7 +47,7 @@ func (s *AuthorizationService) ApplicationCapabilities(ctx context.Context, user
 		return domain.ApplicationCapabilities{}, nil
 	}
 
-	roles, err := s.repository.ListGlobalRoles(ctx, strings.TrimSpace(userID))
+	roles, err := s.repository.ListUserRoles(ctx, strings.TrimSpace(userID))
 	if err != nil {
 		return domain.ApplicationCapabilities{}, err
 	}
@@ -67,7 +68,15 @@ func (s *AuthorizationService) Authorize(ctx context.Context, userID string, act
 		return domain.ErrForbidden
 	}
 
-	roles, err := s.repository.ListGlobalRoles(ctx, normalizedUserID)
+	// 先解析资源：资源查询按当前租户过滤，其他租户的资源在这里就是不存在，全局角色也不能越过。
+	applicationID, err := s.resolveApplicationID(ctx, resource)
+	if err != nil {
+		if isResourceNotFound(err) {
+			return domain.ErrNotFound
+		}
+		return err
+	}
+	roles, err := s.repository.ListUserRoles(ctx, normalizedUserID)
 	if err != nil {
 		return err
 	}
@@ -75,10 +84,6 @@ func (s *AuthorizationService) Authorize(ctx context.Context, userID string, act
 		return nil
 	}
 
-	applicationID, err := s.resolveApplicationID(ctx, resource)
-	if err != nil {
-		return err
-	}
 	if applicationID == "" {
 		// 平台级资源（例如代码源连接、构建适配器）没有所属应用时，只要用户在任一应用里具备该动作即可。
 		if action != domain.ActionCodeSourceUse && action != domain.ActionBuildAdapterUse {
@@ -128,12 +133,20 @@ func (s *AuthorizationService) resolveApplicationID(ctx context.Context, resourc
 	return "", nil
 }
 
-func globalActionAllowed(roles []domain.GlobalRole, action domain.AuthorizationAction) bool {
+func isResourceNotFound(err error) bool {
+	return errors.Is(err, domain.ErrApplicationNotFound) ||
+		errors.Is(err, domain.ErrModuleNotFound) ||
+		errors.Is(err, domain.ErrBuildRecordNotFound) ||
+		errors.Is(err, domain.ErrReleaseNotFound) ||
+		errors.Is(err, domain.ErrTestPlanNotFound)
+}
+
+func globalActionAllowed(roles []domain.Role, action domain.AuthorizationAction) bool {
 	for _, role := range roles {
 		switch role {
-		case domain.GlobalRoleSuperAdmin:
+		case domain.RoleSuperAdmin:
 			return true
-		case domain.GlobalRolePlatformAdmin:
+		case domain.RoleTenantAdmin:
 			switch action {
 			case domain.ActionApplicationCreate,
 				domain.ActionApplicationUpdate,
@@ -154,7 +167,7 @@ func globalActionAllowed(roles []domain.GlobalRole, action domain.AuthorizationA
 				domain.ActionTestPlanManage:
 				return true
 			}
-		case domain.GlobalRoleReleaseAdmin:
+		case domain.RoleReleaseAdmin:
 			switch action {
 			case domain.ActionBuildCreate, domain.ActionReleaseCreate, domain.ActionReleaseRollback:
 				return true

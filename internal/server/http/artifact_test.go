@@ -286,10 +286,10 @@ func TestDownloadArtifactFileAcceptsSession(t *testing.T) {
 	}
 	e := New(config.Config{}, Dependencies{
 		ArtifactService: service,
-		FeishuAuthService: &fakeFeishuAuthService{result: domain.FeishuAuthResult{
-			SessionExpiresAt: time.Now().Add(time.Hour),
-			SessionToken:     "session-token",
-			User:             domain.FeishuUser{UnionID: "on-user-1"},
+		FeishuAuthService: &fakeFeishuAuthService{result: domain.ConsoleSession{
+			ExpiresAt:    time.Now().Add(time.Hour),
+			SessionToken: "session-token",
+			User:         domain.User{ID: "user-1"},
 		}},
 	})
 

@@ -140,9 +140,6 @@ func TestGetApplicationDetail(t *testing.T) {
 	if response.Detail.OwnerUserID != "ou-li-ming" || response.Detail.OwnerEmail == "" || response.Detail.OwnerAvatarURL == "" {
 		t.Fatalf("expected owner profile fields, got %#v", response.Detail)
 	}
-	if len(response.Detail.OwnerDepartmentIDs) != 1 || response.Detail.OwnerDepartmentIDs[0] != "od-rn-platform" {
-		t.Fatalf("expected owner department ids, got %#v", response.Detail.OwnerDepartmentIDs)
-	}
 	if len(response.Detail.Environments) != 2 {
 		t.Fatalf("expected environments, got %d", len(response.Detail.Environments))
 	}
@@ -605,19 +602,18 @@ func testHTTPApplication(slug string, status domain.ApplicationStatus) domain.Ap
 	}
 
 	return domain.Application{
-		ID:                 "app-" + slug,
-		Name:               name,
-		Slug:               slug,
-		Platform:           "iOS / Android",
-		OwnerUserID:        "ou-li-ming",
-		Owner:              "li.ming",
-		OwnerEmail:         "li.ming@xiaomi.com",
-		OwnerAvatarURL:     "https://example.com/li.ming.png",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
-		ModuleCount:        12,
-		EnvironmentCount:   5,
-		CreatedAt:          time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
-		Status:             status,
+		ID:               "app-" + slug,
+		Name:             name,
+		Slug:             slug,
+		Platform:         "iOS / Android",
+		OwnerUserID:      "ou-li-ming",
+		Owner:            "li.ming",
+		OwnerEmail:       "li.ming@xiaomi.com",
+		OwnerAvatarURL:   "https://example.com/li.ming.png",
+		ModuleCount:      12,
+		EnvironmentCount: 5,
+		CreatedAt:        time.Date(2026, 6, 9, 14, 32, 18, 0, time.UTC),
+		Status:           status,
 	}
 }
 
@@ -633,17 +629,16 @@ func applicationSupportsPlatform(platforms string, filter string) bool {
 func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) domain.ApplicationDetail {
 	application := testHTTPApplication(slug, status)
 	return domain.ApplicationDetail{
-		Application:        application,
-		ID:                 application.ID,
-		AppKey:             "rn." + slug,
-		Slug:               slug,
-		Name:               application.Name,
-		Description:        "应用详情",
-		OwnerUserID:        application.OwnerUserID,
-		Owner:              application.Owner,
-		OwnerEmail:         application.OwnerEmail,
-		OwnerAvatarURL:     application.OwnerAvatarURL,
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
+		Application:    application,
+		ID:             application.ID,
+		AppKey:         "rn." + slug,
+		Slug:           slug,
+		Name:           application.Name,
+		Description:    "应用详情",
+		OwnerUserID:    application.OwnerUserID,
+		Owner:          application.Owner,
+		OwnerEmail:     application.OwnerEmail,
+		OwnerAvatarURL: application.OwnerAvatarURL,
 		Metrics: []domain.ApplicationDetailMetric{
 			{ID: "platform", Label: "支持平台", Value: "2", Detail: "iOS / Android", Tone: "blue"},
 		},
@@ -669,7 +664,6 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 				ID:   "owner",
 				Name: "li.ming",
 				Role: domain.ApplicationMemberRoleOwner,
-				Team: "小米汽车 - RN 平台组",
 			},
 		},
 		ClientIntegration: domain.ClientIntegrationInfo{
@@ -692,16 +686,12 @@ func testHTTPApplicationDetail(slug string, status domain.ApplicationStatus) dom
 
 func testApplicationRequest(slug string) applicationRequest {
 	return applicationRequest{
-		Slug:               slug,
-		Name:               "小米汽车海外版",
-		Platform:           "iOS / Android",
-		OwnerUserID:        "ou-li-ming",
-		Owner:              "li.ming",
-		OwnerEmail:         "li.ming@xiaomi.com",
-		OwnerAvatarURL:     "https://example.com/li.ming.png",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
-		Description:        "海外版宿主应用",
-		Status:             domain.ApplicationStatusRunning,
+		Slug:        slug,
+		Name:        "小米汽车海外版",
+		Platform:    "iOS / Android",
+		OwnerUserID: "ou-li-ming",
+		Description: "海外版宿主应用",
+		Status:      domain.ApplicationStatusRunning,
 		Environments: []applicationEnvironmentRequest{
 			{
 				Environment: "dev",

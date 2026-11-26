@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -21,11 +22,12 @@ func TestFeishuAuthServiceCompleteAuthorization(t *testing.T) {
 		user: domain.FeishuUser{
 			UnionID:   "on_union",
 			OpenID:    "ou_open",
+			UserID:    "u_feishu",
 			Name:      "张三",
 			TenantKey: "tenant",
 		},
 	}
-	repository := &fakeFeishuUserRepository{}
+	repository := &fakeAuthUserRepository{}
 	service := NewFeishuAuthService(client, repository, testFeishuTenantResolver())
 
 	if _, err := service.CompleteAuthorization(context.Background(), "xiaomi", "https://evil.example.com/steal", "auth-code"); err != domain.ErrInvalidFeishuRedirectURI {
@@ -36,64 +38,52 @@ func TestFeishuAuthServiceCompleteAuthorization(t *testing.T) {
 		t.Fatalf("complete authorization: %v", err)
 	}
 
-	if result.User.UnionID != "on_union" {
-		t.Fatalf("expected saved user, got %q", result.User.UnionID)
+	resolved := repository.resolvedExternal
+	if repository.resolvedTenantID != "xiaomi" || resolved.Provider != domain.IdentityProviderFeishu ||
+		resolved.Issuer != "cli_xiaomi0001" || resolved.Subject != "ou_open" || !repository.resolvedLogin {
+		t.Fatalf("expected feishu identity of tenant app, got tenant=%q %+v", repository.resolvedTenantID, resolved)
 	}
-	if repository.savedUser.UnionID != "on_union" {
-		t.Fatalf("expected repository to save user, got %q", repository.savedUser.UnionID)
+	if resolved.Profile["unionId"] != "on_union" || resolved.Profile["userId"] != "u_feishu" {
+		t.Fatalf("expected feishu ids in identity profile, got %+v", resolved.Profile)
 	}
-	if repository.savedConsoleUser.ID != "ou_open" || repository.savedConsoleUser.FeishuUnionID != "on_union" {
-		t.Fatalf("expected repository to sync console user, got %+v", repository.savedConsoleUser)
+	if result.User.ID != "user-1" || repository.bootstrappedUser.ID != "user-1" {
+		t.Fatalf("expected generated user id and role bootstrap, got result=%+v bootstrap=%+v", result.User, repository.bootstrappedUser)
 	}
-	if repository.savedConsoleUser.DepartmentIDs == nil || len(repository.savedConsoleUser.DepartmentIDs) != 0 {
-		t.Fatalf("expected empty department ids, got %#v", repository.savedConsoleUser.DepartmentIDs)
+	if len(result.Roles) != 1 || result.Roles[0] != domain.RoleSuperAdmin || !result.Capabilities.CanManageTenants {
+		t.Fatalf("expected super admin role, got %#v %#v", result.Roles, result.Capabilities)
 	}
-	if repository.bootstrapUserID != "ou_open" {
-		t.Fatalf("expected first login bootstrap, got %q", repository.bootstrapUserID)
+	if result.SessionToken == "" || repository.createdSession.TokenHash == "" {
+		t.Fatal("expected session token and stored session")
 	}
-	if len(result.Roles) != 1 || result.Roles[0] != domain.GlobalRoleSuperAdmin {
-		t.Fatalf("expected super admin role, got %#v", result.Roles)
+	if repository.createdSession.ActiveTenantID != "xiaomi" || result.ActiveTenant.Name != "小米" || result.HomeTenant.ID != "xiaomi" {
+		t.Fatalf("expected session in home tenant, got session=%+v result=%+v/%+v", repository.createdSession, result.HomeTenant, result.ActiveTenant)
 	}
-	if !result.Capabilities.CanCreateApplication || !result.Capabilities.CanManageApplications {
-		t.Fatalf("expected super admin capabilities, got %#v", result.Capabilities)
-	}
-	if result.SessionToken == "" {
-		t.Fatal("expected session token")
-	}
-	if repository.createdSession.SessionTokenHash == "" {
-		t.Fatal("expected repository to save auth session")
-	}
-	if repository.createdSession.TenantID != "xiaomi" || result.Tenant.Name != "小米" {
-		t.Fatalf("expected session bound to tenant, got session=%q result=%+v", repository.createdSession.TenantID, result.Tenant)
+	if repository.createdSession.ProviderAccessToken != "user-access-token" || result.ProviderAccessToken != "user-access-token" {
+		t.Fatalf("expected provider token kept on session, got %+v", repository.createdSession)
 	}
 }
 
 func TestFeishuAuthServiceGetSessionExpiresWhenTenantDisabled(t *testing.T) {
 	now := time.Now()
-	repository := &fakeFeishuUserRepository{
-		session: domain.FeishuAuthSession{
-			SessionTokenHash:      "hash",
-			UnionID:               "on_union",
-			TenantID:              "xiaomi",
-			TenantStatus:          domain.FeishuTenantStatusDisabled,
-			AccessToken:           "access-token",
-			AccessTokenExpiresAt:  now.Add(time.Hour),
-			RefreshToken:          "refresh-token",
-			RefreshTokenExpiresAt: now.Add(24 * time.Hour),
-			User:                  domain.FeishuUser{UnionID: "on_union", OpenID: "ou_open"},
-		},
-	}
-	service := NewFeishuAuthService(fakeFeishuClient{}, repository, testFeishuTenantResolver())
+	for name, session := range map[string]domain.AuthSession{
+		"home disabled":   activeTestSession(now, func(s *domain.AuthSession) { s.HomeTenantStatus = domain.TenantStatusDisabled }),
+		"active disabled": activeTestSession(now, func(s *domain.AuthSession) { s.ActiveTenantStatus = domain.TenantStatusDisabled }),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repository := &fakeAuthUserRepository{session: session}
+			service := NewFeishuAuthService(fakeFeishuClient{}, repository, testFeishuTenantResolver())
 
-	if _, err := service.GetSession(context.Background(), "session-token"); err != domain.ErrFeishuSessionExpired {
-		t.Fatalf("expected session expired for disabled tenant, got %v", err)
-	}
-	if !repository.deletedSession {
-		t.Fatal("expected disabled tenant session to be deleted")
+			if _, err := service.GetSession(context.Background(), "session-token"); err != domain.ErrSessionExpired {
+				t.Fatalf("expected session expired for disabled tenant, got %v", err)
+			}
+			if !repository.deletedSession {
+				t.Fatal("expected disabled tenant session to be deleted")
+			}
+		})
 	}
 }
 
-func TestFeishuAuthServiceGetSessionRefreshesExpiringAccessToken(t *testing.T) {
+func TestFeishuAuthServiceGetSessionRefreshesWithHomeTenantApp(t *testing.T) {
 	now := time.Now()
 	client := fakeFeishuClient{
 		refreshApp: &domain.FeishuApp{},
@@ -103,53 +93,94 @@ func TestFeishuAuthServiceGetSessionRefreshesExpiringAccessToken(t *testing.T) {
 			RefreshToken:          "new-refresh-token",
 			RefreshTokenExpiresIn: 30 * 24 * 3600,
 			TokenType:             "Bearer",
-			Scope:                 "offline_access",
 		},
 	}
-	repository := &fakeFeishuUserRepository{
-		session: domain.FeishuAuthSession{
-			SessionTokenHash:      "hash",
-			UnionID:               "on_union",
-			TenantID:              "xiaomi",
-			TenantStatus:          domain.FeishuTenantStatusActive,
-			AccessToken:           "old-access-token",
-			AccessTokenExpiresAt:  now.Add(time.Minute),
-			RefreshToken:          "old-refresh-token",
-			RefreshTokenExpiresAt: now.Add(24 * time.Hour),
-			TokenType:             "Bearer",
-			Scope:                 "offline_access",
-			User: domain.FeishuUser{
-				UnionID: "on_union",
-				OpenID:  "ou_open",
-				Name:    "张三",
-			},
-		},
-	}
+	session := activeTestSession(now, func(s *domain.AuthSession) {
+		s.ProviderAccessTokenExpiresAt = now.Add(time.Minute)
+		s.ActiveTenantID = "other"
+		s.ActiveTenant = domain.TenantSummary{ID: "other", Name: "其他"}
+	})
+	repository := &fakeAuthUserRepository{session: session, roles: []domain.Role{domain.RoleSuperAdmin}}
 	service := NewFeishuAuthService(client, repository, testFeishuTenantResolver())
 
 	result, err := service.GetSession(context.Background(), "session-token")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
+	if repository.updatedSession.ProviderAccessToken != "new-access-token" || result.ProviderAccessToken != "new-access-token" {
+		t.Fatalf("expected refreshed access token, got %+v", repository.updatedSession)
+	}
+	if repository.updatedSession.ProviderRefreshToken != "new-refresh-token" {
+		t.Fatalf("expected refreshed refresh token, got %q", repository.updatedSession.ProviderRefreshToken)
+	}
+	if client.refreshApp.AppID != "cli_xiaomi0001" {
+		t.Fatalf("expected refresh with home tenant app, got %+v", client.refreshApp)
+	}
+	if result.ActiveTenant.ID != "other" {
+		t.Fatalf("expected super admin to stay in switched tenant, got %+v", result.ActiveTenant)
+	}
+}
 
-	if result.User.UnionID != "on_union" {
-		t.Fatalf("expected session user, got %q", result.User.UnionID)
+func TestFeishuAuthServiceMovesNonSuperAdminBackToHomeTenant(t *testing.T) {
+	session := activeTestSession(time.Now(), func(s *domain.AuthSession) {
+		s.ActiveTenantID = "other"
+		s.ActiveTenant = domain.TenantSummary{ID: "other", Name: "其他"}
+	})
+	repository := &fakeAuthUserRepository{session: session, roles: []domain.Role{domain.RoleTenantAdmin}}
+	service := NewFeishuAuthService(fakeFeishuClient{}, repository, testFeishuTenantResolver())
+
+	result, err := service.GetSession(context.Background(), "session-token")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
 	}
-	if repository.updatedSession.AccessToken != "new-access-token" {
-		t.Fatalf("expected refreshed access token, got %q", repository.updatedSession.AccessToken)
+	if result.ActiveTenant.ID != "xiaomi" || repository.switchedTenantID != "xiaomi" {
+		t.Fatalf("expected session moved back to home tenant, got %+v switched=%q", result.ActiveTenant, repository.switchedTenantID)
 	}
-	if result.Token.AccessToken != "new-access-token" {
-		t.Fatalf("expected result access token, got %q", result.Token.AccessToken)
+}
+
+func TestFeishuAuthServiceSwitchTenant(t *testing.T) {
+	session := activeTestSession(time.Now(), nil)
+
+	repository := &fakeAuthUserRepository{session: session, roles: []domain.Role{domain.RoleTenantAdmin}}
+	service := NewFeishuAuthService(fakeFeishuClient{}, repository, testFeishuTenantResolver())
+	if _, err := service.SwitchTenant(context.Background(), "session-token", "other"); !errors.Is(err, domain.ErrTenantSwitchForbidden) {
+		t.Fatalf("expected tenant admin switch forbidden, got %v", err)
 	}
-	if repository.updatedSession.RefreshToken != "new-refresh-token" {
-		t.Fatalf("expected refreshed refresh token, got %q", repository.updatedSession.RefreshToken)
+	if _, err := service.SwitchTenant(context.Background(), "session-token", "xiaomi"); err != nil {
+		t.Fatalf("expected switching to home tenant allowed, got %v", err)
 	}
-	if repository.savedConsoleUser.ID != "ou_open" {
-		t.Fatalf("expected synced console user id, got %+v", repository.savedConsoleUser)
+
+	repository = &fakeAuthUserRepository{session: session, roles: []domain.Role{domain.RoleSuperAdmin}}
+	service = NewFeishuAuthService(fakeFeishuClient{}, repository, testFeishuTenantResolver())
+	if _, err := service.SwitchTenant(context.Background(), "session-token", "other"); err != nil {
+		t.Fatalf("expected super admin switch allowed, got %v", err)
 	}
-	if client.refreshApp == nil || client.refreshApp.AppID != "cli_xiaomi0001" {
-		t.Fatalf("expected refresh with session tenant app, got %+v", client.refreshApp)
+	if repository.switchedTenantID != "other" {
+		t.Fatalf("expected session switched to other, got %q", repository.switchedTenantID)
 	}
+}
+
+func activeTestSession(now time.Time, mutate func(*domain.AuthSession)) domain.AuthSession {
+	session := domain.AuthSession{
+		TokenHash:                     "hash",
+		UserID:                        "user-1",
+		IdentityID:                    "identity-1",
+		ActiveTenantID:                "xiaomi",
+		ProviderAccessToken:           "access-token",
+		ProviderAccessTokenExpiresAt:  now.Add(time.Hour),
+		ProviderRefreshToken:          "refresh-token",
+		ProviderRefreshTokenExpiresAt: now.Add(24 * time.Hour),
+		User:                          domain.User{ID: "user-1", TenantID: "xiaomi", Name: "张三"},
+		Identity:                      domain.UserIdentity{ID: "identity-1", UserID: "user-1", Provider: domain.IdentityProviderFeishu, Issuer: "cli_xiaomi0001", Subject: "ou_open"},
+		HomeTenant:                    domain.TenantSummary{ID: "xiaomi", Name: "小米"},
+		HomeTenantStatus:              domain.TenantStatusActive,
+		ActiveTenant:                  domain.TenantSummary{ID: "xiaomi", Name: "小米"},
+		ActiveTenantStatus:            domain.TenantStatusActive,
+	}
+	if mutate != nil {
+		mutate(&session)
+	}
+	return session
 }
 
 type fakeFeishuClient struct {
@@ -182,75 +213,84 @@ func (c fakeFeishuClient) RefreshAccessToken(_ context.Context, app domain.Feish
 }
 
 type fakeFeishuTenantResolver struct {
-	tenants map[string]domain.FeishuTenant
+	tenants map[string]domain.Tenant
 }
 
 func testFeishuTenantResolver() fakeFeishuTenantResolver {
-	return fakeFeishuTenantResolver{tenants: map[string]domain.FeishuTenant{
-		"xiaomi": {ID: "xiaomi", Name: "小米", AppID: "cli_xiaomi0001", AppSecret: "secret", Status: domain.FeishuTenantStatusActive},
+	return fakeFeishuTenantResolver{tenants: map[string]domain.Tenant{
+		"xiaomi": {ID: "xiaomi", Name: "小米", FeishuAppID: "cli_xiaomi0001", FeishuAppSecret: "secret", Status: domain.TenantStatusActive},
 	}}
 }
 
-func (r fakeFeishuTenantResolver) ResolveApp(_ context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error) {
+func (r fakeFeishuTenantResolver) ResolveApp(_ context.Context, id string) (domain.Tenant, domain.FeishuApp, error) {
 	tenant, ok := r.tenants[id]
 	if !ok {
-		return domain.FeishuTenant{}, domain.FeishuApp{}, domain.ErrFeishuTenantNotFound
+		return domain.Tenant{}, domain.FeishuApp{}, domain.ErrTenantNotFound
 	}
-	return tenant, domain.FeishuApp{AppID: tenant.AppID, AppSecret: tenant.AppSecret}, nil
+	return tenant, domain.FeishuApp{AppID: tenant.FeishuAppID, AppSecret: tenant.FeishuAppSecret}, nil
 }
 
-func (r fakeFeishuTenantResolver) ResolveLoginTenant(ctx context.Context, id string) (domain.FeishuTenant, domain.FeishuApp, error) {
+func (r fakeFeishuTenantResolver) ResolveLoginTenant(ctx context.Context, id string) (domain.Tenant, domain.FeishuApp, error) {
 	return r.ResolveApp(ctx, id)
 }
 
-type fakeFeishuUserRepository struct {
-	bootstrapUserID  string
-	createdSession   domain.FeishuAuthSession
-	globalRoles      []domain.GlobalRole
-	savedConsoleUser domain.UserInput
-	savedUser        domain.FeishuUser
-	session          domain.FeishuAuthSession
-	updatedSession   domain.FeishuAuthSession
+type fakeAuthUserRepository struct {
+	resolvedTenantID string
+	resolvedExternal domain.ExternalUser
+	resolvedLogin    bool
+	bootstrappedUser domain.User
+	roles            []domain.Role
+	createdSession   domain.AuthSession
+	session          domain.AuthSession
+	updatedSession   domain.AuthSession
+	switchedTenantID string
 	deletedSession   bool
 }
 
-func (r *fakeFeishuUserRepository) UpsertFeishuUser(_ context.Context, user domain.FeishuUser) (domain.FeishuUser, error) {
-	r.savedUser = user
-	return user, nil
+func (r *fakeAuthUserRepository) ResolveExternalUser(_ context.Context, tenantID string, external domain.ExternalUser, login bool) (domain.User, domain.UserIdentity, error) {
+	r.resolvedTenantID, r.resolvedExternal, r.resolvedLogin = tenantID, external, login
+	user := domain.User{ID: "user-1", TenantID: tenantID, Name: external.Name}
+	return user, domain.UserIdentity{ID: "identity-1", UserID: user.ID, Provider: external.Provider, Issuer: external.Issuer, Subject: external.Subject}, nil
 }
 
-func (r *fakeFeishuUserRepository) UpsertUser(_ context.Context, user domain.UserInput) error {
-	r.savedConsoleUser = user
-	return nil
+func (r *fakeAuthUserRepository) SearchUsers(context.Context, string, int) ([]domain.User, error) {
+	return nil, nil
 }
 
-func (r *fakeFeishuUserRepository) BootstrapFirstSuperAdmin(_ context.Context, userID string) error {
-	r.bootstrapUserID = userID
-	if len(r.globalRoles) == 0 {
-		r.globalRoles = []domain.GlobalRole{domain.GlobalRoleSuperAdmin}
+func (r *fakeAuthUserRepository) BootstrapUserRoles(_ context.Context, user domain.User) error {
+	r.bootstrappedUser = user
+	if len(r.roles) == 0 {
+		r.roles = []domain.Role{domain.RoleSuperAdmin}
 	}
 	return nil
 }
 
-func (r *fakeFeishuUserRepository) ListGlobalRoles(context.Context, string) ([]domain.GlobalRole, error) {
-	return r.globalRoles, nil
+func (r *fakeAuthUserRepository) ListUserRoles(context.Context, string) ([]domain.Role, error) {
+	return r.roles, nil
 }
 
-func (r *fakeFeishuUserRepository) CreateFeishuAuthSession(_ context.Context, session domain.FeishuAuthSession) error {
+func (r *fakeAuthUserRepository) CreateSession(_ context.Context, session domain.AuthSession) error {
 	r.createdSession = session
 	return nil
 }
 
-func (r *fakeFeishuUserRepository) FindFeishuAuthSession(context.Context, string) (domain.FeishuAuthSession, error) {
+func (r *fakeAuthUserRepository) FindSession(context.Context, string) (domain.AuthSession, error) {
 	return r.session, nil
 }
 
-func (r *fakeFeishuUserRepository) UpdateFeishuAuthSessionToken(_ context.Context, session domain.FeishuAuthSession) error {
+func (r *fakeAuthUserRepository) UpdateSessionToken(_ context.Context, session domain.AuthSession) error {
 	r.updatedSession = session
 	return nil
 }
 
-func (r *fakeFeishuUserRepository) DeleteFeishuAuthSession(context.Context, string) error {
+func (r *fakeAuthUserRepository) SetSessionActiveTenant(_ context.Context, _ string, tenantID string) error {
+	r.switchedTenantID = tenantID
+	r.session.ActiveTenantID = tenantID
+	r.session.ActiveTenant = domain.TenantSummary{ID: tenantID, Name: tenantID}
+	return nil
+}
+
+func (r *fakeAuthUserRepository) DeleteSession(context.Context, string) error {
 	r.deletedSession = true
 	return nil
 }

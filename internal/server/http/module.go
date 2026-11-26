@@ -115,21 +115,14 @@ type moduleSummaryResponse struct {
 }
 
 type moduleRequest struct {
-	ApplicationID      string                   `json:"applicationId"`
-	CommonModuleID     string                   `json:"commonModuleId"`
-	ID                 string                   `json:"id"`
-	Kind               domain.ModuleKind        `json:"kind"`
-	Name               string                   `json:"name"`
-	Owner              string                   `json:"owner"`
-	OwnerAvatarURL     string                   `json:"ownerAvatarUrl"`
-	OwnerDepartmentIDs []string                 `json:"ownerDepartmentIds"`
-	OwnerEmail         string                   `json:"ownerEmail"`
-	OwnerFeishuOpenID  string                   `json:"ownerFeishuOpenId"`
-	OwnerFeishuUnionID string                   `json:"ownerFeishuUnionId"`
-	OwnerFeishuUserID  string                   `json:"ownerFeishuUserId"`
-	OwnerUserID        string                   `json:"ownerUserId"`
-	Repository         moduleRepositoryRequest  `json:"repository"`
-	BuildConfig        moduleBuildConfigRequest `json:"buildConfig"`
+	ApplicationID  string                   `json:"applicationId"`
+	CommonModuleID string                   `json:"commonModuleId"`
+	ID             string                   `json:"id"`
+	Kind           domain.ModuleKind        `json:"kind"`
+	Name           string                   `json:"name"`
+	OwnerUserID    string                   `json:"ownerUserId"`
+	Repository     moduleRepositoryRequest  `json:"repository"`
+	BuildConfig    moduleBuildConfigRequest `json:"buildConfig"`
 	// BuildVariables 只在创建模块时生效，和模块在同一个事务里写入；更新模块时忽略。
 	BuildVariables []buildVariableUpsertRequest `json:"buildVariables"`
 }
@@ -294,7 +287,7 @@ func (h moduleHandler) create(c echo.Context) error {
 	if len(input.BuildVariables) > 0 {
 		session, _ := consoleSession(c)
 		for index := range input.BuildVariables {
-			input.BuildVariables[index].UpdatedByUserID = domain.ConsoleUserIDFromFeishu(session.User)
+			input.BuildVariables[index].UpdatedByUserID = session.User.ID
 		}
 	}
 
@@ -349,18 +342,11 @@ func bindModuleRequest(c echo.Context, includeID bool) (domain.ModuleInput, bool
 	}
 
 	input := domain.ModuleInput{
-		ApplicationID:      request.ApplicationID,
-		CommonModuleID:     request.CommonModuleID,
-		Kind:               request.Kind,
-		Name:               request.Name,
-		Owner:              request.Owner,
-		OwnerAvatarURL:     request.OwnerAvatarURL,
-		OwnerDepartmentIDs: request.OwnerDepartmentIDs,
-		OwnerEmail:         request.OwnerEmail,
-		OwnerFeishuOpenID:  request.OwnerFeishuOpenID,
-		OwnerFeishuUnionID: request.OwnerFeishuUnionID,
-		OwnerFeishuUserID:  request.OwnerFeishuUserID,
-		OwnerUserID:        request.OwnerUserID,
+		ApplicationID:  request.ApplicationID,
+		CommonModuleID: request.CommonModuleID,
+		Kind:           request.Kind,
+		Name:           request.Name,
+		OwnerUserID:    request.OwnerUserID,
 		Repository: domain.ModuleRepository{
 			ConnectionID:         request.Repository.ConnectionID,
 			ExternalRepositoryID: request.Repository.ExternalRepositoryID,

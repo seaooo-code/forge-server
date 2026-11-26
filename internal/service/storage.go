@@ -126,36 +126,18 @@ func (s *StorageService) fillStoredCredentials(ctx context.Context, id string, i
 
 func validateStorageConfigurationInput(input domain.StorageConfigurationInput) (domain.StorageConfigurationInput, error) {
 	normalized := domain.StorageConfigurationInput{
-		Name:               strings.TrimSpace(input.Name),
-		Adapter:            input.Adapter,
-		Bucket:             strings.TrimSpace(input.Bucket),
-		Endpoint:           strings.TrimSpace(input.Endpoint),
-		Region:             strings.TrimSpace(input.Region),
-		PublicBaseURL:      strings.TrimSpace(input.PublicBaseURL),
-		ForcePathStyle:     input.ForcePathStyle,
-		AccessKeyID:        strings.TrimSpace(input.AccessKeyID),
-		SecretAccessKey:    strings.TrimSpace(input.SecretAccessKey),
-		Status:             input.Status,
-		OwnerFeishuUnionID: strings.TrimSpace(input.OwnerFeishuUnionID),
-		OwnerFeishuOpenID:  strings.TrimSpace(input.OwnerFeishuOpenID),
-		OwnerFeishuUserID:  strings.TrimSpace(input.OwnerFeishuUserID),
+		Name:            strings.TrimSpace(input.Name),
+		Adapter:         input.Adapter,
+		Bucket:          strings.TrimSpace(input.Bucket),
+		Endpoint:        strings.TrimSpace(input.Endpoint),
+		Region:          strings.TrimSpace(input.Region),
+		PublicBaseURL:   strings.TrimSpace(input.PublicBaseURL),
+		ForcePathStyle:  input.ForcePathStyle,
+		AccessKeyID:     strings.TrimSpace(input.AccessKeyID),
+		SecretAccessKey: strings.TrimSpace(input.SecretAccessKey),
+		Status:          input.Status,
+		OwnerUserID:     strings.TrimSpace(input.OwnerUserID),
 	}
-	owner := normalizeUserInput(domain.UserInput{
-		ID:            input.OwnerUserID,
-		Name:          input.Owner,
-		Email:         input.OwnerEmail,
-		AvatarURL:     input.OwnerAvatarURL,
-		FeishuUnionID: input.OwnerFeishuUnionID,
-		FeishuOpenID:  input.OwnerFeishuOpenID,
-		FeishuUserID:  input.OwnerFeishuUserID,
-	})
-	normalized.OwnerUserID = owner.ID
-	normalized.Owner = owner.Name
-	normalized.OwnerEmail = owner.Email
-	normalized.OwnerAvatarURL = owner.AvatarURL
-	normalized.OwnerFeishuUnionID = owner.FeishuUnionID
-	normalized.OwnerFeishuOpenID = owner.FeishuOpenID
-	normalized.OwnerFeishuUserID = owner.FeishuUserID
 
 	if normalized.Adapter == "" {
 		normalized.Adapter = domain.StorageAdapterS3
@@ -167,8 +149,7 @@ func validateStorageConfigurationInput(input domain.StorageConfigurationInput) (
 		normalized.Bucket == "" ||
 		normalized.Endpoint == "" ||
 		normalized.Region == "" ||
-		normalized.OwnerUserID == "" ||
-		normalized.Owner == "" {
+		normalized.OwnerUserID == "" {
 		return domain.StorageConfigurationInput{}, domain.ErrInvalidStorageConfigurationInput
 	}
 	if !domain.IsValidStorageAdapter(normalized.Adapter) {

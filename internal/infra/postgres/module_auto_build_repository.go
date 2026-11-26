@@ -14,7 +14,7 @@ func (r *ModuleRepository) ListAutoBuildModules(ctx context.Context, connectionI
 		where m.code_source_connection_id = $1
 			and m.external_repository_id = $2
 			and cardinality(m.auto_build_branches) > 0
-			and m.auto_build_environment_code is not null
+			and m.auto_build_environment_id is not null
 		order by m.sort_order asc, m.created_at asc
 	`, connectionID, externalRepositoryID)
 	if err != nil {

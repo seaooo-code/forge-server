@@ -530,7 +530,7 @@ func currentConsoleUserID(c echo.Context) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	userID := domain.ConsoleUserIDFromFeishu(session.User)
+	userID := session.User.ID
 	return userID, userID != ""
 }
 

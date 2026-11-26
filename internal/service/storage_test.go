@@ -59,9 +59,6 @@ func TestStorageServiceNormalizesCreateInput(t *testing.T) {
 	if repository.lastCreateInput.Name != "生产 OSS" {
 		t.Fatalf("expected trimmed name, got %q", repository.lastCreateInput.Name)
 	}
-	if repository.lastCreateInput.Owner != "rn-platform" {
-		t.Fatalf("expected trimmed owner, got %q", repository.lastCreateInput.Owner)
-	}
 	if repository.lastCreateInput.OwnerUserID != "ou-rn-platform" {
 		t.Fatalf("expected trimmed owner user id, got %q", repository.lastCreateInput.OwnerUserID)
 	}
@@ -295,17 +292,14 @@ func (t *fakeStorageConnectivityTester) TestStorageConfiguration(_ context.Conte
 
 func validStorageInput() domain.StorageConfigurationInput {
 	return domain.StorageConfigurationInput{
-		Name:           " 生产 OSS ",
-		Adapter:        domain.StorageAdapterS3,
-		Bucket:         " xiaomi-auto-rn-prod ",
-		Endpoint:       " https://oss-cn-beijing.aliyuncs.com ",
-		Region:         " cn-beijing ",
-		OwnerUserID:    " ou-rn-platform ",
-		Owner:          " rn-platform ",
-		OwnerEmail:     " rn-platform@xiaomi.com ",
-		OwnerAvatarURL: " https://example.com/rn-platform.png ",
-		PublicBaseURL:  " https://cdn.example.com/rn/prod ",
-		Status:         domain.StorageStatusHealthy,
+		Name:          " 生产 OSS ",
+		Adapter:       domain.StorageAdapterS3,
+		Bucket:        " xiaomi-auto-rn-prod ",
+		Endpoint:      " https://oss-cn-beijing.aliyuncs.com ",
+		Region:        " cn-beijing ",
+		OwnerUserID:   " ou-rn-platform ",
+		PublicBaseURL: " https://cdn.example.com/rn/prod ",
+		Status:        domain.StorageStatusHealthy,
 	}
 }
 

@@ -98,7 +98,7 @@ func (h artifactAccessTokenHandler) create(c echo.Context) error {
 
 	createdByUserID := ""
 	if session, ok := consoleSession(c); ok {
-		createdByUserID = domain.ConsoleUserIDFromFeishu(session.User)
+		createdByUserID = session.User.ID
 	}
 	if createdByUserID == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})

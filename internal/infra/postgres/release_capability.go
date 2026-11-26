@@ -131,7 +131,7 @@ func fallbackCapabilityChannels(ctx context.Context, tx pgx.Tx, moduleFilter str
 		join modules m on m.id = route.module_id
 		where `+moduleFilter+`
 			and m.id <> $2
-			and route.environment_code = $3
+			and route.environment_id = $3
 			and route.runtime_version = $4
 			and route.channel <> ''
 			and route.route_type in ('default', 'percentage')
@@ -142,7 +142,7 @@ func fallbackCapabilityChannels(ctx context.Context, tx pgx.Tx, moduleFilter str
 				from release_routes own
 				join release_records own_rr on own_rr.id = own.release_id
 				where own.module_id = $2
-					and own.environment_code = $3
+					and own.environment_id = $3
 					and own.runtime_version = $4
 					and own.channel = route.channel
 					and own.route_type = 'default'
@@ -174,7 +174,7 @@ func activeCapabilityCounterparts(ctx context.Context, tx pgx.Tx, moduleFilter s
 		join modules m on m.id = route.module_id
 		where `+moduleFilter+`
 			and m.id <> $2
-			and route.environment_code = $3
+			and route.environment_id = $3
 			and route.runtime_version = $4
 			and route.route_type in ('default', 'percentage')
 			and route.status = 'active'
@@ -189,7 +189,7 @@ func activeCapabilityCounterparts(ctx context.Context, tx pgx.Tx, moduleFilter s
 						from release_routes channel_full
 						join release_records channel_rr on channel_rr.id = channel_full.release_id
 						where channel_full.module_id = route.module_id
-							and channel_full.environment_code = $3
+							and channel_full.environment_id = $3
 							and channel_full.runtime_version = $4
 							and channel_full.channel = $5
 							and channel_full.route_type = 'default'

@@ -14,7 +14,7 @@ import (
 type GitHubAppClient interface {
 	// AppConfig 返回当前生效的 App 级配置（数据库优先，其次环境变量），configured=false 表示未配置。
 	AppConfig(ctx context.Context) (domain.CodeSourceAppConfig, bool, error)
-	AppManifest() (domain.CodeSourceAppManifest, error)
+	AppManifest(tenantID string) (domain.CodeSourceAppManifest, error)
 	CompleteAppManifest(ctx context.Context, code string) (domain.CodeSourceAppConfig, error)
 	GetInstallation(ctx context.Context, config domain.CodeSourceAppConfig, installationID int64) (domain.CodeSourceInstallation, error)
 	InstallationURL(config domain.CodeSourceAppConfig) (string, error)
@@ -56,11 +56,15 @@ func (s *CodeSourceService) ListCodeSources(ctx context.Context) ([]domain.CodeS
 	return []domain.CodeSourceApp{app}, nil
 }
 
-func (s *CodeSourceService) GetAppManifest(_ context.Context) (domain.CodeSourceAppManifest, error) {
+func (s *CodeSourceService) GetAppManifest(ctx context.Context) (domain.CodeSourceAppManifest, error) {
 	if s.githubApp == nil {
 		return domain.CodeSourceAppManifest{}, domain.ErrCodeSourceAuthNotConfigured
 	}
-	return s.githubApp.AppManifest()
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.CodeSourceAppManifest{}, err
+	}
+	return s.githubApp.AppManifest(tenantID)
 }
 
 func (s *CodeSourceService) GetInstallURL(ctx context.Context) (domain.CodeSourceInstallURL, error) {

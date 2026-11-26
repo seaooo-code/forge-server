@@ -51,7 +51,14 @@ func (r *BuildLogRepository) ListBuildLogChunks(ctx context.Context, buildID str
 
 	// 先读状态再读分片：worker 写完全部分片后才把构建标记为结束，读到结束状态时分片一定已经完整。
 	var status string
-	if err := r.pool.QueryRow(ctx, `select status from build_records where id = $1`, buildID).Scan(&status); err != nil {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := r.pool.QueryRow(ctx, `
+		select br.status from build_records br join modules m on m.id = br.module_id
+		where br.id = $1 and ($2::text = '' or m.tenant_id = $2)
+	`, buildID, tenantID).Scan(&status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", domain.ErrBuildRecordNotFound
 		}

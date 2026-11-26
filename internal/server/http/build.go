@@ -193,7 +193,7 @@ func (h buildHandler) create(c echo.Context) error {
 		Environment:     request.Environment,
 		Branch:          request.Branch,
 		TriggerType:     domain.BuildTriggerTypeManual,
-		CreatedByUserID: domain.ConsoleUserIDFromFeishu(session.User),
+		CreatedByUserID: session.User.ID,
 	})
 	if err != nil {
 		return buildErrorResponse(c, err)

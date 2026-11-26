@@ -62,7 +62,6 @@ type Module struct {
 	Name               string
 	Owner              string
 	OwnerAvatarURL     string
-	OwnerDepartmentIDs []string
 	OwnerEmail         string
 	OwnerUserID        string
 	Repository         ModuleRepository
@@ -70,21 +69,14 @@ type Module struct {
 }
 
 type ModuleInput struct {
-	ApplicationID      string
-	CommonModuleID     string
-	ID                 string
-	Kind               ModuleKind
-	Name               string
-	Owner              string
-	OwnerAvatarURL     string
-	OwnerDepartmentIDs []string
-	OwnerEmail         string
-	OwnerFeishuOpenID  string
-	OwnerFeishuUnionID string
-	OwnerFeishuUserID  string
-	OwnerUserID        string
-	Repository         ModuleRepository
-	BuildConfig        ModuleBuildConfig
+	ApplicationID  string
+	CommonModuleID string
+	ID             string
+	Kind           ModuleKind
+	Name           string
+	OwnerUserID    string
+	Repository     ModuleRepository
+	BuildConfig    ModuleBuildConfig
 	// BuildVariables 是创建模块时一起写入的构建变量，与模块在同一个事务里创建。HTTP 层传入明文 Value，
 	// service 校验并加密后只保留 ValueEncrypted。更新模块时忽略，构建变量走单独的接口修改。
 	BuildVariables []ModuleBuildVariable

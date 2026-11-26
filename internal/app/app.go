@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"forge-server/internal/config"
+	"forge-server/internal/domain"
 	feishuinfra "forge-server/internal/infra/feishu"
 	githubinfra "forge-server/internal/infra/github"
 	gitlabinfra "forge-server/internal/infra/gitlab"
@@ -108,22 +109,22 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	testPlanService := service.NewTestPlanService(postgres.NewTestPlanRepository(postgresPool))
 	storageRepository := postgres.NewStorageRepository(postgresPool)
 	storageService := service.NewStorageService(storageRepository, s3infra.NewTester())
-	feishuUserRepository := postgres.NewFeishuUserRepository(postgresPool)
+	userRepository := postgres.NewUserRepository(postgresPool)
 	feishuClient := feishuinfra.NewClient(cfg.Feishu, cfg.Telemetry.Enabled)
-	// 飞书登录租户存库，App Secret 用 FORGE_SECRET_KEY 加密。租户表为空时生成首次初始化令牌，
+	// 租户和它的飞书登录应用存库，App Secret 用 FORGE_SECRET_KEY 加密。没有任何租户时生成首次初始化令牌，
 	// 在控制台的初始化页面填写令牌即可创建第一个租户。
-	feishuTenantService := service.NewFeishuTenantService(postgres.NewFeishuTenantRepository(postgresPool), buildVariableSecrets)
-	setupToken, err := feishuTenantService.PrepareSetup(ctx)
+	tenantService := service.NewTenantService(postgres.NewTenantRepository(postgresPool), buildVariableSecrets)
+	setupToken, err := tenantService.PrepareSetup(ctx)
 	if err != nil {
 		postgresPool.Close()
 		cleanupOTel()
 		return nil, fmt.Errorf("prepare platform setup: %w", err)
 	}
 	if setupToken != "" {
-		logger.Warn("platform not initialized: open the console and enter this setup token to add the first feishu tenant", "setupToken", setupToken)
+		logger.Warn("platform not initialized: open the console and enter this setup token to add the first tenant", "setupToken", setupToken)
 	}
-	feishuAuthService := service.NewFeishuAuthService(feishuClient, feishuUserRepository, feishuTenantService)
-	feishuContactService := service.NewFeishuContactService(feishuClient)
+	feishuAuthService := service.NewFeishuAuthService(feishuClient, userRepository, tenantService)
+	feishuContactService := service.NewFeishuContactService(feishuClient, userRepository)
 	dashboardService := service.NewDashboardService(service.DashboardDependencies{
 		ApplicationService:         applicationService,
 		ModuleService:              moduleService,
@@ -151,7 +152,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		EnvironmentService:         environmentService,
 		FeishuAuthService:          feishuAuthService,
 		FeishuContactService:       feishuContactService,
-		FeishuTenantService:        feishuTenantService,
+		TenantService:              tenantService,
 		ModuleService:              moduleService,
 		ReleaseService:             releaseService,
 		ReleaseChannelService:      service.NewReleaseChannelService(postgres.NewReleaseChannelRepository(postgresPool)),
@@ -208,14 +209,16 @@ func newBuildTriggerService(pool *pgxpool.Pool, buildRepository *postgres.BuildR
 func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 
+	// 后台任务按记录处理所有租户的数据，用系统范围；HTTP 请求的租户范围由鉴权中间件设置。
+	backgroundCtx := domain.WithSystemScope(ctx)
 	if a.buildLogService != nil {
-		go a.runBuildLogCleanupLoop(ctx)
+		go a.runBuildLogCleanupLoop(backgroundCtx)
 	}
 	if a.pullStats != nil {
-		go a.pullStats.Run(ctx)
+		go a.pullStats.Run(backgroundCtx)
 	}
 	if a.releaseHealth != nil {
-		go a.releaseHealth.Run(ctx)
+		go a.releaseHealth.Run(backgroundCtx)
 	}
 
 	go func() {

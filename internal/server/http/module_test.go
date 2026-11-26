@@ -430,16 +430,12 @@ func testHTTPModule(id string, kind domain.ModuleKind) domain.Module {
 
 func testModuleRequest(id string) moduleRequest {
 	return moduleRequest{
-		ApplicationID:      "app-mi-car",
-		CommonModuleID:     "module-common",
-		ID:                 id,
-		Kind:               domain.ModuleKindFeature,
-		Name:               "profile",
-		Owner:              "li.ming",
-		OwnerAvatarURL:     "https://example.com/li.ming.png",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
-		OwnerEmail:         "li.ming@xiaomi.com",
-		OwnerUserID:        "ou-li-ming",
+		ApplicationID:  "app-mi-car",
+		CommonModuleID: "module-common",
+		ID:             id,
+		Kind:           domain.ModuleKindFeature,
+		Name:           "profile",
+		OwnerUserID:    "ou-li-ming",
 		Repository: moduleRepositoryRequest{
 			ConnectionID:         "code-source-1",
 			ExternalRepositoryID: "1001",

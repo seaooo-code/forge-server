@@ -32,6 +32,11 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
+	// environment 是构建记录上的环境 ID，下面的语句都按 ID 比较。
 	var moduleID string
 	var environment string
 	var artifactKey string
@@ -41,15 +46,15 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 	var build releaseCapabilityBuild
 	var requireSigned, signed bool
 	if err := tx.QueryRow(ctx, `
-		select br.module_id, br.environment_code, br.artifact_key, br.artifact_url, br.runtime_version, br.status,
+		select br.module_id, br.environment_id, br.artifact_key, br.artifact_url, br.runtime_version, br.status,
 			m.kind, coalesce(m.common_module_id, ''), br.provided_capabilities, br.required_capabilities,
 			a.require_signed_releases, br.signature <> ''
 		from build_records br
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
-		where br.id = $1
+		where br.id = $1 and ($2::text = '' or m.tenant_id = $2)
 		for update of br
-	`, input.BuildRecordID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &runtimeVersion, &buildStatus,
+	`, input.BuildRecordID, tenantID).Scan(&moduleID, &environment, &artifactKey, &artifactURL, &runtimeVersion, &buildStatus,
 		&build.moduleKind, &build.commonModuleID, &build.provides, &build.requires, &requireSigned, &signed); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrBuildRecordNotFound
@@ -129,7 +134,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		insert into release_records (
 			id,
 			module_id,
-			environment_code,
+			environment_id,
 			build_record_id,
 			release_type,
 			gray_strategy,
@@ -168,7 +173,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 			update release_routes
 			set status = 'inactive', updated_at = now()
 			where module_id = $1
-				and environment_code = $2
+				and environment_id = $2
 				and runtime_version = $4
 				and channel = $5
 				and (route_type = $3 or ($3 = 'default' and route_type = 'percentage'))
@@ -190,7 +195,7 @@ func (r *ReleaseRepository) CreateRelease(ctx context.Context, input domain.Rele
 		insert into release_routes (
 			id,
 			module_id,
-			environment_code,
+			environment_id,
 			release_id,
 			runtime_version,
 			route_type,
@@ -254,7 +259,7 @@ func activeReleaseExistsForBuild(ctx context.Context, tx pgx.Tx, buildRecordID s
 			from release_routes route
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = $1
-				and route.environment_code = $2
+				and route.environment_id = $2
 				and route.runtime_version = $5
 				and route.channel = $6
 				and route.route_type = $3
@@ -277,7 +282,7 @@ func activeReleaseRouteExists(ctx context.Context, tx pgx.Tx, moduleID string, e
 			from release_routes route
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = $1
-				and route.environment_code = $2
+				and route.environment_id = $2
 				and route.runtime_version = $4
 				and route.channel = $5
 				and route.route_type = $3
@@ -298,33 +303,46 @@ func releaseRouteTypeForInput(input domain.ReleaseCreateInput) domain.ReleaseRou
 }
 
 func (r *ReleaseRepository) GetRelease(ctx context.Context, id string) (domain.ReleaseRecord, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRecord{}, err
+	}
 	return scanReleaseRecord(r.pool.QueryRow(ctx, releaseRecordSelectSQL()+`
-		where rr.id = $1
-	`, id))
+		where rr.id = $1 and ($2::text = '' or m.tenant_id = $2)
+	`, id, tenantID))
 }
 
 func (r *ReleaseRepository) GetReleaseRoute(ctx context.Context, id string) (domain.ReleaseRoute, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRoute{}, err
+	}
 	return scanReleaseRoute(r.pool.QueryRow(ctx, releaseRouteSelectSQL()+`
-		where route.id = $1
-	`, id))
+		where route.id = $1 and ($2::text = '' or m.tenant_id = $2)
+	`, id, tenantID))
 }
 
 func (r *ReleaseRepository) ListReleases(ctx context.Context, filters domain.ReleaseRecordFilters) ([]domain.ReleaseRecord, domain.ReleaseRecordSummary, error) {
-	summary, err := r.releaseRecordSummary(ctx, filters)
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, domain.ReleaseRecordSummary{}, err
+	}
+	summary, err := r.releaseRecordSummary(ctx, tenantID, filters)
 	if err != nil {
 		return nil, domain.ReleaseRecordSummary{}, err
 	}
 
 	rows, err := r.pool.Query(ctx, releaseRecordSelectSQL()+`
-	where ($1 = '' or rr.module_id = $1)
-			and ($2 = '' or rr.environment_code = $2)
+		where ($1 = '' or rr.module_id = $1)
+			and ($2 = '' or e.code = $2)
 			and ($3 = '' or rr.status = $3)
 			and ($4 = '' or rr.release_type = $4)
 			and ($5 = '' or m.application_id = $5)
 			and ($8::text is null or rr.channel = $8)
-			order by rr.created_at desc, rr.id desc
-			limit nullif($6, 0) offset $7
-	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID, filters.Pagination.Limit(), filters.Pagination.Offset(), filters.Channel)
+			and ($9::text = '' or m.tenant_id = $9)
+		order by rr.created_at desc, rr.id desc
+		limit nullif($6, 0) offset $7
+	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID, filters.Pagination.Limit(), filters.Pagination.Offset(), filters.Channel, tenantID)
 	if err != nil {
 		return nil, domain.ReleaseRecordSummary{}, fmt.Errorf("query release records: %w", err)
 	}
@@ -344,7 +362,7 @@ func (r *ReleaseRepository) ListReleases(ctx context.Context, filters domain.Rel
 	return records, summary, nil
 }
 
-func (r *ReleaseRepository) releaseRecordSummary(ctx context.Context, filters domain.ReleaseRecordFilters) (domain.ReleaseRecordSummary, error) {
+func (r *ReleaseRepository) releaseRecordSummary(ctx context.Context, tenantID string, filters domain.ReleaseRecordFilters) (domain.ReleaseRecordSummary, error) {
 	var summary domain.ReleaseRecordSummary
 	if err := r.pool.QueryRow(ctx, `
 		select
@@ -353,13 +371,15 @@ func (r *ReleaseRepository) releaseRecordSummary(ctx context.Context, filters do
 			count(*) filter (where rr.status = 'inactive')::integer
 		from release_records rr
 		join modules m on m.id = rr.module_id
+		join environments e on e.id = rr.environment_id
 		where ($1 = '' or rr.module_id = $1)
-			and ($2 = '' or rr.environment_code = $2)
+			and ($2 = '' or e.code = $2)
 			and ($3 = '' or rr.status = $3)
 			and ($4 = '' or rr.release_type = $4)
 			and ($5 = '' or m.application_id = $5)
 			and ($6::text is null or rr.channel = $6)
-	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID, filters.Channel).Scan(
+			and ($7::text = '' or m.tenant_id = $7)
+	`, filters.ModuleID, filters.Environment, string(filters.Status), string(filters.ReleaseType), filters.ApplicationID, filters.Channel, tenantID).Scan(
 		&summary.Total,
 		&summary.Active,
 		&summary.Inactive,
@@ -370,13 +390,20 @@ func (r *ReleaseRepository) releaseRecordSummary(ctx context.Context, filters do
 }
 
 func (r *ReleaseRepository) ResolveReleaseRoute(ctx context.Context, input domain.ReleaseResolveInput) (domain.ReleaseRoute, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRoute{}, err
+	}
 	route, err := scanReleaseRoute(r.pool.QueryRow(ctx, releaseRouteSelectSQL()+`
 			where route.id = (
 				select candidate.id
 				from release_routes candidate
 				join release_records rr on rr.id = candidate.release_id
+				join modules cm on cm.id = candidate.module_id
+				join environments ce on ce.id = candidate.environment_id
 				where candidate.module_id = $1
-					and candidate.environment_code = $2
+					and ce.code = $2
+					and ($6::text = '' or cm.tenant_id = $6)
 					and ($4 = '' or candidate.runtime_version = $4)
 					and (candidate.channel = $5 or candidate.channel = '')
 					and candidate.status = 'active'
@@ -398,7 +425,7 @@ func (r *ReleaseRepository) ResolveReleaseRoute(ctx context.Context, input domai
 					candidate.created_at desc
 				limit 1
 			)
-		`, input.ModuleID, input.Environment, input.UserID, input.RuntimeVersion, input.Channel))
+		`, input.ModuleID, input.Environment, input.UserID, input.RuntimeVersion, input.Channel, tenantID))
 	if err != nil {
 		if errors.Is(err, domain.ErrReleaseRouteNotFound) {
 			return domain.ReleaseRoute{}, r.resolveReleaseRouteMissingDependency(ctx, input)
@@ -415,6 +442,10 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
 	var moduleID string
 	var environment string
 	var releaseType domain.ReleaseType
@@ -428,7 +459,7 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 	err = tx.QueryRow(ctx, `
 		select
 			rr.module_id,
-			rr.environment_code,
+			rr.environment_id,
 			rr.release_type,
 			rr.gray_strategy,
 			rr.gray_percentage,
@@ -440,9 +471,10 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 		from release_records rr
 		join release_routes route on route.release_id = rr.id
 			and route.route_type = 'percentage'
-		where rr.id = $1
+		join modules m on m.id = rr.module_id
+		where rr.id = $1 and ($2::text = '' or m.tenant_id = $2)
 		for update of rr, route
-	`, input.ID).Scan(&moduleID, &environment, &releaseType, &grayStrategy, &previousPercentage, &releaseStatus, &routeID, &routeStatus, &runtimeVersion, &channel)
+	`, input.ID, tenantID).Scan(&moduleID, &environment, &releaseType, &grayStrategy, &previousPercentage, &releaseStatus, &routeID, &routeStatus, &runtimeVersion, &channel)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if exists, existsErr := r.releaseExists(ctx, tx, input.ID); existsErr != nil {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, existsErr
@@ -512,10 +544,17 @@ func (r *ReleaseRepository) UpdateReleaseGrayPercentage(ctx context.Context, inp
 }
 
 func (r *ReleaseRepository) releaseExists(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return false, err
+	}
 	var exists bool
 	if err := tx.QueryRow(ctx, `
-		select exists(select 1 from release_records where id = $1)
-	`, id).Scan(&exists); err != nil {
+		select exists(
+			select 1 from release_records rr join modules m on m.id = rr.module_id
+			where rr.id = $1 and ($2::text = '' or m.tenant_id = $2)
+		)
+	`, id, tenantID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("query release existence: %w", err)
 	}
 	return exists, nil
@@ -528,7 +567,7 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 			update release_routes
 			set status = 'inactive', updated_at = now()
 			where module_id = $1
-				and environment_code = $2
+				and environment_id = $2
 				and runtime_version = $4
 				and channel = $5
 				and route_type = 'default'
@@ -572,10 +611,14 @@ func (r *ReleaseRepository) promotePercentageReleaseToFull(ctx context.Context, 
 }
 
 func (r *ReleaseRepository) resolveReleaseRouteMissingDependency(ctx context.Context, input domain.ReleaseResolveInput) error {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	var moduleExists bool
 	if err := r.pool.QueryRow(ctx, `
-		select exists(select 1 from modules where id = $1)
-	`, input.ModuleID).Scan(&moduleExists); err != nil {
+		select exists(select 1 from modules where id = $1 and ($2::text = '' or tenant_id = $2))
+	`, input.ModuleID, tenantID).Scan(&moduleExists); err != nil {
 		return fmt.Errorf("query release route module dependency: %w", err)
 	}
 	if !moduleExists {
@@ -584,8 +627,11 @@ func (r *ReleaseRepository) resolveReleaseRouteMissingDependency(ctx context.Con
 
 	var environmentExists bool
 	if err := r.pool.QueryRow(ctx, `
-		select exists(select 1 from environments where code = $1)
-	`, input.Environment).Scan(&environmentExists); err != nil {
+		select exists(
+			select 1 from environments e join modules m on m.tenant_id = e.tenant_id
+			where m.id = $1 and e.code = $2
+		)
+	`, input.ModuleID, input.Environment).Scan(&environmentExists); err != nil {
 		return fmt.Errorf("query release route environment dependency: %w", err)
 	}
 	if !environmentExists {
@@ -601,7 +647,7 @@ func releaseRecordSelectSQL() string {
 			a.name as application_name,
 			rr.module_id,
 			m.name as module_name,
-			rr.environment_code,
+			e.code as environment_code,
 			e.name as environment_name,
 			rr.build_record_id,
 			coalesce(build.number, 0),
@@ -629,7 +675,7 @@ func releaseRecordSelectSQL() string {
 		from release_records rr
 		join modules m on m.id = rr.module_id
 		join applications a on a.id = m.application_id
-		join environments e on e.code = rr.environment_code
+		join environments e on e.id = rr.environment_id
 		join users u on u.id = rr.created_by_user_id
 		join release_routes route on route.release_id = rr.id
 		left join release_health health on health.release_id = rr.id
@@ -644,7 +690,7 @@ func releaseRouteSelectSQL() string {
 			a.name as application_name,
 			route.module_id,
 			m.name as module_name,
-			route.environment_code,
+			e.code as environment_code,
 			e.name as environment_name,
 			route.release_id,
 			rr.build_record_id,
@@ -664,7 +710,7 @@ func releaseRouteSelectSQL() string {
 		join release_records rr on rr.id = route.release_id
 		join modules m on m.id = route.module_id
 		join applications a on a.id = m.application_id
-		join environments e on e.code = route.environment_code
+		join environments e on e.id = route.environment_id
 		join users u on u.id = route.created_by_user_id
 	`
 }

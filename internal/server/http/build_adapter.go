@@ -114,7 +114,7 @@ type buildAdapterErrorBody struct {
 	Line     int    `json:"line,omitempty"`
 }
 
-// registerBuildAdapterRoutes 注册构建适配器接口：管理需要 build_adapter:manage（PlatformAdmin/SuperAdmin），
+// registerBuildAdapterRoutes 注册构建适配器接口：管理需要 build_adapter:manage（TenantAdmin/SuperAdmin），
 // 读取与预览需要 build_adapter:use（任一应用里能管理模块的人）。适配器不提供删除接口，只能停用。
 func registerBuildAdapterRoutes(group *echo.Group, service BuildAdapterService, authService AuthorizationService) {
 	handler := buildAdapterHandler{authService: authService, service: service}
@@ -182,7 +182,7 @@ func (h buildAdapterHandler) create(c echo.Context) error {
 		DockerfileTemplate: request.DockerfileTemplate,
 		Files:              request.Files,
 		Parameters:         buildAdapterParametersFromPayload(request.Parameters),
-		UserID:             domain.ConsoleUserIDFromFeishu(session.User),
+		UserID:             session.User.ID,
 	})
 	if err != nil {
 		return buildAdapterErrorResponse(c, err)
@@ -209,7 +209,7 @@ func (h buildAdapterHandler) update(c echo.Context) error {
 		DockerfileTemplate: request.DockerfileTemplate,
 		Files:              request.Files,
 		ExpectedVersion:    request.ExpectedVersion,
-		UserID:             domain.ConsoleUserIDFromFeishu(session.User),
+		UserID:             session.User.ID,
 	}
 	if request.Parameters != nil {
 		parameters := buildAdapterParametersFromPayload(*request.Parameters)
@@ -238,7 +238,7 @@ func (h buildAdapterHandler) setStatus(c echo.Context, apply func(ctx context.Co
 		return err
 	}
 	session, _ := consoleSession(c)
-	adapter, err := apply(c.Request().Context(), c.Param("id"), domain.ConsoleUserIDFromFeishu(session.User))
+	adapter, err := apply(c.Request().Context(), c.Param("id"), session.User.ID)
 	if err != nil {
 		return buildAdapterErrorResponse(c, err)
 	}

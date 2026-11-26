@@ -40,19 +40,18 @@ const (
 )
 
 type Application struct {
-	ID                 string
-	Name               string
-	Slug               string
-	Platform           string
-	OwnerUserID        string
-	Owner              string
-	OwnerEmail         string
-	OwnerAvatarURL     string
-	OwnerDepartmentIDs []string
-	ModuleCount        int
-	EnvironmentCount   int
-	CreatedAt          time.Time
-	Status             ApplicationStatus
+	ID               string
+	Name             string
+	Slug             string
+	Platform         string
+	OwnerUserID      string
+	Owner            string
+	OwnerEmail       string
+	OwnerAvatarURL   string
+	ModuleCount      int
+	EnvironmentCount int
+	CreatedAt        time.Time
+	Status           ApplicationStatus
 }
 
 type ApplicationSummary struct {
@@ -92,7 +91,6 @@ type ApplicationMember struct {
 	ID        string
 	Name      string
 	Role      ApplicationMemberRole
-	Team      string
 	UserID    string
 }
 
@@ -129,23 +127,22 @@ type ClientIntegrationInfo struct {
 }
 
 type ApplicationDetail struct {
-	Application        Application
-	ID                 string
-	AppKey             string
-	Slug               string
-	Name               string
-	Description        string
-	OwnerUserID        string
-	Owner              string
-	OwnerEmail         string
-	OwnerAvatarURL     string
-	OwnerDepartmentIDs []string
-	Metrics            []ApplicationDetailMetric
-	Environments       []ApplicationEnvironmentBinding
-	Modules            []ApplicationModule
-	Members            []ApplicationMember
-	Capabilities       ApplicationCapabilities
-	ClientIntegration  ClientIntegrationInfo
+	Application       Application
+	ID                string
+	AppKey            string
+	Slug              string
+	Name              string
+	Description       string
+	OwnerUserID       string
+	Owner             string
+	OwnerEmail        string
+	OwnerAvatarURL    string
+	Metrics           []ApplicationDetailMetric
+	Environments      []ApplicationEnvironmentBinding
+	Modules           []ApplicationModule
+	Members           []ApplicationMember
+	Capabilities      ApplicationCapabilities
+	ClientIntegration ClientIntegrationInfo
 }
 
 type ApplicationEnvironmentInput struct {
@@ -158,21 +155,14 @@ type ApplicationMemberInput struct {
 }
 
 type ApplicationInput struct {
-	Slug               string
-	Name               string
-	Platform           string
-	OwnerUserID        string
-	Owner              string
-	OwnerEmail         string
-	OwnerAvatarURL     string
-	OwnerDepartmentIDs []string
-	OwnerFeishuUnionID string
-	OwnerFeishuOpenID  string
-	OwnerFeishuUserID  string
-	Description        string
-	Status             ApplicationStatus
-	Environments       []ApplicationEnvironmentInput
-	Members            []ApplicationMemberInput
+	Slug         string
+	Name         string
+	Platform     string
+	OwnerUserID  string
+	Description  string
+	Status       ApplicationStatus
+	Environments []ApplicationEnvironmentInput
+	Members      []ApplicationMemberInput
 }
 
 type ApplicationOptionItem struct {

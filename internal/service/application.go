@@ -207,24 +207,7 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 		Environments: make([]domain.ApplicationEnvironmentInput, 0, len(input.Environments)),
 		Members:      make([]domain.ApplicationMemberInput, 0, len(input.Members)),
 	}
-	owner := normalizeUserInput(domain.UserInput{
-		ID:            input.OwnerUserID,
-		Name:          input.Owner,
-		Email:         input.OwnerEmail,
-		AvatarURL:     input.OwnerAvatarURL,
-		DepartmentIDs: input.OwnerDepartmentIDs,
-		FeishuUnionID: input.OwnerFeishuUnionID,
-		FeishuOpenID:  input.OwnerFeishuOpenID,
-		FeishuUserID:  input.OwnerFeishuUserID,
-	})
-	normalized.OwnerUserID = owner.ID
-	normalized.Owner = owner.Name
-	normalized.OwnerEmail = owner.Email
-	normalized.OwnerAvatarURL = owner.AvatarURL
-	normalized.OwnerDepartmentIDs = owner.DepartmentIDs
-	normalized.OwnerFeishuUnionID = owner.FeishuUnionID
-	normalized.OwnerFeishuOpenID = owner.FeishuOpenID
-	normalized.OwnerFeishuUserID = owner.FeishuUserID
+	normalized.OwnerUserID = strings.TrimSpace(input.OwnerUserID)
 
 	if requireSlug && !domain.IsValidApplicationSlug(normalized.Slug) {
 		return domain.ApplicationInput{}, domain.ErrInvalidApplicationInput
@@ -235,7 +218,6 @@ func validateApplicationInput(input domain.ApplicationInput, requireSlug bool) (
 	if normalized.Name == "" ||
 		normalized.Platform == "" ||
 		normalized.OwnerUserID == "" ||
-		normalized.Owner == "" ||
 		normalized.Description == "" {
 		return domain.ApplicationInput{}, domain.ErrInvalidApplicationInput
 	}
@@ -330,7 +312,6 @@ func withApplicationDerivedDetail(detail domain.ApplicationDetail) domain.Applic
 	detail.Owner = detail.Application.Owner
 	detail.OwnerEmail = detail.Application.OwnerEmail
 	detail.OwnerAvatarURL = detail.Application.OwnerAvatarURL
-	detail.OwnerDepartmentIDs = detail.Application.OwnerDepartmentIDs
 	detail.Application.EnvironmentCount = len(detail.Environments)
 	detail.Metrics = []domain.ApplicationDetailMetric{
 		{

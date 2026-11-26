@@ -241,16 +241,12 @@ func (r *fakeModuleRepository) DeleteModule(_ context.Context, id string) error 
 
 func validModuleInput(id string) domain.ModuleInput {
 	return domain.ModuleInput{
-		ApplicationID:      "app-mi-car",
-		CommonModuleID:     "module-common",
-		ID:                 id,
-		Kind:               domain.ModuleKindFeature,
-		Name:               "profile",
-		Owner:              "li.ming",
-		OwnerAvatarURL:     "https://example.com/li.ming.png",
-		OwnerDepartmentIDs: []string{"od-rn-platform"},
-		OwnerEmail:         "li.ming@xiaomi.com",
-		OwnerUserID:        "ou-li-ming",
+		ApplicationID:  "app-mi-car",
+		CommonModuleID: "module-common",
+		ID:             id,
+		Kind:           domain.ModuleKindFeature,
+		Name:           "profile",
+		OwnerUserID:    "ou-li-ming",
 		Repository: domain.ModuleRepository{
 			ConnectionID:         "code-source-1",
 			ExternalRepositoryID: "1001",

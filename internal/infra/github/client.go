@@ -48,7 +48,9 @@ func NewClient(cfg config.GitHubConfig, telemetryEnabled bool) *Client {
 	}
 }
 
-func (c *Client) AppManifest() (domain.CodeSourceAppManifest, error) {
+// AppManifest 生成租户自己的 GitHub App manifest。GitHub App 名称全局唯一，名称带上租户 ID；
+// webhook 地址是 {GITHUB_APP_WEBHOOK_URL}/{tenantID}，回调按租户校验签名。
+func (c *Client) AppManifest(tenantID string) (domain.CodeSourceAppManifest, error) {
 	manifest := appManifestRequest{
 		CallbackURLs: []string{c.cfg.InstallRedirectURL},
 		DefaultPermissions: map[string]string{
@@ -56,7 +58,7 @@ func (c *Client) AppManifest() (domain.CodeSourceAppManifest, error) {
 			"metadata": "read",
 		},
 		Description: "Forge Console code source integration.",
-		Name:        c.appName(),
+		Name:        c.appName() + " " + tenantID,
 		Public:      false,
 		RedirectURL: c.cfg.ManifestCallbackURL,
 		SetupURL:    c.cfg.InstallCallbackURL,
@@ -65,7 +67,7 @@ func (c *Client) AppManifest() (domain.CodeSourceAppManifest, error) {
 	// GitHub 不接受 localhost 作为 webhook 地址，只有配置了公网地址才让 App 订阅 push 事件。
 	if webhookURL := strings.TrimSpace(c.cfg.WebhookURL); webhookURL != "" {
 		manifest.DefaultEvents = []string{"push"}
-		manifest.HookAttributes = &appManifestHookAttributes{Active: true, URL: webhookURL}
+		manifest.HookAttributes = &appManifestHookAttributes{Active: true, URL: strings.TrimRight(webhookURL, "/") + "/" + url.PathEscape(tenantID)}
 	}
 	payload, err := json.Marshal(manifest)
 	if err != nil {

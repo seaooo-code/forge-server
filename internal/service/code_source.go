@@ -291,7 +291,7 @@ func (s *CodeSourceService) GetConnectionWebhook(ctx context.Context, id string)
 	if err != nil {
 		return domain.CodeSourceConnectionWebhook{}, err
 	}
-	// 有连接级 secret 的连接按连接接收回调；没有的由 provider 统一接收（例如 GitHub App）。
+	// 有连接级 secret 的连接按连接接收回调；没有的由租户的 provider 应用统一接收（例如 GitHub App）。
 	webhook := domain.CodeSourceConnectionWebhook{
 		Provider: conn.Provider,
 		Path:     webhookPathPrefix + string(conn.Provider),
@@ -299,7 +299,13 @@ func (s *CodeSourceService) GetConnectionWebhook(ctx context.Context, id string)
 	}
 	if conn.WebhookSecret != "" {
 		webhook.Path += "/" + url.PathEscape(conn.ID)
+		return webhook, nil
 	}
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.CodeSourceConnectionWebhook{}, err
+	}
+	webhook.Path += "/" + url.PathEscape(tenantID)
 	return webhook, nil
 }
 

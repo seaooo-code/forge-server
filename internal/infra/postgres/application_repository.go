@@ -21,7 +21,11 @@ func NewApplicationRepository(pool *pgxpool.Pool) *ApplicationRepository {
 }
 
 func (r *ApplicationRepository) ListApplications(ctx context.Context, filters domain.ApplicationListFilters) ([]domain.Application, domain.ApplicationSummary, error) {
-	summary, err := r.applicationSummary(ctx, filters)
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, domain.ApplicationSummary{}, err
+	}
+	summary, err := r.applicationSummary(ctx, tenantID, filters)
 	if err != nil {
 		return nil, domain.ApplicationSummary{}, err
 	}
@@ -36,9 +40,8 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			u.name as owner,
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
-			u.department_ids as owner_department_ids,
 			a.module_count,
-			count(b.environment_code)::integer as environment_count,
+			count(b.environment_id)::integer as environment_count,
 			a.created_at,
 			a.status
 		from applications a
@@ -53,6 +56,7 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			and ($2 = '' or a.status = $2)
 				and ($3 = '' or a.owner_user_id = $3)
 			and ($4 = '' or a.name ilike '%' || $4 || '%')
+			and ($7::text = '' or a.tenant_id = $7)
 		group by
 			a.id,
 			a.name,
@@ -62,14 +66,13 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			u.name,
 			u.email,
 			u.avatar_url,
-			u.department_ids,
 			a.module_count,
 			a.created_at,
 			a.status,
 			a.sort_order
 			order by a.sort_order asc, a.created_at asc
 			limit nullif($5, 0) offset $6
-		`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword, filters.Pagination.Limit(), filters.Pagination.Offset())
+		`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword, filters.Pagination.Limit(), filters.Pagination.Offset(), tenantID)
 	if err != nil {
 		return nil, domain.ApplicationSummary{}, fmt.Errorf("query applications: %w", err)
 	}
@@ -87,7 +90,6 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 			&application.Owner,
 			&application.OwnerEmail,
 			&application.OwnerAvatarURL,
-			&application.OwnerDepartmentIDs,
 			&application.ModuleCount,
 			&application.EnvironmentCount,
 			&application.CreatedAt,
@@ -105,7 +107,7 @@ func (r *ApplicationRepository) ListApplications(ctx context.Context, filters do
 	return applications, summary, nil
 }
 
-func (r *ApplicationRepository) applicationSummary(ctx context.Context, filters domain.ApplicationListFilters) (domain.ApplicationSummary, error) {
+func (r *ApplicationRepository) applicationSummary(ctx context.Context, tenantID string, filters domain.ApplicationListFilters) (domain.ApplicationSummary, error) {
 	var summary domain.ApplicationSummary
 	if err := r.pool.QueryRow(ctx, `
 		select
@@ -123,7 +125,8 @@ func (r *ApplicationRepository) applicationSummary(ctx context.Context, filters 
 			and ($2 = '' or a.status = $2)
 			and ($3 = '' or a.owner_user_id = $3)
 			and ($4 = '' or a.name ilike '%' || $4 || '%')
-	`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword).Scan(
+			and ($5::text = '' or a.tenant_id = $5)
+	`, filters.Platform, string(filters.Status), filters.Owner, filters.Keyword, tenantID).Scan(
 		&summary.Total,
 		&summary.Running,
 		&summary.Maintenance,
@@ -145,10 +148,10 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := upsertUser(ctx, tx, applicationOwnerUser(input)); err != nil {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
 		return domain.ApplicationDetail{}, err
 	}
-
 	applicationID := "app-" + input.Slug
 	if _, err := tx.Exec(ctx, `
 		insert into applications (
@@ -160,7 +163,8 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 			owner_user_id,
 			description,
 			module_count,
-			sort_order
+			sort_order,
+			tenant_id
 		) values (
 			$1,
 			$2,
@@ -170,7 +174,8 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 			$6,
 			$7,
 			0,
-			coalesce((select max(sort_order) + 10 from applications), 10)
+			coalesce((select max(sort_order) + 10 from applications where tenant_id = $8), 10),
+			$8
 		)
 	`, applicationID,
 		input.Slug,
@@ -179,9 +184,14 @@ func (r *ApplicationRepository) CreateApplication(ctx context.Context, input dom
 		input.Platform,
 		input.OwnerUserID,
 		input.Description,
+		tenantID,
 	); err != nil {
 		if isUniqueViolation(err) {
 			return domain.ApplicationDetail{}, domain.ErrApplicationSlugConflict
+		}
+		if isForeignKeyViolation(err) {
+			// 负责人不存在或不属于当前租户。
+			return domain.ApplicationDetail{}, domain.ErrInvalidApplicationInput
 		}
 		return domain.ApplicationDetail{}, fmt.Errorf("insert application: %w", err)
 	}
@@ -204,10 +214,10 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := upsertUser(ctx, tx, applicationOwnerUser(input)); err != nil {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
 		return domain.ApplicationDetail{}, err
 	}
-
 	var applicationID string
 	if err := tx.QueryRow(ctx, `
 		update applications set
@@ -217,7 +227,7 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 			owner_user_id = $5,
 			description = $6,
 			updated_at = now()
-		where slug = $1
+		where slug = $1 and ($7::text = '' or tenant_id = $7)
 		returning id
 	`,
 		slug,
@@ -226,9 +236,13 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 		input.Platform,
 		input.OwnerUserID,
 		input.Description,
+		tenantID,
 	).Scan(&applicationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ApplicationDetail{}, domain.ErrApplicationNotFound
+		}
+		if isForeignKeyViolation(err) {
+			return domain.ApplicationDetail{}, domain.ErrInvalidApplicationInput
 		}
 		return domain.ApplicationDetail{}, fmt.Errorf("update application: %w", err)
 	}
@@ -245,11 +259,15 @@ func (r *ApplicationRepository) UpdateApplication(ctx context.Context, slug stri
 }
 
 func (r *ApplicationRepository) UpdateApplicationStatus(ctx context.Context, slug string, status domain.ApplicationStatus) (domain.ApplicationDetail, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ApplicationDetail{}, err
+	}
 	commandTag, err := r.pool.Exec(ctx, `
 		update applications
 		set status = $2, updated_at = now()
-		where slug = $1
-	`, slug, status)
+		where slug = $1 and ($3::text = '' or tenant_id = $3)
+	`, slug, status, tenantID)
 	if err != nil {
 		return domain.ApplicationDetail{}, fmt.Errorf("update application status: %w", err)
 	}
@@ -261,13 +279,17 @@ func (r *ApplicationRepository) UpdateApplicationStatus(ctx context.Context, slu
 }
 
 func (r *ApplicationRepository) CheckApplicationDelete(ctx context.Context, slug string) (domain.ApplicationDeleteCheck, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ApplicationDeleteCheck{}, err
+	}
 	var applicationID string
 	var moduleCount int
 	if err := r.pool.QueryRow(ctx, `
 		select id, module_count
 		from applications
-		where slug = $1
-	`, slug).Scan(&applicationID, &moduleCount); err != nil {
+		where slug = $1 and ($2::text = '' or tenant_id = $2)
+	`, slug, tenantID).Scan(&applicationID, &moduleCount); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ApplicationDeleteCheck{}, domain.ErrApplicationNotFound
 		}
@@ -301,10 +323,14 @@ func (r *ApplicationRepository) DeleteApplication(ctx context.Context, slug stri
 		return domain.ErrApplicationInUse
 	}
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	commandTag, err := r.pool.Exec(ctx, `
 		delete from applications
-		where slug = $1
-	`, slug)
+		where slug = $1 and ($2::text = '' or tenant_id = $2)
+	`, slug, tenantID)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return domain.ErrApplicationInUse
@@ -323,6 +349,10 @@ type applicationQuerier interface {
 }
 
 func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querier applicationQuerier, slug string) (domain.ApplicationDetail, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ApplicationDetail{}, err
+	}
 	var detail domain.ApplicationDetail
 	if err := querier.QueryRow(ctx, `
 		select
@@ -334,7 +364,6 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 			u.name as owner,
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
-			u.department_ids as owner_department_ids,
 			a.module_count,
 			(
 				select count(*)::integer
@@ -346,8 +375,8 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 			a.description
 		from applications a
 		join users u on u.id = a.owner_user_id
-		where a.slug = $1
-	`, slug).Scan(
+		where a.slug = $1 and ($2::text = '' or a.tenant_id = $2)
+	`, slug, tenantID).Scan(
 		&detail.Application.ID,
 		&detail.Application.Name,
 		&detail.Application.Slug,
@@ -356,7 +385,6 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 		&detail.Application.Owner,
 		&detail.Application.OwnerEmail,
 		&detail.Application.OwnerAvatarURL,
-		&detail.Application.OwnerDepartmentIDs,
 		&detail.Application.ModuleCount,
 		&detail.Application.EnvironmentCount,
 		&detail.Application.CreatedAt,
@@ -391,20 +419,23 @@ func (r *ApplicationRepository) getApplicationDetail(ctx context.Context, querie
 	detail.AppKey = "rn." + detail.Application.Slug
 	detail.Slug = detail.Application.Slug
 	detail.Name = detail.Application.Name
-	detail.OwnerDepartmentIDs = detail.Application.OwnerDepartmentIDs
 
 	return detail, nil
 }
 
 func (r *ApplicationRepository) ListApplicationOwners(ctx context.Context) ([]domain.ApplicationOptionItem, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, `
 		select u.id, u.name
 		from applications a
 		join users u on u.id = a.owner_user_id
-		where u.name <> ''
+		where u.name <> '' and ($1::text = '' or a.tenant_id = $1)
 		group by u.id, u.name
 		order by min(a.sort_order) asc, u.name asc
-	`)
+	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query application owners: %w", err)
 	}
@@ -431,11 +462,16 @@ func (r *ApplicationRepository) ListApplicationOwners(ctx context.Context) ([]do
 }
 
 func (r *ApplicationRepository) ListApplicationEnvironments(ctx context.Context) ([]domain.ApplicationOptionItem, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, `
 		select code, name
 		from environments
+		where $1::text = '' or tenant_id = $1
 		order by sort_order asc, code asc
-	`)
+	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query application environments: %w", err)
 	}
@@ -469,22 +505,30 @@ func (r *ApplicationRepository) ListApplicationMembers(ctx context.Context, appl
 }
 
 func (r *ApplicationRepository) UpsertApplicationMember(ctx context.Context, applicationID string, input domain.ApplicationMemberInput) (domain.ApplicationMember, error) {
-	if _, err := r.pool.Exec(ctx, `
+	// 成员只能是应用所属租户的用户。
+	tag, err := r.pool.Exec(ctx, `
 		insert into application_members (
 			application_id,
 			user_id,
 			role,
 			sort_order
-		) values (
-			$1,
-			$2,
-			$3,
-			coalesce((select max(sort_order) + 10 from application_members where application_id = $1), 10)
 		)
+		select
+			a.id,
+			u.id,
+			$3,
+			coalesce((select max(sort_order) + 10 from application_members where application_id = a.id), 10)
+		from applications a
+		join users u on u.id = $2 and u.tenant_id = a.tenant_id
+		where a.id = $1
 		on conflict (application_id, user_id) do update set
 			role = excluded.role,
 			updated_at = now()
-	`, applicationID, input.UserID, input.Role); err != nil {
+	`, applicationID, input.UserID, input.Role)
+	if err == nil && tag.RowsAffected() == 0 {
+		return domain.ApplicationMember{}, domain.ErrInvalidApplicationInput
+	}
+	if err != nil {
 		if isForeignKeyViolation(err) || isCheckViolation(err) {
 			return domain.ApplicationMember{}, domain.ErrInvalidApplicationInput
 		}
@@ -551,7 +595,7 @@ func (r *ApplicationRepository) listApplicationEnvironments(ctx context.Context,
 			e.updated_at,
 			e.status
 		from application_environment_bindings b
-		join environments e on e.code = b.environment_code
+		join environments e on e.id = b.environment_id
 		where b.application_id = $1
 		order by b.sort_order asc, e.sort_order asc
 	`, applicationID)
@@ -590,7 +634,6 @@ func (r *ApplicationRepository) listApplicationMembers(ctx context.Context, quer
 			u.name,
 			u.email,
 			u.avatar_url,
-			coalesce(array_to_string(u.department_ids, ' / '), ''),
 			am.role
 		from application_members am
 		join users u on u.id = am.user_id
@@ -611,7 +654,6 @@ func (r *ApplicationRepository) listApplicationMembers(ctx context.Context, quer
 			&member.Name,
 			&member.Email,
 			&member.AvatarURL,
-			&member.Team,
 			&member.Role,
 		); err != nil {
 			return nil, fmt.Errorf("scan application member: %w", err)
@@ -635,7 +677,6 @@ func (r *ApplicationRepository) getApplicationMember(ctx context.Context, querie
 			u.name,
 			u.email,
 			u.avatar_url,
-			coalesce(array_to_string(u.department_ids, ' / '), ''),
 			am.role
 		from application_members am
 		join users u on u.id = am.user_id
@@ -646,7 +687,6 @@ func (r *ApplicationRepository) getApplicationMember(ctx context.Context, querie
 		&member.Name,
 		&member.Email,
 		&member.AvatarURL,
-		&member.Team,
 		&member.Role,
 	); err != nil {
 		if err == pgx.ErrNoRows {
@@ -715,38 +755,35 @@ func (r *ApplicationRepository) replaceApplicationRelations(ctx context.Context,
 		return fmt.Errorf("delete application environments: %w", err)
 	}
 	for index, environment := range input.Environments {
-		if _, err := tx.Exec(ctx, `
+		// 环境按编码在应用所属租户内解析，其他租户的同名环境不会被绑定。
+		tag, err := tx.Exec(ctx, `
 			insert into application_environment_bindings (
+				tenant_id,
 				application_id,
-				environment_code,
+				environment_id,
 				sort_order
-			) values ($1, $2, $3)
+			)
+			select a.tenant_id, a.id, e.id, $3
+			from applications a
+			join environments e on e.tenant_id = a.tenant_id and e.code = $2
+			where a.id = $1
 		`,
 			applicationID,
 			environment.Environment,
 			(index+1)*10,
-		); err != nil {
-			if isForeignKeyViolation(err) {
+		)
+		if err != nil {
+			if isForeignKeyViolation(err) || isUniqueViolation(err) {
 				return domain.ErrInvalidApplicationInput
 			}
 			return fmt.Errorf("insert application environment: %w", err)
 		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrInvalidApplicationInput
+		}
 	}
 
 	return nil
-}
-
-func applicationOwnerUser(input domain.ApplicationInput) domain.UserInput {
-	return domain.UserInput{
-		ID:            input.OwnerUserID,
-		Name:          input.Owner,
-		Email:         input.OwnerEmail,
-		AvatarURL:     input.OwnerAvatarURL,
-		DepartmentIDs: input.OwnerDepartmentIDs,
-		FeishuUnionID: input.OwnerFeishuUnionID,
-		FeishuOpenID:  input.OwnerFeishuOpenID,
-		FeishuUserID:  input.OwnerFeishuUserID,
-	}
 }
 
 func isUniqueViolation(err error) bool {

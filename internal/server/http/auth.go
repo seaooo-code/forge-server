@@ -45,10 +45,21 @@ func requireConsoleSession(service FeishuAuthService) echo.MiddlewareFunc {
 			if err != nil {
 				return err
 			}
-			c.Set(consoleSessionContextKey, session)
+			setConsoleSession(c, session)
 			return next(c)
 		}
 	}
+}
+
+// setConsoleSession 保存会话，并把当前租户放进请求 context，之后的查询只能访问这个租户的数据。
+func setConsoleSession(c echo.Context, session domain.ConsoleSession) {
+	c.Set(consoleSessionContextKey, session)
+	c.SetRequest(c.Request().WithContext(domain.WithTenant(c.Request().Context(), session.ActiveTenant.ID)))
+}
+
+// setArtifactTokenTenant 把令牌所属租户放进请求 context，令牌只能访问本租户的应用。
+func setArtifactTokenTenant(c echo.Context, tenantID string) {
+	c.SetRequest(c.Request().WithContext(domain.WithTenant(c.Request().Context(), tenantID)))
 }
 
 func requireArtifactToken(tokenService ArtifactAccessTokenService) echo.MiddlewareFunc {
@@ -69,6 +80,7 @@ func requireArtifactToken(tokenService ArtifactAccessTokenService) echo.Middlewa
 			if !result.Allowed {
 				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			}
+			setArtifactTokenTenant(c, result.TenantID)
 			return next(c)
 		}
 	}
@@ -83,6 +95,7 @@ func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAcces
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 				}
 				if result.Allowed {
+					setArtifactTokenTenant(c, result.TenantID)
 					return next(c)
 				}
 			}
@@ -91,7 +104,7 @@ func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAcces
 				if err != nil {
 					return err
 				}
-				c.Set(consoleSessionContextKey, session)
+				setConsoleSession(c, session)
 				return next(c)
 			}
 			return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
@@ -99,22 +112,22 @@ func requireArtifactAccess(service FeishuAuthService, tokenService ArtifactAcces
 	}
 }
 
-func resolveConsoleSession(c echo.Context, service FeishuAuthService) (domain.FeishuAuthResult, error) {
+func resolveConsoleSession(c echo.Context, service FeishuAuthService) (domain.ConsoleSession, error) {
 	sessionToken, ok := feishuSessionToken(c)
 	if !ok {
-		return domain.FeishuAuthResult{}, writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
+		return domain.ConsoleSession{}, writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 	}
 
 	session, err := service.GetSession(c.Request().Context(), sessionToken)
 	if err != nil {
-		return domain.FeishuAuthResult{}, consoleSessionErrorResponse(c, err)
+		return domain.ConsoleSession{}, consoleSessionErrorResponse(c, err)
 	}
 	setFeishuSessionCookie(c, session)
 	return session, nil
 }
 
-func consoleSession(c echo.Context) (domain.FeishuAuthResult, bool) {
-	session, ok := c.Get(consoleSessionContextKey).(domain.FeishuAuthResult)
+func consoleSession(c echo.Context) (domain.ConsoleSession, bool) {
+	session, ok := c.Get(consoleSessionContextKey).(domain.ConsoleSession)
 	return session, ok
 }
 
@@ -126,13 +139,12 @@ func authorizeCurrentUser(c echo.Context, service AuthorizationService, action d
 	if !ok {
 		return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 	}
-	userID := domain.ConsoleUserIDFromFeishu(session.User)
-	if userID == "" {
-		return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
-	}
-	if err := service.Authorize(c.Request().Context(), userID, action, resource); err != nil {
+	if err := service.Authorize(c.Request().Context(), session.User.ID, action, resource); err != nil {
 		if errors.Is(err, domain.ErrForbidden) {
 			return writeErrorResponse(c, http.StatusForbidden, "forbidden")
+		}
+		if errors.Is(err, domain.ErrNotFound) {
+			return writeErrorResponse(c, http.StatusNotFound, "not found")
 		}
 		return writeErrorResponse(c, http.StatusInternalServerError, "internal server error")
 	}
@@ -140,8 +152,8 @@ func authorizeCurrentUser(c echo.Context, service AuthorizationService, action d
 }
 
 func consoleSessionErrorResponse(c echo.Context, err error) error {
-	if errors.Is(err, domain.ErrFeishuSessionNotFound) ||
-		errors.Is(err, domain.ErrFeishuSessionExpired) ||
+	if errors.Is(err, domain.ErrSessionNotFound) ||
+		errors.Is(err, domain.ErrSessionExpired) ||
 		errors.Is(err, domain.ErrFeishuAuthorization) {
 		clearFeishuSessionCookie(c)
 		return writeErrorResponse(c, http.StatusUnauthorized, "unauthorized")
@@ -155,17 +167,20 @@ func consoleSessionErrorResponse(c echo.Context, err error) error {
 type artifactBearerTokenResult struct {
 	Allowed    bool
 	Configured bool
+	TenantID   string
 }
 
 func validateArtifactBearerToken(ctx context.Context, tokenService ArtifactAccessTokenService, token string) (artifactBearerTokenResult, error) {
 	result := artifactBearerTokenResult{Configured: tokenService != nil}
 	if tokenService != nil {
-		validation, err := tokenService.ValidateArtifactAccessToken(ctx, token)
+		// 令牌查找发生在确定租户之前，用系统范围；查到后由调用方切到令牌所属租户。
+		validation, err := tokenService.ValidateArtifactAccessToken(domain.WithSystemScope(ctx), token)
 		if err != nil {
 			return artifactBearerTokenResult{}, err
 		}
 		if validation.Matched {
 			result.Allowed = validation.Allowed
+			result.TenantID = validation.TenantID
 			return result, nil
 		}
 	}

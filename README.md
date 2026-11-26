@@ -62,7 +62,7 @@ HTTP        http://127.0.0.1:8080
 
 PostgreSQL 中需要提前创建 `forge_server` 数据库。API 启动时会连接 PostgreSQL 并执行迁移，数据库不可用会导致初始化失败。
 
-飞书登录不需要环境变量。首次启动时租户表为空，日志会打印一行 `platform not initialized` 和 `setupToken`；打开控制台会进入「初始化平台」页面，填入令牌和第一个飞书应用的 App ID、App Secret 即可。之后第一个登录的用户成为 SuperAdmin，其他租户在「平台 → 飞书租户」维护。
+飞书登录不需要环境变量。首次启动时租户表为空，日志会打印一行 `platform not initialized` 和 `setupToken`；打开控制台会进入「初始化平台」页面，填入令牌和飞书 App ID、App Secret 即可。之后第一个登录的用户成为 SuperAdmin，其他租户在「平台 → 租户」维护。租户之间完全隔离，见 [docs/tenants.md](docs/tenants.md)。
 
 每个飞书应用都要把 `{前端地址}/login/feishu/callback`（本地是 `http://127.0.0.1:5173/login/feishu/callback`）加进重定向 URL 白名单。与本地 `forge-console` 联调时同时保持：
 
@@ -163,7 +163,7 @@ rn-bundles/{应用 slug}/{模块 id}/{环境 code}/{构建记录 ID}/{dist 内�
 | 单文件产物下载 | 控制台 session 或 artifact access token |
 | Worker 拉取仓库 | GitHub App installation access token 或 GitLab 连接令牌 |
 
-系统中首位完成飞书登录的用户会被初始化为 `SuperAdmin`。后续权限由全局角色和应用成员角色共同决定。
+系统中首位完成飞书登录的用户会被初始化为 `SuperAdmin`，并成为其所属租户的 `TenantAdmin`。后续权限由用户角色和应用成员角色共同决定：`SuperAdmin` 全平台生效，其余角色只在用户所属租户内生效。
 
 ## 部署
 

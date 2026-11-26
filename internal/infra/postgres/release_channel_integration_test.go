@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -21,7 +20,7 @@ func newChannelFixture(t *testing.T, codes ...string) *channelFixture {
 	f.channels = NewReleaseChannelRepository(f.pool)
 	f.releases = NewReleaseRepository(f.pool)
 	for _, code := range codes {
-		if _, err := f.channels.CreateReleaseChannel(context.Background(), f.slug, domain.ReleaseChannelInput{Code: code, Name: code, CreatedByUserID: f.userID}); err != nil {
+		if _, err := f.channels.CreateReleaseChannel(integrationCtx(), f.slug, domain.ReleaseChannelInput{Code: code, Name: code, CreatedByUserID: f.userID}); err != nil {
 			t.Fatalf("create channel %s: %v", code, err)
 		}
 	}
@@ -32,7 +31,7 @@ func newChannelFixture(t *testing.T, codes ...string) *channelFixture {
 func (f *channelFixture) capabilityBuild(t *testing.T, moduleID string, provides string, requires string) string {
 	t.Helper()
 	id, _ := f.build(t, moduleID, "main", "rt-1")
-	if _, err := f.pool.Exec(context.Background(), `update build_records set provided_capabilities = $2::jsonb, required_capabilities = $3::jsonb where id = $1`, id, provides, requires); err != nil {
+	if _, err := f.pool.Exec(integrationCtx(), `update build_records set provided_capabilities = $2::jsonb, required_capabilities = $3::jsonb where id = $1`, id, provides, requires); err != nil {
 		t.Fatalf("set capabilities: %v", err)
 	}
 	return id
@@ -43,7 +42,7 @@ func (f *channelFixture) release(buildID string, channel string, grayPercentage 
 	if grayPercentage > 0 {
 		input.ReleaseType, input.GrayStrategy, input.GrayPercentage = domain.ReleaseTypeGray, domain.ReleaseGrayStrategyPercentage, grayPercentage
 	}
-	record, _, err := f.releases.CreateRelease(context.Background(), input)
+	record, _, err := f.releases.CreateRelease(integrationCtx(), input)
 	return record, err
 }
 
@@ -64,7 +63,7 @@ func (f *channelFixture) mustRelease(t *testing.T, buildID string, channel strin
 // manifest 返回请求渠道下解析出的整份清单来源。
 func (f *channelFixture) manifest(t *testing.T, userID string, channel string) domain.ArtifactManifestSource {
 	t.Helper()
-	source, err := f.artifacts.GetArtifactManifestSource(context.Background(), domain.ArtifactManifestInput{
+	source, err := f.artifacts.GetArtifactManifestSource(integrationCtx(), domain.ArtifactManifestInput{
 		ApplicationSlug: f.slug,
 		Environment:     f.environment,
 		Platform:        domain.PlatformAndroid,
@@ -92,7 +91,7 @@ func (f *channelFixture) module(t *testing.T, userID string, channel string, mod
 // 渠道客户端按模块回落到默认渠道；渠道只有灰度时没分到灰度的用户也回落；未注册的渠道等同于不传；提测单优先于渠道。
 func TestIntegrationChannelManifestResolution(t *testing.T) {
 	f := newChannelFixture(t, "beta")
-	ctx := context.Background()
+	ctx := integrationCtx()
 
 	commonFull, _ := f.build(t, f.common, "main", "rt-1")
 	featureFull, _ := f.build(t, f.feature, "main", "rt-1")
@@ -197,7 +196,7 @@ func TestIntegrationChannelManifestResolution(t *testing.T) {
 // 发布到未注册的渠道被拒绝；有生效发布的渠道不能删除；同名渠道不能重复创建。
 func TestIntegrationChannelLifecycle(t *testing.T) {
 	f := newChannelFixture(t, "beta")
-	ctx := context.Background()
+	ctx := integrationCtx()
 
 	build, _ := f.build(t, f.feature, "main", "rt-1")
 	if _, err := f.release(build, "alpha", 0); !errors.Is(err, domain.ErrReleaseChannelNotFound) {

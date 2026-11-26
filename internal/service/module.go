@@ -289,31 +289,14 @@ func (s *ModuleService) normalizeModuleInput(ctx context.Context, input domain.M
 }
 
 func validateModuleInput(input domain.ModuleInput, requireID bool, defaultDockerfilePath string) (domain.ModuleInput, error) {
-	owner := normalizeUserInput(domain.UserInput{
-		ID:            input.OwnerUserID,
-		Name:          input.Owner,
-		Email:         input.OwnerEmail,
-		AvatarURL:     input.OwnerAvatarURL,
-		DepartmentIDs: input.OwnerDepartmentIDs,
-		FeishuUnionID: input.OwnerFeishuUnionID,
-		FeishuOpenID:  input.OwnerFeishuOpenID,
-		FeishuUserID:  input.OwnerFeishuUserID,
-	})
 
 	normalized := domain.ModuleInput{
-		ApplicationID:      strings.TrimSpace(input.ApplicationID),
-		CommonModuleID:     strings.TrimSpace(input.CommonModuleID),
-		ID:                 strings.TrimSpace(input.ID),
-		Kind:               input.Kind,
-		Name:               strings.TrimSpace(input.Name),
-		Owner:              owner.Name,
-		OwnerAvatarURL:     owner.AvatarURL,
-		OwnerDepartmentIDs: owner.DepartmentIDs,
-		OwnerEmail:         owner.Email,
-		OwnerFeishuOpenID:  owner.FeishuOpenID,
-		OwnerFeishuUnionID: owner.FeishuUnionID,
-		OwnerFeishuUserID:  owner.FeishuUserID,
-		OwnerUserID:        owner.ID,
+		ApplicationID:  strings.TrimSpace(input.ApplicationID),
+		CommonModuleID: strings.TrimSpace(input.CommonModuleID),
+		ID:             strings.TrimSpace(input.ID),
+		Kind:           input.Kind,
+		Name:           strings.TrimSpace(input.Name),
+		OwnerUserID:    strings.TrimSpace(input.OwnerUserID),
 		Repository: domain.ModuleRepository{
 			ConnectionID:         strings.TrimSpace(input.Repository.ConnectionID),
 			ExternalRepositoryID: strings.TrimSpace(input.Repository.ExternalRepositoryID),
@@ -334,7 +317,6 @@ func validateModuleInput(input domain.ModuleInput, requireID bool, defaultDocker
 	if normalized.ApplicationID == "" ||
 		normalized.Name == "" ||
 		normalized.OwnerUserID == "" ||
-		normalized.Owner == "" ||
 		normalized.Repository.ConnectionID == "" ||
 		normalized.Repository.ExternalRepositoryID == "" {
 		return domain.ModuleInput{}, domain.ErrInvalidModuleInput

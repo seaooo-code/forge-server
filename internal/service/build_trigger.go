@@ -21,7 +21,7 @@ type AutoBuildModuleRepository interface {
 
 // WebhookBuildRepository 幂等创建 webhook 构建，需要在数据库层面保证并发重投不会重复创建。
 type WebhookBuildRepository interface {
-	// CreateBuildRecordUnlessActive 在同一 (module_id, environment_code, commit_sha) 已有
+	// CreateBuildRecordUnlessActive 在同一 (module_id, environment_id, commit_sha) 已有
 	// pending/running/succeeded 构建时返回已有构建且 created=false。
 	CreateBuildRecordUnlessActive(ctx context.Context, input domain.BuildRecordInput) (record domain.BuildRecord, created bool, err error)
 }
@@ -61,7 +61,7 @@ func NewBuildTriggerService(deps BuildTriggerServiceDependencies) *BuildTriggerS
 	}
 }
 
-// HandlePushEvent 找出绑定该仓库且自动构建分支匹配的模块，在 auto_build_environment_code 下幂等创建 webhook 构建。
+// HandlePushEvent 找出绑定该仓库且自动构建分支匹配的模块，在模块的自动构建环境下幂等创建 webhook 构建。
 // 单个模块失败只记录日志；所有命中模块都失败时返回错误，让托管方重投（幂等保证不会重复创建）。
 func (s *BuildTriggerService) HandlePushEvent(ctx context.Context, event domain.PushEvent) (domain.PushEventResult, error) {
 	result := domain.PushEventResult{CreatedBuildIDs: []string{}, DuplicateBuildIDs: []string{}}

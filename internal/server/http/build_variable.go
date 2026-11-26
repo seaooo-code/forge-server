@@ -94,7 +94,7 @@ func (h buildVariableHandler) upsert(c echo.Context) error {
 		Value:           request.Value,
 		IsSecret:        request.IsSecret,
 		EnvironmentCode: request.EnvironmentCode,
-		UpdatedByUserID: domain.ConsoleUserIDFromFeishu(session.User),
+		UpdatedByUserID: session.User.ID,
 	})
 	if err != nil {
 		return buildVariableErrorResponse(c, err)

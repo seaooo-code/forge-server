@@ -250,13 +250,12 @@ func TestCreateReleaseRejectsAlreadyActiveRelease(t *testing.T) {
 }
 
 func testReleaseAuthService() *fakeFeishuAuthService {
-	return &fakeFeishuAuthService{result: domain.FeishuAuthResult{
-		SessionExpiresAt: time.Now().Add(time.Hour),
-		SessionToken:     "session-token",
-		User: domain.FeishuUser{
-			UnionID: "on-user-1",
-			OpenID:  "ou-user-1",
-			Name:    "海鸥",
+	return &fakeFeishuAuthService{result: domain.ConsoleSession{
+		ExpiresAt:    time.Now().Add(time.Hour),
+		SessionToken: "session-token",
+		User: domain.User{
+			ID:   "ou-user-1",
+			Name: "海鸥",
 		},
 	}}
 }

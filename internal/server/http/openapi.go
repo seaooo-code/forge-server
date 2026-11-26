@@ -100,6 +100,14 @@ func baseOpenAPIDocument() *openapi3.T {
 				Name:        "Feishu",
 				Description: "Feishu contact integrations.",
 			},
+			{
+				Name:        "Tenants",
+				Description: "Isolated tenants and their Feishu login apps. SuperAdmin only.",
+			},
+			{
+				Name:        "Users",
+				Description: "Users of the current tenant.",
+			},
 		},
 		Paths: openapi3.NewPaths(
 			openapi3.WithPath("/healthz", &openapi3.PathItem{
@@ -652,7 +660,7 @@ func baseOpenAPIDocument() *openapi3.T {
 					op := operation("createBuildAdapter", "Create build adapter", []string{"BuildAdapters"}, responses(
 						response(http.StatusCreated, "Build adapter created with version 1.", schemaRef("BuildAdapterDetailResponse")),
 						response(http.StatusBadRequest, "Invalid build adapter. Template errors include the template name and line.", schemaRef("BuildAdapterErrorResponse")),
-						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only TenantAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.RequestBody = requestBody("Build adapter create payload.", schemaRef("BuildAdapterCreateRequest"))
@@ -664,7 +672,7 @@ func baseOpenAPIDocument() *openapi3.T {
 					op := operation("previewBuildAdapterDraft", "Render an unsaved build adapter draft with sample context or a module, without building", []string{"BuildAdapters"}, responses(
 						response(http.StatusOK, "Render result. Invalid drafts, template errors and parameter errors return ok=false with error details.", schemaRef("BuildAdapterRenderPreviewResponse")),
 						response(http.StatusBadRequest, "Invalid request body.", schemaRef("BuildAdapterErrorResponse")),
-						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can preview drafts.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only TenantAdmin or SuperAdmin can preview drafts.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Module not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -687,7 +695,7 @@ func baseOpenAPIDocument() *openapi3.T {
 					op := operation("updateBuildAdapter", "Update build adapter. Each update increments version", []string{"BuildAdapters"}, responses(
 						response(http.StatusOK, "Build adapter updated.", schemaRef("BuildAdapterDetailResponse")),
 						response(http.StatusBadRequest, "Invalid build adapter. Template errors include the template name and line.", schemaRef("BuildAdapterErrorResponse")),
-						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only TenantAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Build adapter was modified concurrently.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -701,7 +709,7 @@ func baseOpenAPIDocument() *openapi3.T {
 				Post: func() *openapi3.Operation {
 					op := operation("disableBuildAdapter", "Disable build adapter. Referencing modules cannot start new builds", []string{"BuildAdapters"}, responses(
 						response(http.StatusOK, "Build adapter disabled.", schemaRef("BuildAdapterDetailResponse")),
-						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only TenantAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -713,7 +721,7 @@ func baseOpenAPIDocument() *openapi3.T {
 				Post: func() *openapi3.Operation {
 					op := operation("enableBuildAdapter", "Enable build adapter", []string{"BuildAdapters"}, responses(
 						response(http.StatusOK, "Build adapter enabled.", schemaRef("BuildAdapterDetailResponse")),
-						response(http.StatusForbidden, "Only PlatformAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only TenantAdmin or SuperAdmin can manage build adapters.", schemaRef("ErrorResponse")),
 						response(http.StatusNotFound, "Build adapter not found.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
@@ -818,11 +826,17 @@ func baseOpenAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/webhooks/github", &openapi3.PathItem{
+			openapi3.WithPath("/api/v1/webhooks/github/{tenantId}", &openapi3.PathItem{
 				Post: func() *openapi3.Operation {
 					op := operation("receiveGitHubWebhook", "Receive GitHub App webhook", []string{"Webhooks"}, webhookResponses())
-					op.Description = "Shared by all GitHub App installations. Verified with X-Hub-Signature-256 (HMAC-SHA256 of the App webhook secret); only push events are processed."
-					op.Parameters = webhookHeaderParameters("X-Hub-Signature-256", "X-GitHub-Event", "X-GitHub-Delivery")
+					op.Description = "Each tenant has its own GitHub App; all installations of that App share this URL. Verified with X-Hub-Signature-256 (HMAC-SHA256 of the tenant's App webhook secret); only push events are processed."
+					op.Parameters = append(openapi3.Parameters{
+						{
+							Value: openapi3.NewPathParameter("tenantId").
+								WithDescription("Tenant that owns the GitHub App.").
+								WithSchema(stringSchema("Tenant id.")),
+						},
+					}, webhookHeaderParameters("X-Hub-Signature-256", "X-GitHub-Event", "X-GitHub-Delivery")...)
 					op.RequestBody = requestBody("Raw GitHub webhook payload.", schemaValue(openapi3.NewObjectSchema()))
 					return op
 				}(),
@@ -963,9 +977,9 @@ func baseOpenAPIDocument() *openapi3.T {
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/auth/feishu/tenants", &openapi3.PathItem{
-				Get: operation("listFeishuLoginTenants", "List Feishu tenants selectable on the login page", []string{"Auth"}, responses(
-					response(http.StatusOK, "Active Feishu tenants, without app credentials.", schemaRef("FeishuLoginTenantsResponse")),
+			openapi3.WithPath("/api/v1/auth/tenants", &openapi3.PathItem{
+				Get: operation("listLoginTenants", "List tenants selectable on the login page", []string{"Auth"}, responses(
+					response(http.StatusOK, "Active tenants, without app credentials.", schemaRef("LoginTenantsResponse")),
 					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					response(http.StatusServiceUnavailable, "Feishu auth is unavailable.", schemaRef("ErrorResponse")),
 				)),
@@ -975,15 +989,15 @@ func baseOpenAPIDocument() *openapi3.T {
 					op := operation("authorizeFeishu", "Redirect to Feishu OAuth authorization page", []string{"Auth"}, responses(
 						responseNoBody(http.StatusFound, "Redirect to Feishu authorization page."),
 						response(http.StatusBadRequest, "Invalid redirect URL, or several tenants are active and none was selected.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Feishu tenant not found or disabled.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Tenant not found or disabled.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Feishu auth is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Feishu authorization URL could not be created.", schemaRef("ErrorResponse")),
 					))
 					op.Parameters = openapi3.Parameters{
 						{
 							Value: openapi3.NewQueryParameter("tenant").
-								WithDescription("Feishu tenant id. Optional when exactly one tenant is active.").
-								WithSchema(stringSchema("Feishu tenant id.")),
+								WithDescription("Tenant id. Optional when exactly one tenant is active.").
+								WithSchema(stringSchema("Tenant id.")),
 						},
 						{
 							Value: openapi3.NewQueryParameter("redirect").
@@ -996,69 +1010,69 @@ func baseOpenAPIDocument() *openapi3.T {
 				}(),
 			}),
 			openapi3.WithPath("/api/v1/setup/status", &openapi3.PathItem{
-				Get: operation("getSetupStatus", "Whether the platform still needs its first Feishu tenant", []string{"Auth"}, responses(
+				Get: operation("getSetupStatus", "Whether the platform still needs its first tenant", []string{"Auth"}, responses(
 					response(http.StatusOK, "Setup status.", schemaRef("SetupStatusResponse")),
 					response(http.StatusTooManyRequests, "Too many requests.", schemaRef("ErrorResponse")),
 					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 				)),
 			}),
-			openapi3.WithPath("/api/v1/setup/feishu-tenant", &openapi3.PathItem{
+			openapi3.WithPath("/api/v1/setup/tenant", &openapi3.PathItem{
 				Post: func() *openapi3.Operation {
-					op := operation("setupFirstFeishuTenant", "Create the first Feishu tenant with the setup token from the server log", []string{"Auth"}, responses(
-						response(http.StatusCreated, "First tenant created; the first user to log in becomes SuperAdmin.", schemaRef("FeishuTenantDetailResponse")),
-						response(http.StatusBadRequest, "Invalid Feishu tenant request.", schemaRef("ErrorResponse")),
+					op := operation("setupFirstTenant", "Create the first tenant with the setup token from the server log", []string{"Auth"}, responses(
+						response(http.StatusCreated, "First tenant created; the first user to log in becomes SuperAdmin and the tenant's TenantAdmin.", schemaRef("TenantDetailResponse")),
+						response(http.StatusBadRequest, "Invalid tenant request.", schemaRef("ErrorResponse")),
 						response(http.StatusForbidden, "Setup token is wrong.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "Platform already has a tenant; setup is closed.", schemaRef("ErrorResponse")),
 						response(http.StatusTooManyRequests, "Too many requests.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
-					op.RequestBody = requestBody("First tenant payload with setup token.", schemaRef("SetupFeishuTenantRequest"))
+					op.RequestBody = requestBody("First tenant payload with setup token.", schemaRef("SetupTenantRequest"))
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/feishu-tenants", &openapi3.PathItem{
-				Get: operation("listFeishuTenants", "List Feishu login tenants", []string{"Feishu"}, responses(
-					response(http.StatusOK, "Feishu tenants. App secrets are never returned.", schemaRef("FeishuTenantsResponse")),
-					response(http.StatusForbidden, "Only SuperAdmin can manage Feishu tenants.", schemaRef("ErrorResponse")),
+			openapi3.WithPath("/api/v1/tenants", &openapi3.PathItem{
+				Get: operation("listTenants", "List tenants", []string{"Tenants"}, responses(
+					response(http.StatusOK, "Tenants. Feishu app secrets are never returned.", schemaRef("TenantsResponse")),
+					response(http.StatusForbidden, "Only SuperAdmin can manage tenants.", schemaRef("ErrorResponse")),
 					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 				)),
 				Post: func() *openapi3.Operation {
-					op := operation("createFeishuTenant", "Create Feishu login tenant", []string{"Feishu"}, responses(
-						response(http.StatusCreated, "Feishu tenant created.", schemaRef("FeishuTenantDetailResponse")),
-						response(http.StatusBadRequest, "Invalid Feishu tenant request.", schemaRef("ErrorResponse")),
-						response(http.StatusForbidden, "Only SuperAdmin can manage Feishu tenants.", schemaRef("ErrorResponse")),
-						response(http.StatusConflict, "Tenant id or app id already exists.", schemaRef("ErrorResponse")),
+					op := operation("createTenant", "Create tenant with its Feishu login app", []string{"Tenants"}, responses(
+						response(http.StatusCreated, "Tenant created. The first user to log in becomes its TenantAdmin.", schemaRef("TenantDetailResponse")),
+						response(http.StatusBadRequest, "Invalid tenant request.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only SuperAdmin can manage tenants.", schemaRef("ErrorResponse")),
+						response(http.StatusConflict, "Tenant id or Feishu app id already exists.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
-					op.RequestBody = requestBody("Feishu tenant creation payload.", schemaRef("FeishuTenantCreateRequest"))
+					op.RequestBody = requestBody("Tenant creation payload.", schemaRef("TenantCreateRequest"))
 					return op
 				}(),
 			}),
-			openapi3.WithPath("/api/v1/feishu-tenants/{id}", &openapi3.PathItem{
+			openapi3.WithPath("/api/v1/tenants/{id}", &openapi3.PathItem{
 				Patch: func() *openapi3.Operation {
-					op := operation("updateFeishuTenant", "Update Feishu login tenant", []string{"Feishu"}, responses(
-						response(http.StatusOK, "Feishu tenant updated. Disabling a tenant signs out its sessions.", schemaRef("FeishuTenantDetailResponse")),
-						response(http.StatusBadRequest, "Invalid Feishu tenant request, including an attempt to change appId.", schemaRef("ErrorResponse")),
-						response(http.StatusForbidden, "Only SuperAdmin can manage Feishu tenants.", schemaRef("ErrorResponse")),
-						response(http.StatusNotFound, "Feishu tenant not found.", schemaRef("ErrorResponse")),
+					op := operation("updateTenant", "Update tenant", []string{"Tenants"}, responses(
+						response(http.StatusOK, "Tenant updated. Disabling a tenant signs out its sessions.", schemaRef("TenantDetailResponse")),
+						response(http.StatusBadRequest, "Invalid tenant request, including an attempt to change feishuAppId.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only SuperAdmin can manage tenants.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Tenant not found.", schemaRef("ErrorResponse")),
 						response(http.StatusConflict, "The last active tenant cannot be disabled.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 					))
 					op.Parameters = openapi3.Parameters{
 						{
 							Value: openapi3.NewPathParameter("id").
-								WithDescription("Feishu tenant id.").
-								WithSchema(stringSchema("Feishu tenant id.")),
+								WithDescription("Tenant id.").
+								WithSchema(stringSchema("Tenant id.")),
 						},
 					}
-					op.RequestBody = requestBody("Feishu tenant update payload. Empty appSecret keeps the stored secret.", schemaRef("FeishuTenantUpdateRequest"))
+					op.RequestBody = requestBody("Tenant update payload. Empty feishuAppSecret keeps the stored secret.", schemaRef("TenantUpdateRequest"))
 					return op
 				}(),
 			}),
 			openapi3.WithPath("/api/v1/auth/feishu/callback", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
 					op := operation("completeFeishuAuthorization", "Complete Feishu OAuth authorization", []string{"Auth"}, responses(
-						response(http.StatusOK, "Feishu user authorized.", schemaRef("FeishuAuthResponse")),
+						response(http.StatusOK, "Feishu user authorized.", schemaRef("AuthSessionResponse")),
 						response(http.StatusBadRequest, "Invalid authorization callback.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Feishu authorization failed.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Feishu auth is not configured.", schemaRef("ErrorResponse")),
@@ -1086,12 +1100,26 @@ func baseOpenAPIDocument() *openapi3.T {
 			}),
 			openapi3.WithPath("/api/v1/auth/session", &openapi3.PathItem{
 				Get: operation("getAuthSession", "Get current auth session and refresh token when needed", []string{"Auth"}, responses(
-					response(http.StatusOK, "Current auth session.", schemaRef("FeishuAuthResponse")),
+					response(http.StatusOK, "Current auth session.", schemaRef("AuthSessionResponse")),
 					response(http.StatusUnauthorized, "Session is missing or expired.", schemaRef("ErrorResponse")),
 					response(http.StatusBadGateway, "Feishu token refresh failed.", schemaRef("ErrorResponse")),
 					response(http.StatusServiceUnavailable, "Feishu auth is not configured.", schemaRef("ErrorResponse")),
 					response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
 				)),
+			}),
+			openapi3.WithPath("/api/v1/auth/session/tenant", &openapi3.PathItem{
+				Put: func() *openapi3.Operation {
+					op := operation("switchAuthSessionTenant", "Switch the tenant of the current session", []string{"Auth"}, responses(
+						response(http.StatusOK, "Session after switching.", schemaRef("AuthSessionResponse")),
+						response(http.StatusBadRequest, "Invalid request.", schemaRef("ErrorResponse")),
+						response(http.StatusUnauthorized, "Session is missing or expired.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only SuperAdmin can switch to a tenant other than the home tenant.", schemaRef("ErrorResponse")),
+						response(http.StatusNotFound, "Tenant not found or disabled.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("Target tenant.", schemaRef("SwitchTenantRequest"))
+					return op
+				}(),
 			}),
 			openapi3.WithPath("/api/v1/auth/logout", &openapi3.PathItem{
 				Post: operation("logoutAuthSession", "Logout current auth session", []string{"Auth"}, responses(
@@ -1102,10 +1130,11 @@ func baseOpenAPIDocument() *openapi3.T {
 			}),
 			openapi3.WithPath("/api/v1/feishu/users/search", &openapi3.PathItem{
 				Get: func() *openapi3.Operation {
-					op := operation("searchFeishuUsers", "Search Feishu users with current user access token", []string{"Feishu"}, responses(
+					op := operation("searchFeishuUsers", "Search the Feishu directory with the current user's access token", []string{"Feishu"}, responses(
 						response(http.StatusOK, "Feishu user search result.", schemaRef("FeishuUserSearchResponse")),
 						response(http.StatusBadRequest, "Invalid search request.", schemaRef("ErrorResponse")),
 						response(http.StatusUnauthorized, "Session is missing or expired.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only available in the user's home tenant.", schemaRef("ErrorResponse")),
 						response(http.StatusBadGateway, "Feishu API request failed.", schemaRef("ErrorResponse")),
 						response(http.StatusServiceUnavailable, "Feishu integration is not configured.", schemaRef("ErrorResponse")),
 						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
@@ -1125,6 +1154,41 @@ func baseOpenAPIDocument() *openapi3.T {
 							Value: openapi3.NewQueryParameter("page_token").
 								WithDescription("Pagination token returned by the previous search response.").
 								WithSchema(stringSchema("Page token.")),
+						},
+					}
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/feishu/users", &openapi3.PathItem{
+				Post: func() *openapi3.Operation {
+					op := operation("resolveFeishuUser", "Create or update the current tenant's user for a Feishu directory search result", []string{"Feishu"}, responses(
+						response(http.StatusOK, "Forge user for the selected person.", schemaRef("UserDetailResponse")),
+						response(http.StatusBadRequest, "Invalid Feishu user.", schemaRef("ErrorResponse")),
+						response(http.StatusUnauthorized, "Session is missing or expired.", schemaRef("ErrorResponse")),
+						response(http.StatusForbidden, "Only available in the user's home tenant.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.RequestBody = requestBody("One item of a Feishu directory search result.", schemaRef("FeishuUserSearchItem"))
+					return op
+				}(),
+			}),
+			openapi3.WithPath("/api/v1/users", &openapi3.PathItem{
+				Get: func() *openapi3.Operation {
+					op := operation("searchUsers", "Search users of the current tenant", []string{"Users"}, responses(
+						response(http.StatusOK, "Matching users.", schemaRef("UsersResponse")),
+						response(http.StatusBadRequest, "Invalid search request.", schemaRef("ErrorResponse")),
+						response(http.StatusInternalServerError, "Server error.", schemaRef("ErrorResponse")),
+					))
+					op.Parameters = openapi3.Parameters{
+						{
+							Value: openapi3.NewQueryParameter("query").
+								WithDescription("Name or email keyword. Empty returns the first users by name.").
+								WithSchema(stringSchema("Search keyword.")),
+						},
+						{
+							Value: openapi3.NewQueryParameter("limit").
+								WithDescription("Result size, min 1, max 50, default 20.").
+								WithSchema(int32Schema("Limit.")),
 						},
 					}
 					return op
@@ -1293,19 +1357,22 @@ func baseOpenAPIDocument() *openapi3.T {
 				"StorageConfigurationTestRequest":        schemaValue(storageConfigurationTestRequestSchema()),
 				"StorageConfigurationTestResponse":       schemaValue(storageConfigurationTestResponseSchema()),
 				"StorageConfigurationTestFailedResponse": schemaValue(objectSchema("error").WithProperty("error", stringSchema("Error message.")).WithProperty("detail", stringSchema("Human readable failure reason, e.g. HTTP status and S3 error code. Never contains credentials."))),
-				"GlobalCapabilities":                     schemaValue(globalCapabilitiesSchema()),
-				"FeishuAuthResponse":                     schemaValue(feishuAuthResponseSchema()),
-				"FeishuLoginTenant":                      schemaValue(feishuLoginTenantSchema()),
-				"FeishuLoginTenantsResponse":             schemaValue(feishuLoginTenantsResponseSchema()),
-				"FeishuTenant":                           schemaValue(feishuTenantSchema()),
-				"FeishuTenantsResponse":                  schemaValue(feishuTenantsResponseSchema()),
-				"FeishuTenantDetailResponse":             schemaValue(feishuTenantDetailResponseSchema()),
-				"FeishuTenantCreateRequest":              schemaValue(feishuTenantRequestSchema(true)),
-				"FeishuTenantUpdateRequest":              schemaValue(feishuTenantRequestSchema(false)),
+				"TenantCapabilities":                     schemaValue(globalCapabilitiesSchema()),
+				"AuthSessionResponse":                    schemaValue(authSessionResponseSchema()),
+				"TenantSummary":                          schemaValue(tenantSummarySchema()),
+				"LoginTenantsResponse":                   schemaValue(loginTenantsResponseSchema()),
+				"SwitchTenantRequest":                    schemaValue(objectSchema("tenantId").WithProperty("tenantId", stringSchema("Target tenant id."))),
+				"Tenant":                                 schemaValue(tenantSchema()),
+				"TenantsResponse":                        schemaValue(tenantsResponseSchema()),
+				"TenantDetailResponse":                   schemaValue(tenantDetailResponseSchema()),
+				"TenantCreateRequest":                    schemaValue(tenantRequestSchema(true)),
+				"TenantUpdateRequest":                    schemaValue(tenantRequestSchema(false)),
 				"SetupStatusResponse":                    schemaValue(setupStatusResponseSchema()),
-				"SetupFeishuTenantRequest":               schemaValue(setupFeishuTenantRequestSchema()),
-				"FeishuToken":                            schemaValue(feishuTokenSchema()),
-				"FeishuUser":                             schemaValue(feishuUserSchema()),
+				"SetupTenantRequest":                     schemaValue(setupTenantRequestSchema()),
+				"SessionToken":                           schemaValue(sessionTokenSchema()),
+				"User":                                   schemaValue(userSchema()),
+				"UserDetailResponse":                     schemaValue(objectSchema("user").WithPropertyRef("user", schemaRef("User"))),
+				"UsersResponse":                          schemaValue(objectSchema("users").WithPropertyRef("users", arraySchemaRef("User"))),
 				"FeishuUserSearchItem":                   schemaValue(feishuUserSearchItemSchema()),
 				"FeishuUserSearchResponse":               schemaValue(feishuUserSearchResponseSchema()),
 			},
@@ -1965,7 +2032,6 @@ func applicationSchema() *openapi3.Schema {
 		"owner",
 		"ownerEmail",
 		"ownerAvatarUrl",
-		"ownerDepartmentIds",
 		"moduleCount",
 		"environmentCount",
 		"createdAt",
@@ -1979,7 +2045,6 @@ func applicationSchema() *openapi3.Schema {
 		WithProperty("owner", stringSchema("Application owner account.")).
 		WithProperty("ownerEmail", stringSchema("Application owner email.")).
 		WithProperty("ownerAvatarUrl", stringSchema("Application owner avatar url.")).
-		WithProperty("ownerDepartmentIds", stringArraySchema("Feishu department ids of the owner.")).
 		WithProperty("moduleCount", int32Schema("Module count.")).
 		WithProperty("environmentCount", int32Schema("Enabled environment count.")).
 		WithProperty("createdAt", stringSchema("Application creation date.")).
@@ -2038,13 +2103,12 @@ func applicationModuleSchema() *openapi3.Schema {
 }
 
 func applicationMemberSchema() *openapi3.Schema {
-	return objectSchema("id", "userId", "name", "email", "avatarUrl", "team", "role").
+	return objectSchema("id", "userId", "name", "email", "avatarUrl", "role").
 		WithProperty("id", stringSchema("Member id.")).
 		WithProperty("userId", stringSchema("Console user id.")).
 		WithProperty("name", stringSchema("Member name.")).
 		WithProperty("email", stringSchema("Member email.")).
 		WithProperty("avatarUrl", stringSchema("Member avatar url.")).
-		WithProperty("team", stringSchema("Member department path.")).
 		WithProperty("role", enumStringSchema("Member role.", "Owner", "Developer", "QA", "Release"))
 }
 
@@ -2099,7 +2163,6 @@ func applicationDetailSchema() *openapi3.Schema {
 		"owner",
 		"ownerEmail",
 		"ownerAvatarUrl",
-		"ownerDepartmentIds",
 		"metrics",
 		"environments",
 		"modules",
@@ -2116,7 +2179,6 @@ func applicationDetailSchema() *openapi3.Schema {
 		WithProperty("owner", stringSchema("Application owner account.")).
 		WithProperty("ownerEmail", stringSchema("Application owner email.")).
 		WithProperty("ownerAvatarUrl", stringSchema("Application owner avatar url.")).
-		WithProperty("ownerDepartmentIds", stringArraySchema("Feishu department ids of the owner.")).
 		WithPropertyRef("metrics", arraySchemaRef("ApplicationMetric")).
 		WithPropertyRef("environments", arraySchemaRef("ApplicationEnvironment")).
 		WithPropertyRef("modules", arraySchemaRef("ApplicationModule")).
@@ -2143,7 +2205,6 @@ func applicationRequestSchema(includeSlug bool) *openapi3.Schema {
 		"name",
 		"platform",
 		"ownerUserId",
-		"owner",
 		"description",
 		"environments",
 	}
@@ -2154,14 +2215,7 @@ func applicationRequestSchema(includeSlug bool) *openapi3.Schema {
 	schema := objectSchema(required...).
 		WithProperty("name", stringSchema("Application display name.")).
 		WithProperty("platform", stringSchema("Supported platforms.")).
-		WithProperty("ownerUserId", stringSchema("Owner user id. Use the id returned by Feishu user search when available.")).
-		WithProperty("owner", stringSchema("Owner account.")).
-		WithProperty("ownerEmail", stringSchema("Owner email.")).
-		WithProperty("ownerAvatarUrl", stringSchema("Owner avatar url.")).
-		WithProperty("ownerDepartmentIds", stringArraySchema("Feishu department ids of the owner.")).
-		WithProperty("ownerFeishuUnionId", stringSchema("Owner Feishu union_id.")).
-		WithProperty("ownerFeishuOpenId", stringSchema("Owner Feishu open_id.")).
-		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
+		WithProperty("ownerUserId", stringSchema("Owner user id of the current tenant. Resolve Feishu search results with POST /api/v1/feishu/users first.")).
 		WithProperty("description", stringSchema("Application description.")).
 		WithProperty("status", enumStringSchema("Application status code.", "running", "maintenance", "offline")).
 		WithPropertyRef("environments", arraySchemaRef("ApplicationEnvironmentRequest")).
@@ -2275,7 +2329,6 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 		"kind",
 		"applicationId",
 		"ownerUserId",
-		"owner",
 		"repository",
 	}
 	if includeID {
@@ -2286,14 +2339,7 @@ func moduleRequestSchema(includeID bool) *openapi3.Schema {
 		WithProperty("commonModuleId", stringSchema("Required for Feature modules. Must point to a Common module of the same application.")).
 		WithProperty("kind", enumStringSchema("Module kind.", "Common", "Feature")).
 		WithProperty("name", stringSchema("Module display name.")).
-		WithProperty("owner", stringSchema("Module owner.")).
-		WithProperty("ownerAvatarUrl", stringSchema("Module owner avatar url.")).
-		WithProperty("ownerDepartmentIds", stringArraySchema("Feishu department ids of the owner.")).
-		WithProperty("ownerEmail", stringSchema("Module owner email.")).
-		WithProperty("ownerFeishuUnionId", stringSchema("Owner Feishu union_id.")).
-		WithProperty("ownerFeishuOpenId", stringSchema("Owner Feishu open_id.")).
-		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
-		WithProperty("ownerUserId", stringSchema("Module owner user id.")).
+		WithProperty("ownerUserId", stringSchema("Module owner user id of the current tenant.")).
 		WithPropertyRef("repository", schemaRef("ModuleRepositoryRequest")).
 		WithPropertyRef("buildConfig", schemaRef("ModuleBuildConfig"))
 	if includeID {
@@ -2865,7 +2911,7 @@ func storageConfigurationDetailResponseSchema() *openapi3.Schema {
 }
 
 func storageConfigurationRequestSchema(requireCredentials bool) *openapi3.Schema {
-	required := []string{"name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner"}
+	required := []string{"name", "adapter", "bucket", "endpoint", "region", "ownerUserId"}
 	credentialNote := " Leave both credentials empty to keep the stored pair."
 	if requireCredentials {
 		required = append(required, "accessKeyId", "secretAccessKey")
@@ -2878,13 +2924,7 @@ func storageConfigurationRequestSchema(requireCredentials bool) *openapi3.Schema
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
 		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
 		WithProperty("forcePathStyle", boolSchema("Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.")).
-		WithProperty("ownerUserId", stringSchema("Configuration owner user id. Use the id returned by Feishu user search when available.")).
-		WithProperty("owner", stringSchema("Configuration owner.")).
-		WithProperty("ownerEmail", stringSchema("Configuration owner email.")).
-		WithProperty("ownerAvatarUrl", stringSchema("Configuration owner avatar url.")).
-		WithProperty("ownerFeishuUnionId", stringSchema("Owner Feishu union_id.")).
-		WithProperty("ownerFeishuOpenId", stringSchema("Owner Feishu open_id.")).
-		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
+		WithProperty("ownerUserId", stringSchema("Configuration owner user id of the current tenant.")).
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
 		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled")).
@@ -2893,20 +2933,14 @@ func storageConfigurationRequestSchema(requireCredentials bool) *openapi3.Schema
 }
 
 func storageConfigurationTestRequestSchema() *openapi3.Schema {
-	return objectSchema("name", "adapter", "bucket", "endpoint", "region", "ownerUserId", "owner").
+	return objectSchema("name", "adapter", "bucket", "endpoint", "region", "ownerUserId").
 		WithProperty("id", stringSchema("Existing storage configuration id. When set and both credentials are empty, the stored pair is used.")).
 		WithProperty("name", stringSchema("Storage configuration display name.")).
 		WithProperty("adapter", enumStringSchema("Storage adapter.", "S3")).
 		WithProperty("bucket", stringSchema("S3-compatible bucket name.")).
 		WithProperty("endpoint", stringSchema("S3-compatible endpoint.")).
 		WithProperty("forcePathStyle", boolSchema("Use path-style addressing (endpoint/bucket) instead of virtual-hosted style (bucket.endpoint). Enable for services without per-bucket subdomains, such as MinIO or FDS internal endpoints. Defaults to false.")).
-		WithProperty("ownerUserId", stringSchema("Configuration owner user id. Use the id returned by Feishu user search when available.")).
-		WithProperty("owner", stringSchema("Configuration owner.")).
-		WithProperty("ownerEmail", stringSchema("Configuration owner email.")).
-		WithProperty("ownerAvatarUrl", stringSchema("Configuration owner avatar url.")).
-		WithProperty("ownerFeishuUnionId", stringSchema("Owner Feishu union_id.")).
-		WithProperty("ownerFeishuOpenId", stringSchema("Owner Feishu open_id.")).
-		WithProperty("ownerFeishuUserId", stringSchema("Owner Feishu user_id.")).
+		WithProperty("ownerUserId", stringSchema("Configuration owner user id of the current tenant.")).
 		WithProperty("publicBaseUrl", stringSchema("Public base URL for object distribution.")).
 		WithProperty("region", stringSchema("Provider region.")).
 		WithProperty("status", enumStringSchema("Storage status.", "healthy", "error", "disabled")).
@@ -2932,7 +2966,7 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		"canManageEnvironments",
 		"canManageAccessTokens",
 		"canManageBuildAdapters",
-		"canManageFeishuTenants",
+		"canManageTenants",
 		"canManageTestPlans",
 	).
 		WithProperty("canCreateApplication", boolSchema("Whether current user can create applications.")).
@@ -2945,118 +2979,110 @@ func globalCapabilitiesSchema() *openapi3.Schema {
 		WithProperty("canManageEnvironments", boolSchema("Whether current user can manage environments.")).
 		WithProperty("canManageAccessTokens", boolSchema("Whether current user can manage artifact access tokens.")).
 		WithProperty("canManageBuildAdapters", boolSchema("Whether current user can create, edit, disable and enable build adapters.")).
-		WithProperty("canManageFeishuTenants", boolSchema("Whether current user can manage Feishu login tenants (SuperAdmin only).")).
+		WithProperty("canManageTenants", boolSchema("Whether current user can manage tenants and switch into them (SuperAdmin only).")).
 		WithProperty("canManageTestPlans", boolSchema("Whether current user can manage test plans of every application."))
 }
 
-func feishuLoginTenantSchema() *openapi3.Schema {
+func tenantSummarySchema() *openapi3.Schema {
 	return objectSchema("id", "name").
-		WithProperty("id", stringSchema("Feishu tenant id.")).
+		WithProperty("id", stringSchema("Tenant id.")).
 		WithProperty("name", stringSchema("Tenant display name."))
 }
 
-func feishuLoginTenantsResponseSchema() *openapi3.Schema {
+func loginTenantsResponseSchema() *openapi3.Schema {
 	return objectSchema("tenants").
-		WithPropertyRef("tenants", arraySchemaRef("FeishuLoginTenant"))
+		WithPropertyRef("tenants", arraySchemaRef("TenantSummary"))
 }
 
-func feishuTenantSchema() *openapi3.Schema {
-	return objectSchema("id", "name", "appId", "status", "sortOrder", "createdAt", "updatedAt").
+func tenantSchema() *openapi3.Schema {
+	return objectSchema("id", "name", "feishuAppId", "status", "sortOrder", "createdAt", "updatedAt").
 		WithProperty("id", stringSchema("Tenant id, lowercase letters, digits and dashes.")).
 		WithProperty("name", stringSchema("Tenant display name shown on the login page.")).
-		WithProperty("appId", stringSchema("Feishu app id (cli_...). Cannot be changed after creation.")).
-		WithProperty("status", enumStringSchema("Tenant status.", string(domain.FeishuTenantStatusActive), string(domain.FeishuTenantStatusDisabled))).
+		WithProperty("feishuAppId", stringSchema("Feishu app id (cli_...) used to log in. Cannot be changed after creation.")).
+		WithProperty("status", enumStringSchema("Tenant status.", string(domain.TenantStatusActive), string(domain.TenantStatusDisabled))).
 		WithProperty("sortOrder", int32Schema("Order on the login page, ascending.")).
 		WithProperty("createdAt", dateTimeSchema("Creation time.")).
 		WithProperty("updatedAt", dateTimeSchema("Last update time."))
 }
 
-func feishuTenantsResponseSchema() *openapi3.Schema {
+func tenantsResponseSchema() *openapi3.Schema {
 	return objectSchema("tenants").
-		WithPropertyRef("tenants", arraySchemaRef("FeishuTenant"))
+		WithPropertyRef("tenants", arraySchemaRef("Tenant"))
 }
 
-func feishuTenantDetailResponseSchema() *openapi3.Schema {
+func tenantDetailResponseSchema() *openapi3.Schema {
 	return objectSchema("tenant").
-		WithPropertyRef("tenant", schemaRef("FeishuTenant"))
+		WithPropertyRef("tenant", schemaRef("Tenant"))
 }
 
-func feishuTenantRequestSchema(create bool) *openapi3.Schema {
+func tenantRequestSchema(create bool) *openapi3.Schema {
 	required := []string{"name", "status"}
 	if create {
-		required = append(required, "id", "appId", "appSecret")
+		required = append(required, "id", "feishuAppId", "feishuAppSecret")
 	}
 	return objectSchema(required...).
 		WithProperty("id", stringSchema("Tenant id. Only used on create.")).
 		WithProperty("name", stringSchema("Tenant display name.")).
-		WithProperty("appId", stringSchema("Feishu app id. Only used on create; must be omitted or unchanged on update.")).
-		WithProperty("appSecret", stringSchema("Feishu app secret, stored encrypted. Empty on update keeps the stored secret.")).
-		WithProperty("status", enumStringSchema("Tenant status.", string(domain.FeishuTenantStatusActive), string(domain.FeishuTenantStatusDisabled))).
+		WithProperty("feishuAppId", stringSchema("Feishu app id. Only used on create; must be omitted or unchanged on update.")).
+		WithProperty("feishuAppSecret", stringSchema("Feishu app secret, stored encrypted. Empty on update keeps the stored secret.")).
+		WithProperty("status", enumStringSchema("Tenant status.", string(domain.TenantStatusActive), string(domain.TenantStatusDisabled))).
 		WithProperty("sortOrder", int32Schema("Order on the login page, ascending."))
 }
 
 func setupStatusResponseSchema() *openapi3.Schema {
 	return objectSchema("setupRequired").
-		WithProperty("setupRequired", boolSchema("True when no Feishu tenant exists yet."))
+		WithProperty("setupRequired", boolSchema("True when no tenant exists yet."))
 }
 
-func setupFeishuTenantRequestSchema() *openapi3.Schema {
-	return objectSchema("token", "id", "name", "appId", "appSecret").
+func setupTenantRequestSchema() *openapi3.Schema {
+	return objectSchema("token", "id", "name", "feishuAppId", "feishuAppSecret").
 		WithProperty("token", stringSchema("Setup token printed in the server log at startup.")).
 		WithProperty("id", stringSchema("Tenant id, lowercase letters, digits and dashes.")).
 		WithProperty("name", stringSchema("Tenant display name.")).
-		WithProperty("appId", stringSchema("Feishu app id (cli_...).")).
-		WithProperty("appSecret", stringSchema("Feishu app secret, stored encrypted."))
+		WithProperty("feishuAppId", stringSchema("Feishu app id (cli_...).")).
+		WithProperty("feishuAppSecret", stringSchema("Feishu app secret, stored encrypted."))
 }
 
-func feishuAuthResponseSchema() *openapi3.Schema {
-	return objectSchema("capabilities", "roles", "tenant", "user", "token").
-		WithPropertyRef("capabilities", schemaRef("GlobalCapabilities")).
-		WithProperty("roles", stringArraySchema("Global roles assigned to the current user.")).
-		WithPropertyRef("tenant", schemaRef("FeishuLoginTenant")).
-		WithPropertyRef("user", schemaRef("FeishuUser")).
-		WithPropertyRef("token", schemaRef("FeishuToken"))
+func authSessionResponseSchema() *openapi3.Schema {
+	return objectSchema("capabilities", "roles", "user", "homeTenant", "activeTenant", "token").
+		WithPropertyRef("capabilities", schemaRef("TenantCapabilities")).
+		WithProperty("roles", func() *openapi3.Schema {
+			schema := stringArraySchema("Roles of the current user. SuperAdmin applies to every tenant, the others only to the home tenant.")
+			schema.Items = schemaValue(enumStringSchema("Role.", string(domain.RoleSuperAdmin), string(domain.RoleTenantAdmin), string(domain.RoleReleaseAdmin), string(domain.RoleAuditor)))
+			return schema
+		}()).
+		WithPropertyRef("user", schemaRef("User")).
+		WithPropertyRef("homeTenant", schemaRef("TenantSummary")).
+		WithPropertyRef("activeTenant", schemaRef("TenantSummary")).
+		WithPropertyRef("token", schemaRef("SessionToken"))
 }
 
-func feishuUserSchema() *openapi3.Schema {
-	return objectSchema("id", "unionId").
-		WithProperty("id", stringSchema("Console user id derived from open_id, user_id, or union_id.")).
-		WithProperty("unionId", stringSchema("Feishu union_id.")).
-		WithProperty("openId", stringSchema("Feishu open_id.")).
-		WithProperty("userId", stringSchema("Feishu user_id.")).
+func userSchema() *openapi3.Schema {
+	return objectSchema("id", "name", "email", "avatarUrl").
+		WithProperty("id", stringSchema("Forge user id.")).
 		WithProperty("name", stringSchema("User name.")).
-		WithProperty("enName", stringSchema("User English name.")).
-		WithProperty("avatarUrl", stringSchema("Avatar URL.")).
-		WithProperty("avatarThumb", stringSchema("Avatar thumbnail URL.")).
-		WithProperty("avatarMiddle", stringSchema("Avatar middle URL.")).
-		WithProperty("avatarBig", stringSchema("Avatar big URL.")).
 		WithProperty("email", stringSchema("User email.")).
-		WithProperty("enterpriseEmail", stringSchema("Enterprise email.")).
-		WithProperty("mobile", stringSchema("Mobile phone.")).
-		WithProperty("tenantKey", stringSchema("Tenant key.")).
-		WithProperty("employeeNo", stringSchema("Employee number."))
+		WithProperty("avatarUrl", stringSchema("Avatar URL."))
 }
 
-func feishuTokenSchema() *openapi3.Schema {
+func sessionTokenSchema() *openapi3.Schema {
 	return objectSchema("expiresIn", "tokenType", "hasRefreshToken").
-		WithProperty("expiresIn", int32Schema("Access token lifetime in seconds.")).
-		WithProperty("refreshTokenExpiresIn", int32Schema("Refresh token lifetime in seconds.")).
+		WithProperty("expiresIn", int32Schema("Login provider access token lifetime in seconds.")).
+		WithProperty("refreshTokenExpiresIn", int32Schema("Login provider refresh token lifetime in seconds.")).
 		WithProperty("tokenType", stringSchema("Token type.")).
 		WithProperty("scope", stringSchema("Granted scopes.")).
 		WithProperty("hasRefreshToken", boolSchema("Whether a refresh token was returned."))
 }
 
 func feishuUserSearchItemSchema() *openapi3.Schema {
-	return objectSchema("name", "departmentIds").
+	return objectSchema("openId", "name").
 		WithProperty("unionId", stringSchema("Feishu union_id.")).
 		WithProperty("openId", stringSchema("Feishu open_id.")).
 		WithProperty("userId", stringSchema("Feishu user_id.")).
 		WithProperty("name", stringSchema("User name.")).
 		WithProperty("enName", stringSchema("User English name.")).
 		WithProperty("avatarUrl", stringSchema("Avatar URL.")).
-		WithProperty("email", stringSchema("User email.")).
-		WithProperty("mobile", stringSchema("Mobile phone.")).
-		WithProperty("departmentIds", stringArraySchema("Feishu department ids."))
+		WithProperty("email", stringSchema("User email."))
 }
 
 func feishuUserSearchResponseSchema() *openapi3.Schema {

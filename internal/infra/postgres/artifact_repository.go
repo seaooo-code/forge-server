@@ -24,17 +24,22 @@ func NewArtifactRepository(pool artifactQuerier) *ArtifactRepository {
 }
 
 func (r *ArtifactRepository) GetArtifactBuildRecord(ctx context.Context, input domain.ArtifactDownloadInput) (domain.BuildRecord, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.BuildRecord{}, err
+	}
 	record, err := scanBuildRecord(r.pool.QueryRow(ctx, buildRecordSelectSQL("build_records", `
 		join modules m on m.id = br.module_id
 		join applications a on a.id = m.application_id
 		join code_source_connections csc on csc.id = m.code_source_connection_id
-		join environments e on e.code = br.environment_code
+		join environments e on e.id = br.environment_id
 		join storage_configurations s on s.id = br.storage_configuration_id
 		where a.slug = $1
 			and br.module_id = $2
-			and br.environment_code = $3
+			and e.code = $3
 			and br.id = $4
-	`), input.ApplicationSlug, input.ModuleID, input.Environment, input.BuildRecordID))
+			and ($5::text = '' or a.tenant_id = $5)
+	`), input.ApplicationSlug, input.ModuleID, input.Environment, input.BuildRecordID, tenantID))
 	if err != nil {
 		if errors.Is(err, domain.ErrBuildRecordNotFound) {
 			return domain.BuildRecord{}, domain.ErrArtifactNotFound
@@ -45,7 +50,7 @@ func (r *ArtifactRepository) GetArtifactBuildRecord(ctx context.Context, input d
 }
 
 func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactManifestSource, error) {
-	source, err := r.getArtifactApplicationEnvironment(ctx, input)
+	source, environmentID, err := r.getArtifactApplicationEnvironment(ctx, input)
 	if err != nil {
 		return domain.ArtifactManifestSource{}, err
 	}
@@ -74,7 +79,7 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 				from release_routes runtime_route
 				join release_records runtime_rr on runtime_rr.id = runtime_route.release_id
 				where runtime_route.module_id = m.id
-					and runtime_route.environment_code = $2
+					and runtime_route.environment_id = $2
 					and runtime_route.runtime_version = $4
 					and runtime_route.channel in ($5, '')
 					and runtime_route.route_type in ('default', 'percentage')
@@ -91,11 +96,11 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			from test_plan_items item
 			join test_plans tp on tp.id = item.test_plan_id
 			join test_plan_members member on member.test_plan_id = tp.id and member.user_id = $3
-			join environments env on env.code = tp.environment_code
+			join environments env on env.id = tp.environment_id
 			join build_records plan_build on plan_build.id = item.build_record_id
 			where $3 <> ''
 				and item.module_id = m.id
-				and tp.environment_code = $2
+				and tp.environment_id = $2
 				and tp.status = 'open'
 				and tp.expires_at > now()
 				and env.allow_test_plans
@@ -114,7 +119,7 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 			from release_routes route
 			join release_records rr on rr.id = route.release_id
 			where route.module_id = m.id
-				and route.environment_code = $2
+				and route.environment_id = $2
 				and route.runtime_version = $4
 				and route.channel in ($5, '')
 				and route.status = 'active'
@@ -138,7 +143,7 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 		) selected on true
 		where m.application_id = $1
 		order by m.sort_order asc, m.created_at asc
-	`, source.Application.ID, input.Environment, input.UserID, input.RuntimeVersion, source.Channel)
+	`, source.Application.ID, environmentID, input.UserID, input.RuntimeVersion, source.Channel)
 	if err != nil {
 		return domain.ArtifactManifestSource{}, fmt.Errorf("query artifact manifest modules: %w", err)
 	}
@@ -188,13 +193,21 @@ func (r *ArtifactRepository) GetArtifactManifestSource(ctx context.Context, inpu
 	return source, nil
 }
 
-func (r *ArtifactRepository) getArtifactApplicationEnvironment(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactManifestSource, error) {
+// getArtifactApplicationEnvironment 按 slug 找应用，再在应用绑定的环境里按编码找环境，返回环境 ID。
+// 绑定表保证应用和环境同租户，其他租户的同名环境不会命中。
+func (r *ArtifactRepository) getArtifactApplicationEnvironment(ctx context.Context, input domain.ArtifactManifestInput) (domain.ArtifactManifestSource, string, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ArtifactManifestSource{}, "", err
+	}
 	var source domain.ArtifactManifestSource
+	var environmentID string
 	if err := r.pool.QueryRow(ctx, `
 		select
 			a.id,
 			a.slug,
 			a.name,
+			e.id,
 			e.code,
 			e.name,
 			coalesce((
@@ -204,21 +217,23 @@ func (r *ArtifactRepository) getArtifactApplicationEnvironment(ctx context.Conte
 			), '')
 		from applications a
 		join application_environment_bindings b on b.application_id = a.id
-		join environments e on e.code = b.environment_code
+		join environments e on e.id = b.environment_id
 		where a.slug = $1
 			and e.code = $2
-	`, input.ApplicationSlug, input.Environment, input.Channel).Scan(
+			and ($4::text = '' or a.tenant_id = $4)
+	`, input.ApplicationSlug, input.Environment, input.Channel, tenantID).Scan(
 		&source.Application.ID,
 		&source.Application.Slug,
 		&source.Application.Name,
+		&environmentID,
 		&source.Environment.ID,
 		&source.Environment.Name,
 		&source.Channel,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ArtifactManifestSource{}, domain.ErrArtifactNotFound
+			return domain.ArtifactManifestSource{}, "", domain.ErrArtifactNotFound
 		}
-		return domain.ArtifactManifestSource{}, fmt.Errorf("query artifact application environment: %w", err)
+		return domain.ArtifactManifestSource{}, "", fmt.Errorf("query artifact application environment: %w", err)
 	}
-	return source, nil
+	return source, environmentID, nil
 }

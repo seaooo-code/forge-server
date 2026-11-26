@@ -45,7 +45,7 @@ func TestAppManifestUsesConfiguredURLs(t *testing.T) {
 		WebURL:              "https://github.example.com",
 	}, false)
 
-	manifest, err := client.AppManifest()
+	manifest, err := client.AppManifest("acme")
 	if err != nil {
 		t.Fatalf("app manifest: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestAppManifestUsesConfiguredURLs(t *testing.T) {
 	if err := json.Unmarshal([]byte(manifest.Payload), &payload); err != nil {
 		t.Fatalf("decode manifest payload: %v", err)
 	}
-	if payload["name"] != "Forge Test" || payload["redirect_url"] != "https://api.forge.example.com/api/v1/code-sources/github/manifest/callback" {
+	if payload["name"] != "Forge Test acme" || payload["redirect_url"] != "https://api.forge.example.com/api/v1/code-sources/github/manifest/callback" {
 		t.Fatalf("unexpected manifest payload: %+v", payload)
 	}
 	if payload["setup_url"] != "https://api.forge.example.com/api/v1/code-sources/github/install/callback" {
@@ -71,7 +71,7 @@ func TestAppManifestUsesConfiguredURLs(t *testing.T) {
 func TestAppManifestSubscribesPushWhenWebhookURLConfigured(t *testing.T) {
 	client := NewClient(config.GitHubConfig{WebhookURL: "https://forge.example.com/api/v1/webhooks/github"}, false)
 
-	manifest, err := client.AppManifest()
+	manifest, err := client.AppManifest("acme")
 	if err != nil {
 		t.Fatalf("app manifest: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestAppManifestSubscribesPushWhenWebhookURLConfigured(t *testing.T) {
 	if len(payload.DefaultEvents) != 1 || payload.DefaultEvents[0] != "push" {
 		t.Fatalf("expected push event subscription, got %+v", payload.DefaultEvents)
 	}
-	if !payload.HookAttributes.Active || payload.HookAttributes.URL != "https://forge.example.com/api/v1/webhooks/github" {
+	if !payload.HookAttributes.Active || payload.HookAttributes.URL != "https://forge.example.com/api/v1/webhooks/github/acme" {
 		t.Fatalf("unexpected hook attributes: %+v", payload.HookAttributes)
 	}
 }

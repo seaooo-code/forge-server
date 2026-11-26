@@ -20,7 +20,7 @@ func resetBuildQueue(t *testing.T, ctx context.Context, repository *BuildReposit
 // gitlab_ci 模块：构建记录带出 job 和产物路径；worker 按构建方式领取；pipeline 只有持有者能写，并且放回队列后保留。
 func TestIntegrationGitLabCIBuildLifecycle(t *testing.T) {
 	pool := newIntegrationPool(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	moduleID, environment := seedIntegrationModule(t, pool)
 	repository := NewBuildRepository(pool)
 	resetBuildQueue(t, ctx, repository)
@@ -75,7 +75,7 @@ func TestIntegrationGitLabCIBuildLifecycle(t *testing.T) {
 
 func TestIntegrationModuleGitLabCIConfigAndConstraints(t *testing.T) {
 	pool := newIntegrationPool(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	moduleID, _ := seedIntegrationModule(t, pool)
 
 	if _, err := pool.Exec(ctx, `update modules set build_mode = 'gitlab_ci', ci_job = 'forge_build', ci_artifact_path = 'out' where id = $1`, moduleID); err != nil {

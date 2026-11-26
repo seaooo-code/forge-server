@@ -123,7 +123,7 @@ func registerCodeSourceRoutes(group *echo.Group, publicGroup *echo.Group, servic
 	group.GET("/code-sources/github/install-url", handler.installURL)
 	group.GET("/code-sources/github/install/callback", handler.completeInstallation)
 
-	// 平台级代码源连接：PlatformAdmin / SuperAdmin 管理，有模块权限的人可读取和使用。
+	// 平台级代码源连接：TenantAdmin / SuperAdmin 管理，有模块权限的人可读取和使用。
 	group.GET("/code-source-connections", handler.listConnections)
 	group.POST("/code-source-connections", handler.createConnection)
 	group.GET("/code-source-connections/:id", handler.getConnection)
@@ -386,37 +386,37 @@ func (h codeSourceHandler) authorize(c echo.Context, action domain.Authorization
 	if err := authorizeCurrentUser(c, h.authorization, action, domain.AuthorizationResource{}); err != nil {
 		return "", false, err
 	}
-	return domain.ConsoleUserIDFromFeishu(session.User), true, nil
+	return session.User.ID, true, nil
 }
 
-func (h codeSourceHandler) currentSession(c echo.Context) (domain.FeishuAuthResult, bool, error) {
+func (h codeSourceHandler) currentSession(c echo.Context) (domain.ConsoleSession, bool, error) {
 	if session, ok := consoleSession(c); ok {
 		return session, true, nil
 	}
 	if h.authService == nil {
-		return domain.FeishuAuthResult{}, false, c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
+		return domain.ConsoleSession{}, false, c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth unavailable"})
 	}
 
 	sessionToken, ok := feishuSessionToken(c)
 	if !ok {
-		return domain.FeishuAuthResult{}, false, c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return domain.ConsoleSession{}, false, c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
 
 	session, err := h.authService.GetSession(c.Request().Context(), sessionToken)
 	if err != nil {
-		if errors.Is(err, domain.ErrFeishuSessionNotFound) ||
-			errors.Is(err, domain.ErrFeishuSessionExpired) ||
+		if errors.Is(err, domain.ErrSessionNotFound) ||
+			errors.Is(err, domain.ErrSessionExpired) ||
 			errors.Is(err, domain.ErrFeishuAuthorization) {
 			clearFeishuSessionCookie(c)
-			return domain.FeishuAuthResult{}, false, c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return domain.ConsoleSession{}, false, c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		}
 		if errors.Is(err, domain.ErrFeishuAuthNotConfigured) {
-			return domain.FeishuAuthResult{}, false, c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
+			return domain.ConsoleSession{}, false, c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "feishu auth not configured"})
 		}
-		return domain.FeishuAuthResult{}, false, c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return domain.ConsoleSession{}, false, c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
 	setFeishuSessionCookie(c, session)
-	c.Set(consoleSessionContextKey, session)
+	setConsoleSession(c, session)
 
 	return session, true, nil
 }

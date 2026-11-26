@@ -32,7 +32,7 @@ func TestDashboardSnapshotAggregatesRealServices(t *testing.T) {
 	})
 	service.now = func() time.Time { return now }
 
-	snapshot, err := service.GetDashboardSnapshot(context.Background(), "ou-user")
+	snapshot, err := service.GetDashboardSnapshot(context.Background())
 	if err != nil {
 		t.Fatalf("get dashboard snapshot: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestDashboardSnapshotHandlesEmptyData(t *testing.T) {
 	service := NewDashboardService(DashboardDependencies{})
 	service.now = func() time.Time { return time.Date(2026, 6, 30, 15, 0, 0, 0, time.UTC) }
 
-	snapshot, err := service.GetDashboardSnapshot(context.Background(), "")
+	snapshot, err := service.GetDashboardSnapshot(context.Background())
 	if err != nil {
 		t.Fatalf("get dashboard snapshot: %v", err)
 	}

@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ import (
 // 全量只记录健康状态；没有上报的发布是 no_reports。
 func TestIntegrationReleaseHealthStopsUnhealthyGray(t *testing.T) {
 	f := newChannelFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	repository := NewReleaseHealthRepository(f.pool)
 
 	fullBuild, _ := f.build(t, f.feature, "main", "rt-1")

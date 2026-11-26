@@ -40,7 +40,7 @@ type Dependencies struct {
 	EnvironmentService         EnvironmentService
 	FeishuAuthService          FeishuAuthService
 	FeishuContactService       FeishuContactService
-	FeishuTenantService        FeishuTenantService
+	TenantService              TenantService
 	ModuleService              ModuleService
 	ReleaseService             ReleaseService
 	ReleaseChannelService      ReleaseChannelService
@@ -66,7 +66,7 @@ type ApplicationService interface {
 type AuthorizationService interface {
 	ApplicationCapabilities(ctx context.Context, userID string, applicationID string) (domain.ApplicationCapabilities, error)
 	Authorize(ctx context.Context, userID string, action domain.AuthorizationAction, resource domain.AuthorizationResource) error
-	GlobalCapabilities(ctx context.Context, userID string) (domain.GlobalCapabilities, []domain.GlobalRole, error)
+	TenantCapabilities(ctx context.Context, userID string) (domain.TenantCapabilities, []domain.Role, error)
 }
 
 type ArtifactService interface {
@@ -94,7 +94,7 @@ type BuildQueueService interface {
 }
 
 type DashboardService interface {
-	GetDashboardSnapshot(ctx context.Context, ownerUnionID string) (domain.DashboardSnapshot, error)
+	GetDashboardSnapshot(ctx context.Context) (domain.DashboardSnapshot, error)
 }
 
 type ArtifactPullStatsService interface {
@@ -171,22 +171,25 @@ type ModuleService interface {
 
 type FeishuAuthService interface {
 	AuthorizationURL(ctx context.Context, tenantID string, redirectURI string, state string) (string, string, error)
-	CompleteAuthorization(ctx context.Context, tenantID string, redirectURI string, code string) (domain.FeishuAuthResult, error)
-	GetSession(ctx context.Context, sessionToken string) (domain.FeishuAuthResult, error)
+	CompleteAuthorization(ctx context.Context, tenantID string, redirectURI string, code string) (domain.ConsoleSession, error)
+	GetSession(ctx context.Context, sessionToken string) (domain.ConsoleSession, error)
+	SwitchTenant(ctx context.Context, sessionToken string, tenantID string) (domain.ConsoleSession, error)
 	Logout(ctx context.Context, sessionToken string) error
 }
 
-type FeishuTenantService interface {
-	CreateFeishuTenant(ctx context.Context, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
-	ListActiveFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
-	ListFeishuTenants(ctx context.Context) ([]domain.FeishuTenant, error)
-	SetupFirstTenant(ctx context.Context, token string, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
+type TenantService interface {
+	CreateTenant(ctx context.Context, input domain.TenantInput) (domain.Tenant, error)
+	ListActiveTenants(ctx context.Context) ([]domain.Tenant, error)
+	ListTenants(ctx context.Context) ([]domain.Tenant, error)
+	SetupFirstTenant(ctx context.Context, token string, input domain.TenantInput) (domain.Tenant, error)
 	SetupRequired(ctx context.Context) (bool, error)
-	UpdateFeishuTenant(ctx context.Context, id string, input domain.FeishuTenantInput) (domain.FeishuTenant, error)
+	UpdateTenant(ctx context.Context, id string, input domain.TenantInput) (domain.Tenant, error)
 }
 
 type FeishuContactService interface {
-	SearchUsers(ctx context.Context, accessToken string, query string, pageSize int, pageToken string) (domain.FeishuUserSearchPage, error)
+	SearchUsers(ctx context.Context, session domain.ConsoleSession, query string, pageSize int, pageToken string) (domain.FeishuUserSearchPage, error)
+	ResolveUser(ctx context.Context, session domain.ConsoleSession, result domain.FeishuUserSearchResult) (domain.User, error)
+	SearchLocalUsers(ctx context.Context, query string, limit int) ([]domain.User, error)
 }
 
 type StorageService interface {
@@ -229,8 +232,8 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 			"status": "ok",
 		})
 	})
-	registerFeishuAuthRoutes(api, deps.FeishuAuthService, deps.FeishuTenantService)
-	registerSetupRoutes(api, deps.FeishuTenantService)
+	registerFeishuAuthRoutes(api, deps.FeishuAuthService, deps.TenantService)
+	registerSetupRoutes(api, deps.TenantService)
 	registerArtifactRoutes(api, deps.ArtifactService, deps.ArtifactAccessTokenService, deps.FeishuAuthService)
 	registerLaunchReportRoutes(api, deps.ReleaseHealthService, deps.ArtifactAccessTokenService)
 	registerWebhookRoutes(api, deps.WebhookService)
@@ -248,8 +251,8 @@ func New(cfg config.Config, deps Dependencies) *echo.Echo {
 	registerCodeSourceRoutes(protectedAPI, api, deps.CodeSourceService, deps.FeishuAuthService, deps.AuthorizationService, cfg.GitHub.InstallRedirectURL)
 	registerDashboardRoutes(protectedAPI, deps.DashboardService)
 	registerEnvironmentRoutes(protectedAPI, deps.EnvironmentService, deps.AuthorizationService)
-	registerFeishuTenantRoutes(protectedAPI, deps.FeishuTenantService, deps.AuthorizationService)
-	registerFeishuContactRoutes(protectedAPI, deps.FeishuContactService, deps.FeishuAuthService)
+	registerTenantRoutes(protectedAPI, deps.TenantService, deps.AuthorizationService)
+	registerFeishuContactRoutes(protectedAPI, deps.FeishuContactService)
 	registerModuleRoutes(protectedAPI, deps.ModuleService, deps.AuthorizationService)
 	registerBuildVariableRoutes(protectedAPI, deps.BuildVariableService, deps.AuthorizationService)
 	registerReleaseRoutes(protectedAPI, deps.ReleaseService, deps.AuthorizationService)

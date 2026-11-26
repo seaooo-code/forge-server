@@ -53,23 +53,17 @@ type StorageCredentials struct {
 }
 
 type StorageConfigurationInput struct {
-	Name               string
-	Adapter            StorageAdapter
-	Bucket             string
-	Endpoint           string
-	Region             string
-	OwnerUserID        string
-	Owner              string
-	OwnerEmail         string
-	OwnerAvatarURL     string
-	OwnerFeishuUnionID string
-	OwnerFeishuOpenID  string
-	OwnerFeishuUserID  string
-	PublicBaseURL      string
-	ForcePathStyle     bool
-	AccessKeyID        string
-	SecretAccessKey    string
-	Status             StorageStatus
+	Name            string
+	Adapter         StorageAdapter
+	Bucket          string
+	Endpoint        string
+	Region          string
+	OwnerUserID     string
+	PublicBaseURL   string
+	ForcePathStyle  bool
+	AccessKeyID     string
+	SecretAccessKey string
+	Status          StorageStatus
 }
 
 type StorageConfigurationTestResult struct {

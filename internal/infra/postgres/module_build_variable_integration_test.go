@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 func TestIntegrationCreateModuleWithBuildVariables(t *testing.T) {
 	pool := newIntegrationPool(t)
 	commonModuleID, environment := seedIntegrationModule(t, pool)
-	ctx := context.Background()
+	ctx := moduleTenantCtx(t, pool, commonModuleID)
 
 	var applicationID, ownerUserID, connectionID, repositoryID string
 	var moduleCount int
@@ -32,7 +31,6 @@ func TestIntegrationCreateModuleWithBuildVariables(t *testing.T) {
 			ID:             id,
 			Kind:           domain.ModuleKindFeature,
 			Name:           id,
-			Owner:          "tester",
 			OwnerUserID:    ownerUserID,
 			Repository:     domain.ModuleRepository{ConnectionID: connectionID, ExternalRepositoryID: repositoryID, FullName: "demo/repo"},
 			BuildConfig: domain.ModuleBuildConfig{

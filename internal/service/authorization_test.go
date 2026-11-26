@@ -11,14 +11,14 @@ import (
 func TestAuthorizationServiceRoleMatrix(t *testing.T) {
 	tests := []struct {
 		name    string
-		roles   []domain.GlobalRole
+		roles   []domain.Role
 		appRole domain.ApplicationMemberRole
 		action  domain.AuthorizationAction
 		wantErr error
 	}{
 		{
 			name:    "super admin can manage members",
-			roles:   []domain.GlobalRole{domain.GlobalRoleSuperAdmin},
+			roles:   []domain.Role{domain.RoleSuperAdmin},
 			action:  domain.ActionApplicationMemberManage,
 			wantErr: nil,
 		},
@@ -88,7 +88,7 @@ func TestAuthorizationServiceRoleMatrix(t *testing.T) {
 		},
 		{
 			name:    "platform admin can manage test plans",
-			roles:   []domain.GlobalRole{domain.GlobalRolePlatformAdmin},
+			roles:   []domain.Role{domain.RoleTenantAdmin},
 			action:  domain.ActionTestPlanManage,
 			wantErr: nil,
 		},
@@ -146,7 +146,7 @@ func TestAuthorizationServiceApplicationCapabilities(t *testing.T) {
 type fakeAuthorizationRepository struct {
 	applicationID string
 	appRole       domain.ApplicationMemberRole
-	globalRoles   []domain.GlobalRole
+	globalRoles   []domain.Role
 	lastBuildID   string
 }
 
@@ -182,24 +182,24 @@ func (r *fakeAuthorizationRepository) ListApplicationRoles(context.Context, stri
 	return []domain.ApplicationMemberRole{r.appRole}, nil
 }
 
-func (r *fakeAuthorizationRepository) ListGlobalRoles(context.Context, string) ([]domain.GlobalRole, error) {
+func (r *fakeAuthorizationRepository) ListUserRoles(context.Context, string) ([]domain.Role, error) {
 	return r.globalRoles, nil
 }
 
 func TestAuthorizationServiceCodeSourceUseWithoutApplication(t *testing.T) {
 	tests := []struct {
 		name    string
-		roles   []domain.GlobalRole
+		roles   []domain.Role
 		appRole domain.ApplicationMemberRole
 		action  domain.AuthorizationAction
 		wantErr error
 	}{
-		{name: "platform admin can use connections", roles: []domain.GlobalRole{domain.GlobalRolePlatformAdmin}, action: domain.ActionCodeSourceUse},
-		{name: "platform admin can manage connections", roles: []domain.GlobalRole{domain.GlobalRolePlatformAdmin}, action: domain.ActionCodeSourceManage},
+		{name: "platform admin can use connections", roles: []domain.Role{domain.RoleTenantAdmin}, action: domain.ActionCodeSourceUse},
+		{name: "platform admin can manage connections", roles: []domain.Role{domain.RoleTenantAdmin}, action: domain.ActionCodeSourceManage},
 		{name: "application owner can use connections", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionCodeSourceUse},
 		{name: "application owner cannot manage connections", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionCodeSourceManage, wantErr: domain.ErrForbidden},
 		{name: "developer cannot use connections", appRole: domain.ApplicationMemberRoleDeveloper, action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
-		{name: "release admin cannot use connections", roles: []domain.GlobalRole{domain.GlobalRoleReleaseAdmin}, action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
+		{name: "release admin cannot use connections", roles: []domain.Role{domain.RoleReleaseAdmin}, action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
 		{name: "plain user cannot use connections", action: domain.ActionCodeSourceUse, wantErr: domain.ErrForbidden},
 	}
 
@@ -219,14 +219,14 @@ func TestAuthorizationServiceCodeSourceUseWithoutApplication(t *testing.T) {
 func TestAuthorizationServiceBuildAdapterActions(t *testing.T) {
 	tests := []struct {
 		name    string
-		roles   []domain.GlobalRole
+		roles   []domain.Role
 		appRole domain.ApplicationMemberRole
 		action  domain.AuthorizationAction
 		wantErr error
 	}{
-		{name: "super admin can manage adapters", roles: []domain.GlobalRole{domain.GlobalRoleSuperAdmin}, action: domain.ActionBuildAdapterManage},
-		{name: "platform admin can manage adapters", roles: []domain.GlobalRole{domain.GlobalRolePlatformAdmin}, action: domain.ActionBuildAdapterManage},
-		{name: "release admin cannot manage adapters", roles: []domain.GlobalRole{domain.GlobalRoleReleaseAdmin}, action: domain.ActionBuildAdapterManage, wantErr: domain.ErrForbidden},
+		{name: "super admin can manage adapters", roles: []domain.Role{domain.RoleSuperAdmin}, action: domain.ActionBuildAdapterManage},
+		{name: "platform admin can manage adapters", roles: []domain.Role{domain.RoleTenantAdmin}, action: domain.ActionBuildAdapterManage},
+		{name: "release admin cannot manage adapters", roles: []domain.Role{domain.RoleReleaseAdmin}, action: domain.ActionBuildAdapterManage, wantErr: domain.ErrForbidden},
 		{name: "owner cannot manage adapters", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionBuildAdapterManage, wantErr: domain.ErrForbidden},
 		{name: "owner can use adapters", appRole: domain.ApplicationMemberRoleOwner, action: domain.ActionBuildAdapterUse},
 		{name: "developer cannot use adapters", appRole: domain.ApplicationMemberRoleDeveloper, action: domain.ActionBuildAdapterUse, wantErr: domain.ErrForbidden},

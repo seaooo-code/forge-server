@@ -1,7 +1,6 @@
 package postgres
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -10,7 +9,7 @@ import (
 
 func TestIntegrationArtifactPullStatsIncrementListAndDelete(t *testing.T) {
 	f := newTestPlanFixture(t)
-	ctx := context.Background()
+	ctx := integrationCtx()
 	stats := NewArtifactPullStatsRepository(f.pool)
 	buildID, number := f.build(t, f.feature, "main", "rt-1")
 	today := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)

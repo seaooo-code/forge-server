@@ -32,14 +32,23 @@ type testPlanRef struct {
 	ID            string
 	Name          string
 	ApplicationID string
-	Environment   string
+	// EnvironmentID 是提测单所在环境的 ID。
+	EnvironmentID string
 }
 
 func (r *TestPlanRepository) ListTestPlans(ctx context.Context, filters domain.TestPlanFilters) ([]domain.TestPlan, int, error) {
-	where, args := testPlanListWhere(filters)
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	where, args := testPlanListWhere(tenantID, filters)
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `select count(*) from test_plans tp `+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `
+		select count(*) from test_plans tp
+		left join applications a on a.id = tp.application_id
+		left join environments e on e.id = tp.environment_id
+	`+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count test plans: %w", err)
 	}
 
@@ -67,18 +76,21 @@ func (r *TestPlanRepository) ListTestPlans(ctx context.Context, filters domain.T
 	return plans, total, nil
 }
 
-func testPlanListWhere(filters domain.TestPlanFilters) (string, []any) {
+func testPlanListWhere(tenantID string, filters domain.TestPlanFilters) (string, []any) {
 	conditions := []string{}
 	args := []any{}
 	add := func(condition string, value any) {
 		args = append(args, value)
 		conditions = append(conditions, strings.ReplaceAll(condition, "?", fmt.Sprintf("$%d", len(args))))
 	}
+	if tenantID != "" {
+		add("a.tenant_id = ?", tenantID)
+	}
 	if filters.ApplicationID != "" {
 		add("tp.application_id = ?", filters.ApplicationID)
 	}
 	if filters.Environment != "" {
-		add("tp.environment_code = ?", filters.Environment)
+		add("e.code = ?", filters.Environment)
 	}
 	switch filters.Status {
 	case domain.TestPlanStatusOpen:
@@ -96,7 +108,11 @@ func testPlanListWhere(filters domain.TestPlanFilters) (string, []any) {
 }
 
 func (r *TestPlanRepository) GetTestPlan(ctx context.Context, id string) (domain.TestPlan, error) {
-	plan, err := scanTestPlan(r.pool.QueryRow(ctx, testPlanSelectSQL()+` where tp.id = $1`, id))
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.TestPlan{}, err
+	}
+	plan, err := scanTestPlan(r.pool.QueryRow(ctx, testPlanSelectSQL()+` where tp.id = $1 and ($2::text = '' or a.tenant_id = $2)`, id, tenantID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.TestPlan{}, domain.ErrTestPlanNotFound
@@ -271,21 +287,22 @@ func (r *TestPlanRepository) CreateTestPlan(ctx context.Context, input domain.Te
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := lockTestPlanScope(ctx, tx, input.ApplicationID, input.Environment); err != nil {
-		return domain.TestPlanMutationResult{}, err
-	}
-
-	var bound bool
+	// 环境按编码在应用绑定的环境里解析，绑定表保证和应用同租户。
+	var environmentID string
 	var allowed bool
 	if err := tx.QueryRow(ctx, `
-		select
-			exists(select 1 from application_environment_bindings where application_id = $1 and environment_code = $2),
-			coalesce((select allow_test_plans from environments where code = $2), false)
-	`, input.ApplicationID, input.Environment).Scan(&bound, &allowed); err != nil {
+		select e.id, e.allow_test_plans
+		from application_environment_bindings b
+		join environments e on e.id = b.environment_id
+		where b.application_id = $1 and e.code = $2
+	`, input.ApplicationID, input.Environment).Scan(&environmentID, &allowed); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.TestPlanMutationResult{}, domain.ErrInvalidTestPlanInput
+		}
 		return domain.TestPlanMutationResult{}, fmt.Errorf("query test plan environment: %w", err)
 	}
-	if !bound {
-		return domain.TestPlanMutationResult{}, domain.ErrInvalidTestPlanInput
+	if err := lockTestPlanScope(ctx, tx, input.ApplicationID, environmentID); err != nil {
+		return domain.TestPlanMutationResult{}, err
 	}
 	if !allowed {
 		return domain.TestPlanMutationResult{}, domain.ErrTestPlansDisabled
@@ -295,12 +312,12 @@ func (r *TestPlanRepository) CreateTestPlan(ctx context.Context, input domain.Te
 		ID:            uuid.NewString(),
 		Name:          input.Name,
 		ApplicationID: input.ApplicationID,
-		Environment:   input.Environment,
+		EnvironmentID: environmentID,
 	}
 	if _, err := tx.Exec(ctx, `
-		insert into test_plans (id, application_id, environment_code, name, link, status, expires_at, created_by_user_id)
+		insert into test_plans (id, application_id, environment_id, name, link, status, expires_at, created_by_user_id)
 		values ($1, $2, $3, $4, $5, 'open', $6, $7)
-	`, plan.ID, plan.ApplicationID, plan.Environment, input.Name, input.Link, input.ExpiresAt, input.ActorUserID); err != nil {
+	`, plan.ID, plan.ApplicationID, plan.EnvironmentID, input.Name, input.Link, input.ExpiresAt, input.ActorUserID); err != nil {
 		if isForeignKeyViolation(err) {
 			return domain.TestPlanMutationResult{}, domain.ErrInvalidTestPlanInput
 		}
@@ -484,10 +501,11 @@ func (r *TestPlanRepository) FollowBuild(ctx context.Context, record domain.Buil
 			from test_plan_items item
 			join test_plans tp on tp.id = item.test_plan_id
 			join build_records current_build on current_build.id = item.build_record_id
+			join environments e on e.id = tp.environment_id
 			where item.module_id = $1
 				and item.branch = $2
 				and item.mode = 'follow'
-				and tp.environment_code = $3
+				and e.code = $3
 				and tp.status = 'open'
 				and tp.expires_at > now()
 				and current_build.number < $4
@@ -534,13 +552,19 @@ func (r *TestPlanRepository) FollowBuild(ctx context.Context, record domain.Buil
 }
 
 func (r *TestPlanRepository) ListTestAccounts(ctx context.Context, ownerUserID string, environment string) ([]domain.TestAccount, error) {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, `
-		select owner_user_id, environment_code, user_id, note, created_at
-		from user_test_accounts
-		where owner_user_id = $1
-			and ($2 = '' or environment_code = $2)
-		order by environment_code asc, created_at asc
-	`, ownerUserID, environment)
+		select t.owner_user_id, e.code, t.user_id, t.note, t.created_at
+		from user_test_accounts t
+		join environments e on e.id = t.environment_id
+		where t.owner_user_id = $1
+			and e.tenant_id = $3
+			and ($2 = '' or e.code = $2)
+		order by e.code asc, t.created_at asc
+	`, ownerUserID, environment, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query test accounts: %w", err)
 	}
@@ -561,13 +585,24 @@ func (r *TestPlanRepository) ListTestAccounts(ctx context.Context, ownerUserID s
 
 // UpsertTestAccount 保存测试账号；已存在时只更新备注。
 func (r *TestPlanRepository) UpsertTestAccount(ctx context.Context, input domain.TestAccountInput) (domain.TestAccount, error) {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.TestAccount{}, err
+	}
+	environmentID, err := environmentIDByCode(ctx, r.pool, tenantID, input.Environment)
+	if err != nil {
+		if errors.Is(err, domain.ErrEnvironmentNotFound) {
+			return domain.TestAccount{}, domain.ErrInvalidTestPlanInput
+		}
+		return domain.TestAccount{}, err
+	}
 	var account domain.TestAccount
 	if err := r.pool.QueryRow(ctx, `
-		insert into user_test_accounts (owner_user_id, environment_code, user_id, note)
+		insert into user_test_accounts (owner_user_id, environment_id, user_id, note)
 		values ($1, $2, $3, $4)
-		on conflict (owner_user_id, environment_code, user_id) do update set note = excluded.note
-		returning owner_user_id, environment_code, user_id, note, created_at
-	`, input.OwnerUserID, input.Environment, input.UserID, input.Note).Scan(
+		on conflict (owner_user_id, environment_id, user_id) do update set note = excluded.note
+		returning owner_user_id, $5::text, user_id, note, created_at
+	`, input.OwnerUserID, environmentID, input.UserID, input.Note, input.Environment).Scan(
 		&account.OwnerUserID, &account.Environment, &account.UserID, &account.Note, &account.CreatedAt,
 	); err != nil {
 		if isForeignKeyViolation(err) {
@@ -579,9 +614,16 @@ func (r *TestPlanRepository) UpsertTestAccount(ctx context.Context, input domain
 }
 
 func (r *TestPlanRepository) DeleteTestAccount(ctx context.Context, ownerUserID string, environment string, userID string) error {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return err
+	}
 	tag, err := r.pool.Exec(ctx, `
-		delete from user_test_accounts where owner_user_id = $1 and environment_code = $2 and user_id = $3
-	`, ownerUserID, environment, userID)
+		delete from user_test_accounts t
+		using environments e
+		where e.id = t.environment_id
+			and t.owner_user_id = $1 and e.tenant_id = $4 and e.code = $2 and t.user_id = $3
+	`, ownerUserID, environment, userID, tenantID)
 	if err != nil {
 		return fmt.Errorf("delete test account: %w", err)
 	}
@@ -605,10 +647,17 @@ func (r *TestPlanRepository) mutationResult(ctx context.Context, id string, remo
 // withActivePlan 在事务里锁定进行中的提测单（先锁「应用 + 环境」，再锁提测单行）后执行 fn。
 // 已关闭或已过期的提测单返回 ErrTestPlanClosed。
 func (r *TestPlanRepository) withActivePlan(ctx context.Context, id string, fn func(tx pgx.Tx, plan testPlanRef) error) error {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	var plan testPlanRef
 	if err := r.pool.QueryRow(ctx, `
-		select id::text, name, application_id, environment_code from test_plans where id = $1
-	`, id).Scan(&plan.ID, &plan.Name, &plan.ApplicationID, &plan.Environment); err != nil {
+		select tp.id::text, tp.name, tp.application_id, tp.environment_id
+		from test_plans tp
+		join applications a on a.id = tp.application_id
+		where tp.id = $1 and ($2::text = '' or a.tenant_id = $2)
+	`, id, tenantID).Scan(&plan.ID, &plan.Name, &plan.ApplicationID, &plan.EnvironmentID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrTestPlanNotFound
 		}
@@ -621,7 +670,7 @@ func (r *TestPlanRepository) withActivePlan(ctx context.Context, id string, fn f
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := lockTestPlanScope(ctx, tx, plan.ApplicationID, plan.Environment); err != nil {
+	if err := lockTestPlanScope(ctx, tx, plan.ApplicationID, plan.EnvironmentID); err != nil {
 		return err
 	}
 	var active bool
@@ -672,14 +721,14 @@ func upsertTestPlanItem(ctx context.Context, tx pgx.Tx, plan testPlanRef, item d
 		select id::text
 		from build_records
 		where module_id = $1
-			and environment_code = $2
+			and environment_id = $2
 			and branch = $3
 			and status = 'succeeded'
 			and manifest_key <> ''
 			and ($4 = '' or id::text = $4)
 		order by number desc
 		limit 1
-	`, item.ModuleID, plan.Environment, item.Branch, item.BuildRecordID).Scan(&buildRecordID)
+	`, item.ModuleID, plan.EnvironmentID, item.Branch, item.BuildRecordID).Scan(&buildRecordID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrTestPlanBuildNotFound
@@ -745,12 +794,12 @@ func checkTestPlanConflicts(ctx context.Context, tx pgx.Tx, plan testPlanRef, re
 			and theirs.test_plan_id <> mine.test_plan_id
 		join test_plans other on other.id = theirs.test_plan_id
 		where mine.test_plan_id = $1
-			and other.environment_code = $2
+			and other.environment_id = $2
 			and other.status = 'open'
 			and other.expires_at > now()
 		order by mine.module_id
 		limit 1
-	`, plan.ID, plan.Environment).Scan(&branchConflict.ModuleID, &branchConflict.Branch, &branchConflict.TestPlan.ID, &branchConflict.TestPlan.Name)
+	`, plan.ID, plan.EnvironmentID).Scan(&branchConflict.ModuleID, &branchConflict.Branch, &branchConflict.TestPlan.ID, &branchConflict.TestPlan.Name)
 	if err == nil {
 		return nil, &branchConflict
 	}
@@ -780,12 +829,12 @@ func checkTestPlanConflicts(ctx context.Context, tx pgx.Tx, plan testPlanRef, re
 		join test_plan_items mine on mine.test_plan_id = mem.test_plan_id
 			and mine.module_id = theirs.module_id
 		where mem.test_plan_id = $1
-			and other.environment_code = $2
+			and other.environment_id = $2
 			and other.status = 'open'
 			and other.expires_at > now()
 		group by mem.user_id, other.id, other.name
 		order by mem.user_id, other.name
-	`, plan.ID, plan.Environment)
+	`, plan.ID, plan.EnvironmentID)
 	if err != nil {
 		return nil, fmt.Errorf("query test plan member conflicts: %w", err)
 	}
@@ -851,7 +900,7 @@ func testPlanSelectSQL() string {
 			tp.application_id,
 			coalesce(a.name, ''),
 			coalesce(a.slug, ''),
-			tp.environment_code,
+			coalesce(e.code, ''),
 			coalesce(e.name, ''),
 			tp.name,
 			tp.link,
@@ -866,7 +915,7 @@ func testPlanSelectSQL() string {
 			(select count(*) from test_plan_members m where m.test_plan_id = tp.id)
 		from test_plans tp
 		left join applications a on a.id = tp.application_id
-		left join environments e on e.code = tp.environment_code
+		left join environments e on e.id = tp.environment_id
 		left join users u on u.id = tp.created_by_user_id
 	`
 }

@@ -270,8 +270,9 @@ func TestCodeSourceServiceConnectionWebhook(t *testing.T) {
 	if err != nil || gitlab.Path != "/api/v1/webhooks/gitlab/code-source-1" || gitlab.Secret != "hook-secret" {
 		t.Fatalf("unexpected gitlab webhook: %+v, %v", gitlab, err)
 	}
-	github, err := service.GetConnectionWebhook(context.Background(), "code-source-gh")
-	if err != nil || github.Path != "/api/v1/webhooks/github" || github.Secret != "" {
+	// GitHub App 的回调地址按租户区分。
+	github, err := service.GetConnectionWebhook(domain.WithTenant(context.Background(), "acme"), "code-source-gh")
+	if err != nil || github.Path != "/api/v1/webhooks/github/acme" || github.Secret != "" {
 		t.Fatalf("unexpected github webhook: %+v, %v", github, err)
 	}
 }
@@ -596,7 +597,7 @@ func (c *fakeGitHubAppClient) AppConfig(context.Context) (domain.CodeSourceAppCo
 	return c.config, c.configured, nil
 }
 
-func (c *fakeGitHubAppClient) AppManifest() (domain.CodeSourceAppManifest, error) {
+func (c *fakeGitHubAppClient) AppManifest(string) (domain.CodeSourceAppManifest, error) {
 	return domain.CodeSourceAppManifest{ActionURL: "https://github.com/settings/apps/new"}, nil
 }
 

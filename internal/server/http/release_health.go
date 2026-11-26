@@ -204,7 +204,7 @@ func (h releaseHealthHandler) updatePolicy(c echo.Context) error {
 		MaxFailureRate:  request.MaxFailureRate,
 		MinDelta:        request.MinDelta,
 		AutoStopGray:    request.AutoStopGray,
-		UpdatedByUserID: domain.ConsoleUserIDFromFeishu(session.User),
+		UpdatedByUserID: session.User.ID,
 	})
 	if err != nil {
 		return releaseHealthErrorResponse(c, err)

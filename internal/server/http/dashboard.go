@@ -81,11 +81,7 @@ func (h dashboardHandler) get(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "dashboard service unavailable"})
 	}
 
-	ownerUnionID := ""
-	if session, ok := consoleSession(c); ok {
-		ownerUnionID = session.User.UnionID
-	}
-	result, err := h.service.GetDashboardSnapshot(c.Request().Context(), ownerUnionID)
+	result, err := h.service.GetDashboardSnapshot(c.Request().Context())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}

@@ -25,15 +25,21 @@ const buildVariableSelectColumns = `
 	v.key,
 	v.value_encrypted,
 	v.is_secret,
-	coalesce(v.environment_code, ''),
+	coalesce(e.code, ''),
 	v.updated_by_user_id,
 	coalesce(u.name, ''),
 	v.updated_at
 `
 
 func (r *BuildVariableRepository) ListModuleBuildVariables(ctx context.Context, moduleID string) ([]domain.ModuleBuildVariable, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var exists bool
-	if err := r.pool.QueryRow(ctx, `select exists(select 1 from modules where id = $1)`, moduleID).Scan(&exists); err != nil {
+	if err := r.pool.QueryRow(ctx, `
+		select exists(select 1 from modules where id = $1 and ($2::text = '' or tenant_id = $2))
+	`, moduleID, tenantID).Scan(&exists); err != nil {
 		return nil, fmt.Errorf("check module: %w", err)
 	}
 	if !exists {
@@ -43,8 +49,9 @@ func (r *BuildVariableRepository) ListModuleBuildVariables(ctx context.Context, 
 		select `+buildVariableSelectColumns+`
 		from module_build_variables v
 		left join users u on u.id = v.updated_by_user_id
+		left join environments e on e.id = v.environment_id
 		where v.module_id = $1
-		order by v.key asc, v.environment_code asc nulls first
+		order by v.key asc, e.code asc nulls first
 	`, moduleID)
 }
 
@@ -53,13 +60,22 @@ func (r *BuildVariableRepository) ListApplicableBuildVariables(ctx context.Conte
 		select `+buildVariableSelectColumns+`
 		from module_build_variables v
 		left join users u on u.id = v.updated_by_user_id
+		left join environments e on e.id = v.environment_id
 		where v.module_id = $1
-			and (v.environment_code is null or v.environment_code = $2)
-		order by v.key asc, v.environment_code asc nulls first
+			and (v.environment_id is null or e.code = $2)
+		order by v.key asc, e.code asc nulls first
 	`, moduleID, environmentCode)
 }
 
 func (r *BuildVariableRepository) UpsertModuleBuildVariable(ctx context.Context, variable domain.ModuleBuildVariable) (domain.ModuleBuildVariable, error) {
+	moduleTenantID, err := r.moduleTenantID(ctx, variable.ModuleID)
+	if err != nil {
+		return domain.ModuleBuildVariable{}, err
+	}
+	environmentID, err := optionalEnvironmentID(ctx, r.pool, moduleTenantID, variable.EnvironmentCode)
+	if err != nil {
+		return domain.ModuleBuildVariable{}, err
+	}
 	saved, err := scanBuildVariable(r.pool.QueryRow(ctx, `
 		with upserted as (
 			insert into module_build_variables (
@@ -67,13 +83,13 @@ func (r *BuildVariableRepository) UpsertModuleBuildVariable(ctx context.Context,
 				key,
 				value_encrypted,
 				is_secret,
-				environment_code,
+				environment_id,
 				updated_by_user_id,
 				updated_at
 			) values (
-				$1, $2, $3, $4, nullif($5, ''), $6, now()
+				$1, $2, $3, $4, $5, $6, now()
 			)
-			on conflict (module_id, key, environment_code) do update set
+			on conflict (module_id, key, environment_id) do update set
 				value_encrypted = excluded.value_encrypted,
 				is_secret = excluded.is_secret,
 				updated_by_user_id = excluded.updated_by_user_id,
@@ -83,12 +99,13 @@ func (r *BuildVariableRepository) UpsertModuleBuildVariable(ctx context.Context,
 		select `+buildVariableSelectColumns+`
 		from upserted v
 		left join users u on u.id = v.updated_by_user_id
+		left join environments e on e.id = v.environment_id
 	`,
 		variable.ModuleID,
 		variable.Key,
 		variable.ValueEncrypted,
 		variable.IsSecret,
-		variable.EnvironmentCode,
+		environmentID,
 		variable.UpdatedByUserID,
 	))
 	if err != nil {
@@ -96,7 +113,7 @@ func (r *BuildVariableRepository) UpsertModuleBuildVariable(ctx context.Context,
 		switch {
 		case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "module_build_variables_module_id_fkey":
 			return domain.ModuleBuildVariable{}, domain.ErrModuleNotFound
-		case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "module_build_variables_environment_code_fkey":
+		case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "module_build_variables_environment_id_fkey":
 			return domain.ModuleBuildVariable{}, domain.ErrEnvironmentNotFound
 		case isForeignKeyViolation(err), isCheckViolation(err):
 			return domain.ModuleBuildVariable{}, domain.ErrInvalidBuildVariableInput
@@ -107,12 +124,23 @@ func (r *BuildVariableRepository) UpsertModuleBuildVariable(ctx context.Context,
 }
 
 func (r *BuildVariableRepository) DeleteModuleBuildVariable(ctx context.Context, moduleID string, key string, environmentCode string) error {
+	moduleTenantID, err := r.moduleTenantID(ctx, moduleID)
+	if err != nil {
+		return err
+	}
+	environmentID, err := optionalEnvironmentID(ctx, r.pool, moduleTenantID, environmentCode)
+	if errors.Is(err, domain.ErrEnvironmentNotFound) {
+		return domain.ErrBuildVariableNotFound
+	}
+	if err != nil {
+		return err
+	}
 	tag, err := r.pool.Exec(ctx, `
 		delete from module_build_variables
 		where module_id = $1
 			and key = $2
-			and environment_code is not distinct from nullif($3, '')
-	`, moduleID, key, environmentCode)
+			and environment_id is not distinct from $3
+	`, moduleID, key, environmentID)
 	if err != nil {
 		return fmt.Errorf("delete build variable: %w", err)
 	}
@@ -158,4 +186,22 @@ func scanBuildVariable(row pgx.Row) (domain.ModuleBuildVariable, error) {
 		return domain.ModuleBuildVariable{}, err
 	}
 	return variable, nil
+}
+
+// moduleTenantID 返回模块所属租户，模块不存在或不在当前范围内时返回 ErrModuleNotFound。
+func (r *BuildVariableRepository) moduleTenantID(ctx context.Context, moduleID string) (string, error) {
+	scopeTenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return "", err
+	}
+	var tenantID string
+	if err := r.pool.QueryRow(ctx, `
+		select tenant_id from modules where id = $1 and ($2::text = '' or tenant_id = $2)
+	`, moduleID, scopeTenantID).Scan(&tenantID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", domain.ErrModuleNotFound
+		}
+		return "", fmt.Errorf("query module tenant: %w", err)
+	}
+	return tenantID, nil
 }

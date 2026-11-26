@@ -47,10 +47,14 @@ const buildAdapterSelectSQL = `
 	left join users uu on uu.id = ba.updated_by_user_id`
 
 func (r *BuildAdapterRepository) ListBuildAdapters(ctx context.Context, filters domain.BuildAdapterFilters) ([]domain.BuildAdapter, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx, buildAdapterSelectSQL+`
-		where ($1 = '' or ba.status = $1)
+		where ($1 = '' or ba.status = $1) and ($2::text = '' or ba.tenant_id = $2)
 		order by ba.name asc, ba.created_at asc
-	`, string(filters.Status))
+	`, string(filters.Status), tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("query build adapters: %w", err)
 	}
@@ -71,7 +75,11 @@ func (r *BuildAdapterRepository) ListBuildAdapters(ctx context.Context, filters 
 }
 
 func (r *BuildAdapterRepository) GetBuildAdapter(ctx context.Context, id string) (domain.BuildAdapter, error) {
-	return scanBuildAdapter(r.pool.QueryRow(ctx, buildAdapterSelectSQL+` where ba.id = $1`, id))
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.BuildAdapter{}, err
+	}
+	return scanBuildAdapter(r.pool.QueryRow(ctx, buildAdapterSelectSQL+` where ba.id = $1 and ($2::text = '' or ba.tenant_id = $2)`, id, tenantID))
 }
 
 func (r *BuildAdapterRepository) CreateBuildAdapter(ctx context.Context, input domain.BuildAdapterInput) (domain.BuildAdapter, error) {
@@ -79,13 +87,17 @@ func (r *BuildAdapterRepository) CreateBuildAdapter(ctx context.Context, input d
 	if err != nil {
 		return domain.BuildAdapter{}, err
 	}
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
+		return domain.BuildAdapter{}, err
+	}
 	id := newBuildAdapterID()
 	if _, err := r.pool.Exec(ctx, `
 		insert into build_adapters (
-			id, name, description, dockerfile_template, files, parameters,
+			tenant_id, id, name, description, dockerfile_template, files, parameters,
 			version, status, created_by_user_id, updated_by_user_id
-		) values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, 1, 'active', $7, $7)
-	`, id, input.Name, input.Description, input.DockerfileTemplate, files, parameters, input.UserID); err != nil {
+		) values ($8, $1, $2, $3, $4, $5::jsonb, $6::jsonb, 1, 'active', $7, $7)
+	`, id, input.Name, input.Description, input.DockerfileTemplate, files, parameters, input.UserID, tenantID); err != nil {
 		if isForeignKeyViolation(err) {
 			return domain.BuildAdapter{}, domain.ErrInvalidBuildAdapterInput
 		}
@@ -100,6 +112,10 @@ func (r *BuildAdapterRepository) UpdateBuildAdapter(ctx context.Context, id stri
 	if err != nil {
 		return domain.BuildAdapter{}, err
 	}
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.BuildAdapter{}, err
+	}
 	tag, err := r.pool.Exec(ctx, `
 		update build_adapters set
 			name = $3,
@@ -110,8 +126,8 @@ func (r *BuildAdapterRepository) UpdateBuildAdapter(ctx context.Context, id stri
 			version = version + 1,
 			updated_by_user_id = $8,
 			updated_at = now()
-		where id = $1 and version = $2
-	`, id, expectedVersion, input.Name, input.Description, input.DockerfileTemplate, files, parameters, input.UserID)
+		where id = $1 and version = $2 and ($9::text = '' or tenant_id = $9)
+	`, id, expectedVersion, input.Name, input.Description, input.DockerfileTemplate, files, parameters, input.UserID, tenantID)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return domain.BuildAdapter{}, domain.ErrInvalidBuildAdapterInput
@@ -129,13 +145,17 @@ func (r *BuildAdapterRepository) UpdateBuildAdapter(ctx context.Context, id stri
 
 // SetBuildAdapterStatus 只切换启停状态，不修改版本号：版本只追踪模板、文件与参数定义。
 func (r *BuildAdapterRepository) SetBuildAdapterStatus(ctx context.Context, id string, status domain.BuildAdapterStatus, userID string) (domain.BuildAdapter, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.BuildAdapter{}, err
+	}
 	tag, err := r.pool.Exec(ctx, `
 		update build_adapters set
 			status = $2,
 			updated_by_user_id = $3,
 			updated_at = now()
-		where id = $1
-	`, id, string(status), userID)
+		where id = $1 and ($4::text = '' or tenant_id = $4)
+	`, id, string(status), userID, tenantID)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return domain.BuildAdapter{}, domain.ErrInvalidBuildAdapterInput

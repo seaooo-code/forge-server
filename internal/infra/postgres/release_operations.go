@@ -47,15 +47,20 @@ func (r *ReleaseRepository) DeactivateRelease(ctx context.Context, input domain.
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRecord{}, domain.ReleaseRoute{}, err
+	}
 	var routeID string
 	var status domain.ReleaseStatus
 	if err := tx.QueryRow(ctx, `
 		select route.id, rr.status
 		from release_records rr
 		join release_routes route on route.release_id = rr.id
-		where rr.id = $1
+		join modules m on m.id = rr.module_id
+		where rr.id = $1 and ($2::text = '' or m.tenant_id = $2)
 		for update of rr, route
-	`, input.ID).Scan(&routeID, &status); err != nil {
+	`, input.ID, tenantID).Scan(&routeID, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ReleaseRecord{}, domain.ReleaseRoute{}, domain.ErrReleaseNotFound
 		}
@@ -95,23 +100,28 @@ func (r *ReleaseRepository) DeactivateRelease(ctx context.Context, input domain.
 // PreviousFullRelease 返回同一模块、环境、渠道、运行时版本下，早于该发布、构建不同的最近一次全量发布。没有时返回 ErrReleaseRollbackUnavailable。
 // 比例灰度转成的全量也算全量。
 func (r *ReleaseRepository) PreviousFullRelease(ctx context.Context, releaseID string) (domain.ReleaseRecord, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.ReleaseRecord{}, err
+	}
 	var previousID string
 	if err := r.pool.QueryRow(ctx, `
 		select previous.id::text
 		from release_records current
 		join release_routes current_route on current_route.release_id = current.id
 		join release_records previous on previous.module_id = current.module_id
-			and previous.environment_code = current.environment_code
+			and previous.environment_id = current.environment_id
 			and previous.release_type = 'full'
 			and previous.channel = current.channel
 			and previous.build_record_id <> current.build_record_id
 			and previous.created_at < current.created_at
 		join release_routes previous_route on previous_route.release_id = previous.id
 			and previous_route.runtime_version = current_route.runtime_version
-		where current.id = $1
+		join modules m on m.id = current.module_id
+		where current.id = $1 and ($2::text = '' or m.tenant_id = $2)
 		order by previous.created_at desc
 		limit 1
-	`, releaseID).Scan(&previousID); err != nil {
+	`, releaseID, tenantID).Scan(&previousID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ReleaseRecord{}, domain.ErrReleaseRollbackUnavailable
 		}
@@ -122,8 +132,17 @@ func (r *ReleaseRepository) PreviousFullRelease(ctx context.Context, releaseID s
 
 // ListReleaseEvents 按时间倒序返回发布的操作记录，最多 MaxReleaseEvents 条。
 func (r *ReleaseRepository) ListReleaseEvents(ctx context.Context, releaseID string) ([]domain.ReleaseEvent, error) {
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var exists bool
-	if err := r.pool.QueryRow(ctx, `select exists(select 1 from release_records where id = $1)`, releaseID).Scan(&exists); err != nil {
+	if err := r.pool.QueryRow(ctx, `
+		select exists(
+			select 1 from release_records rr join modules m on m.id = rr.module_id
+			where rr.id = $1 and ($2::text = '' or m.tenant_id = $2)
+		)
+	`, releaseID, tenantID).Scan(&exists); err != nil {
 		return nil, fmt.Errorf("query release existence: %w", err)
 	}
 	if !exists {

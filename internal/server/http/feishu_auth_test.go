@@ -64,26 +64,26 @@ func TestFeishuAuthorizeRejectsInvalidRedirect(t *testing.T) {
 
 func TestFeishuAuthorizeRequiresTenantWhenSeveralActive(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
-		FeishuAuthService: &fakeFeishuAuthService{authorizeErr: domain.ErrFeishuTenantRequired},
+		FeishuAuthService: &fakeFeishuAuthService{authorizeErr: domain.ErrTenantRequired},
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/authorize", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "feishu tenant required") {
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "tenant required") {
 		t.Fatalf("expected tenant required, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestFeishuLoginTenantsListsActiveTenantsWithoutCredentials(t *testing.T) {
+func TestLoginTenantsListsActiveTenantsWithoutCredentials(t *testing.T) {
 	e := New(config.Config{}, Dependencies{
-		FeishuTenantService: &fakeFeishuTenantService{active: []domain.FeishuTenant{
-			{ID: "xiaomi", Name: "小米", AppID: "cli_aaaaaaaaaaaa", AppSecret: "secret", Status: domain.FeishuTenantStatusActive},
+		TenantService: &fakeTenantService{active: []domain.Tenant{
+			{ID: "xiaomi", Name: "小米", FeishuAppID: "cli_aaaaaaaaaaaa", FeishuAppSecret: "secret", Status: domain.TenantStatusActive},
 		}},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/tenants", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/tenants", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -97,24 +97,19 @@ func TestFeishuLoginTenantsListsActiveTenantsWithoutCredentials(t *testing.T) {
 
 func TestFeishuCallbackCompletesAuthorization(t *testing.T) {
 	service := &fakeFeishuAuthService{
-		result: domain.FeishuAuthResult{
-			SessionExpiresAt: time.Now().Add(time.Hour),
-			SessionToken:     "session-token",
-			Tenant:           domain.FeishuTenantSummary{ID: "xiaomi", Name: "小米"},
-			Token: domain.FeishuToken{
-				AccessToken:  "secret-token",
+		result: domain.ConsoleSession{
+			ExpiresAt:           time.Now().Add(time.Hour),
+			SessionToken:        "session-token",
+			HomeTenant:          domain.TenantSummary{ID: "xiaomi", Name: "小米"},
+			ActiveTenant:        domain.TenantSummary{ID: "xiaomi", Name: "小米"},
+			ProviderAccessToken: "secret-token",
+			ProviderToken: domain.FeishuToken{
 				RefreshToken: "secret-refresh-token",
 				ExpiresIn:    7200,
 				TokenType:    "Bearer",
 				Scope:        "offline_access",
 			},
-			User: domain.FeishuUser{
-				UnionID:   "on_union",
-				OpenID:    "ou_open",
-				UserID:    "user_id",
-				Name:      "张三",
-				TenantKey: "tenant",
-			},
+			User: domain.User{ID: "user-1", Name: "张三"},
 		},
 	}
 	e := New(config.Config{}, Dependencies{
@@ -141,16 +136,16 @@ func TestFeishuCallbackCompletesAuthorization(t *testing.T) {
 		t.Fatalf("read response: %v", err)
 	}
 
-	var response feishuAuthResponse
+	var response authSessionResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if response.User.UnionID != "on_union" {
-		t.Fatalf("expected union id, got %q", response.User.UnionID)
+	if response.User.ID != "user-1" || response.User.Name != "张三" {
+		t.Fatalf("expected forge user, got %+v", response.User)
 	}
-	if response.Tenant.ID != "xiaomi" || response.Tenant.Name != "小米" {
-		t.Fatalf("expected tenant in response, got %+v", response.Tenant)
+	if response.HomeTenant.ID != "xiaomi" || response.ActiveTenant.Name != "小米" {
+		t.Fatalf("expected tenants in response, got %+v %+v", response.HomeTenant, response.ActiveTenant)
 	}
 	if !response.Token.HasRefreshToken {
 		t.Fatal("expected refresh token flag")
@@ -172,18 +167,15 @@ func TestFeishuCallbackCompletesAuthorization(t *testing.T) {
 
 func TestFeishuSessionReturnsCurrentSession(t *testing.T) {
 	service := &fakeFeishuAuthService{
-		result: domain.FeishuAuthResult{
-			SessionExpiresAt: time.Now().Add(time.Hour),
-			SessionToken:     "session-token",
-			Token: domain.FeishuToken{
+		result: domain.ConsoleSession{
+			ExpiresAt:    time.Now().Add(time.Hour),
+			SessionToken: "session-token",
+			ProviderToken: domain.FeishuToken{
 				RefreshToken: "secret-refresh-token",
 				ExpiresIn:    3600,
 				TokenType:    "Bearer",
 			},
-			User: domain.FeishuUser{
-				UnionID: "on_union",
-				Name:    "张三",
-			},
+			User: domain.User{ID: "user-1", Name: "张三"},
 		},
 	}
 	e := New(config.Config{}, Dependencies{
@@ -223,6 +215,39 @@ func TestFeishuSessionTreatsAuthorizationFailureAsUnauthorized(t *testing.T) {
 		t.Fatalf("expected session token, got %q", service.sessionToken)
 	}
 	assertClearedSessionCookie(t, rec)
+}
+
+func TestSwitchSessionTenant(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		code int
+	}{
+		"switched":  {code: http.StatusOK},
+		"forbidden": {err: domain.ErrTenantSwitchForbidden, code: http.StatusForbidden},
+		"not found": {err: domain.ErrTenantNotFound, code: http.StatusNotFound},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := &fakeFeishuAuthService{switchErr: tc.err, result: domain.ConsoleSession{
+				User:         domain.User{ID: "user-1"},
+				HomeTenant:   domain.TenantSummary{ID: "xiaomi"},
+				ActiveTenant: domain.TenantSummary{ID: "other"},
+			}}
+			e := New(config.Config{}, Dependencies{FeishuAuthService: service})
+
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/auth/session/tenant", strings.NewReader(`{"tenantId":"other"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(&http.Cookie{Name: feishuSessionCookieName, Value: "session-token"})
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != tc.code {
+				t.Fatalf("expected %d, got %d: %s", tc.code, rec.Code, rec.Body.String())
+			}
+			if service.switchTenantID != "other" || service.sessionToken != "session-token" {
+				t.Fatalf("expected switch request forwarded, got %q %q", service.switchTenantID, service.sessionToken)
+			}
+		})
+	}
 }
 
 func TestFeishuCallbackRejectsMissingTenantCookie(t *testing.T) {
@@ -279,7 +304,18 @@ type fakeFeishuAuthService struct {
 	callbackRedirect string
 	sessionErr       error
 	sessionToken     string
-	result           domain.FeishuAuthResult
+	switchErr        error
+	switchTenantID   string
+	result           domain.ConsoleSession
+}
+
+func (s *fakeFeishuAuthService) SwitchTenant(_ context.Context, sessionToken string, tenantID string) (domain.ConsoleSession, error) {
+	s.sessionToken = sessionToken
+	s.switchTenantID = tenantID
+	if s.switchErr != nil {
+		return domain.ConsoleSession{}, s.switchErr
+	}
+	return s.result, nil
 }
 
 func (s *fakeFeishuAuthService) AuthorizationURL(_ context.Context, tenantID string, redirectURI string, state string) (string, string, error) {
@@ -294,17 +330,17 @@ func (s *fakeFeishuAuthService) AuthorizationURL(_ context.Context, tenantID str
 	return "https://accounts.feishu.cn/open-apis/authen/v1/authorize?state=" + state, tenantID, nil
 }
 
-func (s *fakeFeishuAuthService) CompleteAuthorization(_ context.Context, tenantID string, redirectURI string, code string) (domain.FeishuAuthResult, error) {
+func (s *fakeFeishuAuthService) CompleteAuthorization(_ context.Context, tenantID string, redirectURI string, code string) (domain.ConsoleSession, error) {
 	s.callbackCode = code
 	s.callbackTenant = tenantID
 	s.callbackRedirect = redirectURI
 	return s.result, nil
 }
 
-func (s *fakeFeishuAuthService) GetSession(_ context.Context, sessionToken string) (domain.FeishuAuthResult, error) {
+func (s *fakeFeishuAuthService) GetSession(_ context.Context, sessionToken string) (domain.ConsoleSession, error) {
 	s.sessionToken = sessionToken
 	if s.sessionErr != nil {
-		return domain.FeishuAuthResult{}, s.sessionErr
+		return domain.ConsoleSession{}, s.sessionErr
 	}
 	return s.result, nil
 }

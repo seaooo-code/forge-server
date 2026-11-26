@@ -26,7 +26,11 @@ func NewModuleRepository(pool *pgxpool.Pool) *ModuleRepository {
 }
 
 func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.ModuleListFilters) ([]domain.Module, domain.ModuleSummary, error) {
-	summary, err := r.moduleSummary(ctx, filters)
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return nil, domain.ModuleSummary{}, err
+	}
+	summary, err := r.moduleSummary(ctx, tenantID, filters)
 	if err != nil {
 		return nil, domain.ModuleSummary{}, err
 	}
@@ -44,9 +48,10 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 				or a.name ilike '%' || $4 || '%'
 				or cm.name ilike '%' || $4 || '%'
 			)
+			and ($7::text = '' or m.tenant_id = $7)
 			order by m.sort_order asc, m.created_at asc
 			limit nullif($5, 0) offset $6
-		`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword, filters.Pagination.Limit(), filters.Pagination.Offset())
+		`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword, filters.Pagination.Limit(), filters.Pagination.Offset(), tenantID)
 	if err != nil {
 		return nil, domain.ModuleSummary{}, fmt.Errorf("query modules: %w", err)
 	}
@@ -66,7 +71,7 @@ func (r *ModuleRepository) ListModules(ctx context.Context, filters domain.Modul
 	return modules, summary, nil
 }
 
-func (r *ModuleRepository) moduleSummary(ctx context.Context, filters domain.ModuleListFilters) (domain.ModuleSummary, error) {
+func (r *ModuleRepository) moduleSummary(ctx context.Context, tenantID string, filters domain.ModuleListFilters) (domain.ModuleSummary, error) {
 	var summary domain.ModuleSummary
 	if err := r.pool.QueryRow(ctx, `
 		select
@@ -88,7 +93,8 @@ func (r *ModuleRepository) moduleSummary(ctx context.Context, filters domain.Mod
 				or a.name ilike '%' || $4 || '%'
 				or cm.name ilike '%' || $4 || '%'
 			)
-	`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword).Scan(
+			and ($5::text = '' or m.tenant_id = $5)
+	`, string(filters.Kind), filters.Owner, filters.ApplicationID, filters.Keyword, tenantID).Scan(
 		&summary.Total,
 		&summary.Common,
 		&summary.Feature,
@@ -99,7 +105,11 @@ func (r *ModuleRepository) moduleSummary(ctx context.Context, filters domain.Mod
 }
 
 func (r *ModuleRepository) GetModule(ctx context.Context, id string) (domain.Module, error) {
-	return scanModule(r.pool.QueryRow(ctx, moduleSelectSQL()+` where m.id = $1`, id))
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.Module{}, err
+	}
+	return scanModule(r.pool.QueryRow(ctx, moduleSelectSQL()+` where m.id = $1 and ($2::text = '' or m.tenant_id = $2)`, id, tenantID))
 }
 
 func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.ModuleInput) (domain.Module, error) {
@@ -109,11 +119,15 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 	}
 	defer rollbackMigration(ctx, tx)
 
-	if err := upsertUser(ctx, tx, moduleOwnerUser(input)); err != nil {
+	tenantID, err := domain.TenantIDFromContext(ctx)
+	if err != nil {
 		return domain.Module{}, err
 	}
-
 	if err := validateModuleCommonBinding(ctx, tx, input.ID, input); err != nil {
+		return domain.Module{}, err
+	}
+	autoBuildEnvironmentID, err := optionalEnvironmentID(ctx, tx, tenantID, input.BuildConfig.AutoBuildEnvironment)
+	if err != nil {
 		return domain.Module{}, err
 	}
 
@@ -134,18 +148,19 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 			dockerfile_path,
 			build_context,
 			auto_build_branches,
-			auto_build_environment_code,
+			auto_build_environment_id,
 			build_mode,
 			build_adapter_id,
 			build_adapter_params,
 			ci_job,
 			ci_artifact_path,
+			tenant_id,
 			sort_order
 		) values (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21,
-			coalesce((select max(sort_order) + 10 from modules), 10)
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22,
+			coalesce((select max(sort_order) + 10 from modules where tenant_id = $22), 10)
 		)
-	`, moduleWriteArgs(input.ID, input)...); err != nil {
+	`, append(moduleWriteArgs(input.ID, input, autoBuildEnvironmentID), tenantID)...); err != nil {
 		if isUniqueViolation(err) {
 			return domain.Module{}, moduleUniqueViolationError(err)
 		}
@@ -160,28 +175,29 @@ func (r *ModuleRepository) CreateModule(ctx context.Context, input domain.Module
 
 	// 创建时一起提交的构建变量和模块在同一个事务里写入，任何一条失败都整体回滚，不会留下缺变量的模块。
 	for _, variable := range input.BuildVariables {
+		environmentID, err := optionalEnvironmentID(ctx, tx, tenantID, variable.EnvironmentCode)
+		if err != nil {
+			return domain.Module{}, err
+		}
 		if _, err := tx.Exec(ctx, `
 			insert into module_build_variables (
 				module_id,
 				key,
 				value_encrypted,
 				is_secret,
-				environment_code,
+				environment_id,
 				updated_by_user_id,
 				updated_at
-			) values ($1, $2, $3, $4, nullif($5, ''), $6, now())
+			) values ($1, $2, $3, $4, $5, $6, now())
 		`,
 			input.ID,
 			variable.Key,
 			variable.ValueEncrypted,
 			variable.IsSecret,
-			variable.EnvironmentCode,
+			environmentID,
 			variable.UpdatedByUserID,
 		); err != nil {
-			var pgErr *pgconn.PgError
 			switch {
-			case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "module_build_variables_environment_code_fkey":
-				return domain.Module{}, domain.ErrEnvironmentNotFound
 			case isUniqueViolation(err), isForeignKeyViolation(err), isCheckViolation(err):
 				return domain.Module{}, domain.ErrInvalidBuildVariableInput
 			}
@@ -211,27 +227,31 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 	}
 	defer rollbackMigration(ctx, tx)
 
-	var previousApplicationID string
+	scopeTenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return domain.Module{}, err
+	}
+	var previousApplicationID, tenantID string
 	if err := tx.QueryRow(ctx, `
-		select application_id
+		select application_id, tenant_id
 		from modules
-		where id = $1
+		where id = $1 and ($2::text = '' or tenant_id = $2)
 		for update
-	`, id).Scan(&previousApplicationID); err != nil {
+	`, id, scopeTenantID).Scan(&previousApplicationID, &tenantID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.Module{}, domain.ErrModuleNotFound
 		}
 		return domain.Module{}, fmt.Errorf("query module for update: %w", err)
 	}
 
-	if err := upsertUser(ctx, tx, moduleOwnerUser(input)); err != nil {
-		return domain.Module{}, err
-	}
-
 	if err := validateModuleCommonBinding(ctx, tx, id, input); err != nil {
 		return domain.Module{}, err
 	}
 	if err := validateModuleCommonDependents(ctx, tx, id, input); err != nil {
+		return domain.Module{}, err
+	}
+	autoBuildEnvironmentID, err := optionalEnvironmentID(ctx, tx, tenantID, input.BuildConfig.AutoBuildEnvironment)
+	if err != nil {
 		return domain.Module{}, err
 	}
 
@@ -251,7 +271,7 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 			dockerfile_path = $13,
 			build_context = $14,
 			auto_build_branches = $15,
-			auto_build_environment_code = $16,
+			auto_build_environment_id = $16,
 			build_mode = $17,
 			build_adapter_id = $18,
 			build_adapter_params = $19::jsonb,
@@ -259,7 +279,7 @@ func (r *ModuleRepository) UpdateModule(ctx context.Context, id string, input do
 			ci_artifact_path = $21,
 			updated_at = now()
 		where id = $1
-	`, moduleWriteArgs(id, input)...); err != nil {
+	`, moduleWriteArgs(id, input, autoBuildEnvironmentID)...); err != nil {
 		if isUniqueViolation(err) {
 			return domain.Module{}, moduleUniqueViolationError(err)
 		}
@@ -303,12 +323,16 @@ func (r *ModuleRepository) DeleteModule(ctx context.Context, id string) error {
 	}
 	defer rollbackMigration(ctx, tx)
 
+	tenantID, err := tenantFilter(ctx)
+	if err != nil {
+		return err
+	}
 	var applicationID string
 	if err := tx.QueryRow(ctx, `
 		delete from modules
-		where id = $1
+		where id = $1 and ($2::text = '' or tenant_id = $2)
 		returning application_id
-	`, id).Scan(&applicationID); err != nil {
+	`, id, tenantID).Scan(&applicationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrModuleNotFound
 		}
@@ -351,7 +375,6 @@ func moduleSelectSQL() string {
 			u.name as owner,
 			u.email as owner_email,
 			u.avatar_url as owner_avatar_url,
-			u.department_ids as owner_department_ids,
 			m.code_source_connection_id,
 			csc.provider as code_source_provider,
 			csc.name as code_source_connection_name,
@@ -363,7 +386,7 @@ func moduleSelectSQL() string {
 			m.dockerfile_path,
 			m.build_context,
 			m.auto_build_branches,
-			coalesce(m.auto_build_environment_code, '') as auto_build_environment_code,
+			coalesce(abe.code, '') as auto_build_environment_code,
 			m.build_mode,
 			coalesce(m.build_adapter_id, ''),
 			coalesce(ba.name, ''),
@@ -377,7 +400,8 @@ func moduleSelectSQL() string {
 		join users u on u.id = m.owner_user_id
 		join code_source_connections csc on csc.id = m.code_source_connection_id
 		left join modules cm on cm.id = m.common_module_id
-		left join build_adapters ba on ba.id = m.build_adapter_id`
+		left join build_adapters ba on ba.id = m.build_adapter_id
+		left join environments abe on abe.id = m.auto_build_environment_id`
 }
 
 func scanModule(row moduleRow) (domain.Module, error) {
@@ -398,7 +422,6 @@ func scanModule(row moduleRow) (domain.Module, error) {
 		&module.Owner,
 		&module.OwnerEmail,
 		&module.OwnerAvatarURL,
-		&module.OwnerDepartmentIDs,
 		&module.Repository.ConnectionID,
 		&module.CodeSourceProvider,
 		&module.ConnectionName,
@@ -438,21 +461,8 @@ func scanModule(row moduleRow) (domain.Module, error) {
 	return module, nil
 }
 
-func moduleOwnerUser(input domain.ModuleInput) domain.UserInput {
-	return domain.UserInput{
-		ID:            input.OwnerUserID,
-		Name:          input.Owner,
-		Email:         input.OwnerEmail,
-		AvatarURL:     input.OwnerAvatarURL,
-		DepartmentIDs: input.OwnerDepartmentIDs,
-		FeishuUnionID: input.OwnerFeishuUnionID,
-		FeishuOpenID:  input.OwnerFeishuOpenID,
-		FeishuUserID:  input.OwnerFeishuUserID,
-	}
-}
-
-// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$23）组织参数。
-func moduleWriteArgs(id string, input domain.ModuleInput) []any {
+// moduleWriteArgs 按 insert / update 共用的占位符顺序（$1-$21）组织参数。autoBuildEnvironmentID 已在租户内解析。
+func moduleWriteArgs(id string, input domain.ModuleInput, autoBuildEnvironmentID *string) []any {
 	buildMode := input.BuildConfig.BuildMode
 	if buildMode == "" {
 		buildMode = domain.BuildModeDockerfile
@@ -467,10 +477,6 @@ func moduleWriteArgs(id string, input domain.ModuleInput) []any {
 	}
 	// map[string]string 编码不会失败。
 	buildAdapterParamsJSON, _ := json.Marshal(buildAdapterParams)
-	var autoBuildEnvironment *string
-	if input.BuildConfig.AutoBuildEnvironment != "" {
-		autoBuildEnvironment = &input.BuildConfig.AutoBuildEnvironment
-	}
 	autoBuildBranches := input.BuildConfig.AutoBuildBranches
 	if autoBuildBranches == nil {
 		autoBuildBranches = []string{}
@@ -491,7 +497,7 @@ func moduleWriteArgs(id string, input domain.ModuleInput) []any {
 		input.BuildConfig.DockerfilePath,
 		input.BuildConfig.BuildContext,
 		autoBuildBranches,
-		autoBuildEnvironment,
+		autoBuildEnvironmentID,
 		string(buildMode),
 		buildAdapterID,
 		string(buildAdapterParamsJSON),
